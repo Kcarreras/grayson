@@ -94,14 +94,14 @@ opened in the IDE alongside the user's SQL repos:
 
 ```
 <workspace>/
-├── seekql.toml                 # connection name, defaults, registered scopes
-├── knowledge/                  # COMMITTED — team-shareable library
+├── seekql.toml                 # connection, defaults, scopes, guard profiles, [library] pointer
+├── knowledge/                  # LIBRARY ASSET — team-shareable knowledge
 │   ├── glossary.md
 │   └── <db>/<schema>/<table>.md
-├── views/                      # COMMITTED — QA view library
+├── views/                      # LIBRARY ASSET — QA view library
 │   ├── registry.yaml           # view name → purpose, source tables, base files, DDL path, created_at
 │   └── ddl/*.sql
-├── workflows/                  # COMMITTED — workflow template overrides/custom types
+├── workflows/                  # LIBRARY ASSET — workflow template overrides/custom types
 └── .seekql/                    # sessions & data
     └── sessions/<id>/
         ├── state.db            # SQLite (WAL): state machine, event log, locks
@@ -116,6 +116,11 @@ opened in the IDE alongside the user's SQL repos:
 `.seekql/sessions/*/data/` is gitignored; everything meant to compound over time
 (knowledge, views, workflows) is committed and merge-friendly (one file per table/view,
 provenance inline).
+
+**Library assets** live in the workspace by default (**solo mode**). In **team mode**,
+`seekql.toml` declares a `[library]` pointer to a local clone of a shared library repo,
+and seekql resolves `knowledge/`, `views/`, `workflows/`, and shared guard profiles from
+there instead — see §11a.
 
 ## 5. Session lifecycle (state machine)
 
@@ -317,6 +322,46 @@ mattered facts with **provenance**:
   data — answers become knowledge, so every session makes the next one faster.
 - Search: `seekql knowledge search <term>` (and MCP tool) over facts + glossary.
 
+## 11a. Team library & distribution model
+
+Collaboration needs no server; it rides on git. Three kinds of repo, kept separate:
+
+1. **The seekql tool** (this repo) — installed per user, e.g.
+   `uv tool install seekql` or `uvx --from git+https://github.com/Kcarreras/seekql seekql`.
+   Never cloned into a workspace; it's software, not data.
+2. **A team library repo** — one per team, holding the compounding assets:
+   `knowledge/`, `views/`, `workflows/`, and shared guard profiles.
+   `seekql library init` scaffolds a fresh one ready to push to the team's git host.
+   Another team starting out scaffolds their own — or forks an existing team's library
+   to seed from their knowledge.
+3. **Personal workspaces** — one per user (sessions, cached data, local config), each
+   linked to a local clone of the team library:
+
+   ```toml
+   [library]
+   path = "~/work/data-qa-library"   # local clone of the team library repo
+   ```
+
+**Resolution**: with `[library]` set, seekql reads/writes knowledge, views, workflows,
+and shared profiles in the library clone; session state and cached data stay in the
+personal workspace. Solo mode (no `[library]`) keeps everything in the workspace, and
+`seekql library extract` can later split the assets out into a new library repo when a
+team forms.
+
+**Freshness**: at session setup seekql checks the library clone against its remote and
+warns if it is behind ("library is 12 commits behind origin — pull before starting?")
+or has uncommitted local changes. `seekql library status|pull` wrap the corresponding
+git operations; commits/PRs to the library go through normal git tooling — a PR is the
+team-scale version of the fact-confirmation flow, giving proposed knowledge a review
+step for free.
+
+**Known limits (accepted for v1)**: knowledge propagates at pull cadence, not real
+time; there is no cross-user live session visibility or central query audit (each
+user's audit log is local; closed-session summaries may be committed to the library if
+a team wants shared history); simultaneous view registration by two users reconciles
+at merge time. If those ever become must-haves, a central service can be added behind
+the same file formats without reworking this architecture.
+
 ## 12. Web console (UI)
 
 FastAPI + server-rendered pages (Jinja2; no Node build chain), `127.0.0.1` only, with a
@@ -378,5 +423,5 @@ attempts, sneaky DDL, multi-statements, comment tricks) and lint-clean before th
 ---
 
 *Spec converged 2026-08-20 from requirements interview. Open items intentionally
-deferred: read-only role adoption, team-shared knowledge hosting (git remote is assumed
-sufficient), additional workflow templates.*
+deferred: read-only role adoption, any central collaboration service (git-based
+library model specified in §11a is v1), additional workflow templates.*
