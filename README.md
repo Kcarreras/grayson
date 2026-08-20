@@ -1,6 +1,12 @@
 # seekql
 
-Agentic, open-ended QA and investigation over SQL tables and data.
+Agentic, open-ended QA and investigation over SQL tables and data (Snowflake-first).
+
+Deterministic infrastructure for agent-driven data QA: guarded warehouse access, session
+state with evidence enforcement, cached results with freshness tracking, a team-shareable
+knowledge library, and a human-in-the-loop web console. Agent harnesses (Cursor, Claude
+Code, Codex, …) supply the intelligence; seekql supplies the rails. See
+[docs/SPEC.md](docs/SPEC.md) for the full specification.
 
 ## Requirements
 
