@@ -63,7 +63,7 @@ calls an LLM.
 ├──────────────────────────────────────────────────────────────────┤
 │  workspace files (.seekql/)          │  snow CLI (subprocess)     │
 │  state: SQLite (WAL) per session     │  → Snowflake               │
-│  artifacts: parquet/markdown/yaml    │                            │
+│  artifacts: sqlite/markdown/yaml     │                            │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,7 +72,7 @@ calls an LLM.
 - `core/` — session state machine, workspace management, locking
 - `guard/` — SQL validation (sqlglot, Snowflake dialect), guard profiles, audit log
 - `executor/` — snow CLI subprocess wrapper, auth-state detection, result ingestion
-- `cache/` — result storage (Parquet + JSON sidecar), freshness metadata, lookup
+- `cache/` — result storage (SQLite + JSON sidecar), freshness metadata, lookup
 - `workflows/` — workflow templates, checkpoint definitions, findings schemas
 - `knowledge/` — knowledge library read/propose/confirm, provenance
 - `views/` — QA view library registry, coverage check, view proposals
@@ -84,7 +84,10 @@ calls an LLM.
 - `harness/` — generators for per-harness skill/instruction files
 
 **Dependencies** (pinned via uv.lock): `sqlglot`, `pydantic`, `typer`, `fastapi`,
-`uvicorn`, `duckdb` (result storage/local analysis), `mcp`, `jinja2` (UI templates).
+`uvicorn`, `mcp`, `jinja2` (UI templates). Result storage and local analysis use
+stdlib `sqlite3` — no native DLLs beyond Python itself, so seekql runs under
+locked-down Windows Application Control policies common on work machines (duckdb
+was evaluated and is blocked by such policies).
 Snowflake CLI (`snow`) is an external prerequisite, not a Python dependency.
 
 ## 4. Workspace layout
@@ -107,7 +110,7 @@ opened in the IDE alongside the user's SQL repos:
         ├── state.db            # SQLite (WAL): state machine, event log, locks
         ├── session.md          # human-readable session brief & status (generated)
         ├── queries/            # every executed statement: sql + result metadata
-        ├── data/               # cached results (parquet + sidecar)  [gitignored]
+        ├── data/               # cached results (results.db + sidecars)  [gitignored]
         ├── interventions/      # tasks + structured responses
         ├── findings/           # findings docs (schema-validated)
         └── proposals/          # fix proposals + approval state
@@ -217,16 +220,19 @@ The guard sees **every** statement before execution; there is no unguarded path.
 
 Every executed query's results are stored automatically:
 
-- **Format**: Parquet (via duckdb ingestion) + JSON sidecar:
-  `{query_hash, normalized_sql, executed_at, worker, source_tables, row_count,
-  truncated_by_limit, source_last_altered: {table: ts}}`.
+- **Format**: rows land as table `q_XXXX` in the session's `results.db` (stdlib
+  SQLite), plus a JSON sidecar per artifact:
+  `{query_hash, sql, executed_at, worker, source_tables, row_count,
+  truncated, source_last_altered: {table: ts}}`.
 - **Freshness**: `seekql cache find --tables …` (and the MCP equivalent) returns matching
   cached artifacts with a computed staleness verdict — current `last_altered` (one cheap
   metadata query) vs. the value captured at execution time → `fresh` / `stale` /
   `unknown`. Agents are instructed (via skills) to check cache before querying; the
   decision to reuse stays with the agent.
-- **Local analysis**: cached Parquet is queryable with duckdb (`seekql cache query`),
-  letting agents re-slice already-fetched data without warehouse round-trips.
+- **Local analysis**: cached artifacts are queryable locally (`seekql cache query`,
+  table names = artifact ids), letting agents re-slice already-fetched data without
+  warehouse round-trips. Same guard posture: single SELECT only, artifact tables only,
+  and the connection is opened read-only (SQLite `mode=ro`) as a second wall.
 
 ## 9. Workflows & checkpoints
 
