@@ -40,7 +40,7 @@ calls an LLM.
 | Table definitions | Mixed sources: git-repo SQL files (fix = file diff) and Snowflake-resident logic (fix = standalone DDL snippet) |
 | Fix application | User approves in UI → **harness agent** edits work-repo files with its own tools; seekql never writes outside its workspace |
 | Parallelism | Up to ~3 concurrent sessions; optional multi-agent fan-out **within** a session, toggleable per session |
-| Cost guards | Guard profile (strict / moderate / generous) selected at session start, suggested by workflow type |
+| Cost guards | Three independent toggles (auto-LIMIT, timeout, query budget) combined into named, user-saveable guard profiles; selected at session start, suggested by workflow type and prior usage |
 | Result caching | Freely cached locally, gitignored, timestamped, freshness-checkable |
 | Workflows v1 | Bug Hunter, Pipeline/Transform QA, Single-Table Health, Semantic Rule QA, Migration/Parity |
 | QA of QA | Deterministic evidence enforcement (state machine + schemas) |
@@ -99,7 +99,7 @@ opened in the IDE alongside the user's SQL repos:
 │   ├── glossary.md
 │   └── <db>/<schema>/<table>.md
 ├── views/                      # COMMITTED — QA view library
-│   ├── registry.yaml           # view name → purpose, source tables, columns, DDL path
+│   ├── registry.yaml           # view name → purpose, source tables, base files, DDL path, created_at
 │   └── ddl/*.sql
 ├── workflows/                  # COMMITTED — workflow template overrides/custom types
 └── .seekql/                    # sessions & data
@@ -126,9 +126,12 @@ setup → analysis → synthesis → review → fixes → verification → close
 1. **setup** — user (or agent relaying user input) declares: workflow type, target
    tables, guard profile, parallelism (worker count), connection. seekql verifies snow
    auth, snapshots table metadata (columns, row counts, `last_altered`), loads relevant
-   knowledge, runs the **view coverage check**: required/likely views vs. view library.
-   Missing views are proposed as DDL now — user executes them (front-loaded so analysis
-   isn't interrupted). Setup checkpoint cannot close until coverage is confirmed.
+   knowledge, runs the **view coverage check** (see §9a): existing library views
+   relevant to the target tables are presented for the user to pick from, stale ones
+   are flagged with a refresh proposal, and gaps become new-view DDL proposals
+   assembled from the registry's base-file pointers — all executed by the user now
+   (front-loaded so analysis isn't interrupted). Setup checkpoint cannot close until
+   coverage is confirmed.
 2. **analysis** — the open-ended core. Agents (1..N workers) run guarded queries, cache
    results, log observations, request interventions when human judgment is needed.
    Workflow-defined **required checks** must each be completed with evidence; beyond
@@ -170,16 +173,24 @@ The guard sees **every** statement before execution; there is no unguarded path.
   default (logged, surfaced in UI) and a hard block only if the session was started
   with `--strict-scope` — this is the "don't get agents in trouble for overly tight
   rules" dial.
-- **Guard profiles** (selected at setup; workflow templates suggest one):
+- **Guard settings** are three *independent* controls, each individually toggleable and
+  tunable — any combination is valid:
 
-  | Profile | Auto-LIMIT on unbounded SELECT | Timeout | Session query budget |
-  |---|---|---|---|
-  | strict | 1,000 | 60s | hard cap, user-extendable |
-  | moderate | 10,000 | 120s | warn threshold |
-  | generous | 100,000 | 300s | none |
+  | Control | Options |
+  |---|---|
+  | `auto_limit` | off, or N rows injected on unbounded raw-row SELECTs (aggregate-only queries bypass it) |
+  | `timeout` | off, or N seconds via `STATEMENT_TIMEOUT_IN_SECONDS` per statement |
+  | `query_budget` | off, warn-at-N, or hard-cap-at-N per session (hard cap user-extendable from the UI) |
 
-  Aggregate-only queries (no raw-row output) bypass auto-LIMIT. Timeout enforced via
-  `STATEMENT_TIMEOUT_IN_SECONDS` on the statement.
+- **Guard profiles** are named, saved combinations of those settings, defined in
+  `seekql.toml` (committed, so profiles travel with the workspace). seekql ships
+  starter profiles (`strict`, `moderate`, `generous`) the user can edit, clone, or
+  replace. Selection at session setup is one pick — `--guard-profile <name>` or a
+  dropdown in the UI — with per-setting overrides allowed on top
+  (`--timeout 300`). **Default selection**: workflow templates suggest a profile, but
+  if the session's target tables/views were used in a previous session, seekql defaults
+  to the profile used there (last-used wins), shown as "suggested" so the pick is
+  one keystroke to accept or change.
 - **Audit log**: every statement — accepted or rejected — is recorded with hash,
   worker id, timestamp, guard verdict, and execution stats.
 - **Defense in depth**: designed to be the only wall (normal role today) but pairs with
@@ -241,6 +252,35 @@ every other workflow.
 **Findings** are pydantic-validated documents: summary, severity, affected objects,
 evidence (query ids), reproduction, proposed remediation, confidence + open questions.
 
+## 9a. QA view library
+
+The view library is how agents get analysis-ready surfaces without ever holding DDL
+rights. `views/registry.yaml` records, per view: name, purpose, source tables,
+**base files** (paths/globs into the user's work repos where the underlying definition
+logic lives), the DDL file in `views/ddl/`, created_at, and the source tables'
+`last_altered` at creation time.
+
+**At session setup** the coverage check produces a three-part picture, resolved in one
+sitting before analysis begins:
+
+1. **Reuse** — library views matching the session's target tables, presented as a
+   pick-list (UI checkboxes / CLI selection). Chosen views enter the session scope.
+2. **Refresh** — seekql proactively flags stale views: source-table `last_altered` has
+   moved past the view's snapshot, source schema changed (column drift detected from
+   the metadata snapshot), or the registry DDL no longer matches what's deployed
+   (checked via `SHOW VIEWS` / `GET_DDL`). Each flag comes with regenerated
+   `CREATE OR REPLACE` DDL ready for the user to execute.
+3. **Create** — for gaps, agents assemble proposed DDL. The registry's base-file
+   pointers (plus per-table `definition_files` entries in the knowledge library) tell
+   agents exactly which work-repo files to read when deriving new view logic — the
+   user can also pass `--base-files <paths>` at setup to point agents at the right
+   sources explicitly. Proposals are queued for user execution.
+
+`seekql views list|check|propose|refresh` (and MCP equivalents) expose the same
+operations mid-session for the rare case a need surfaces after setup. Executed views
+are registered automatically (DDL, sources, base files, timestamps) so the library
+compounds.
+
 ## 10. Interventions (human-in-the-loop)
 
 Structured tasks replacing the CSV round-trip:
@@ -284,6 +324,9 @@ per-launch session token in the URL. v1 views:
 
 1. **Sessions dashboard** — active/recent sessions, stage, checkpoint progress, pending
    items, auth status.
+1. **Session setup panel** — guard-profile dropdown (suggested default pre-selected,
+   per-setting overrides), view pick-list with refresh flags, pending DDL to execute,
+   base-file pointers.
 2. **Session detail** — checkpoints w/ evidence, live query log (statement, verdict,
    rows, duration, worker), cached artifacts, event timeline.
 3. **Interventions inbox** — pending tasks; interactive labeling/confirmation forms.
