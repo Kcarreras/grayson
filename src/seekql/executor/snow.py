@@ -14,6 +14,7 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 SNOW_CMD_ENV = "SEEKQL_SNOW_CMD"  # JSON list overriding the snow binary (tests, wrappers)
@@ -58,7 +59,12 @@ class Executor(Protocol):
     def execute(self, sql: str, timeout_seconds: int = 0) -> ExecutionResult: ...
 
 
-def get_executor(connection: str) -> Executor:
+def get_executor(connection: str, workspace_root: Path | None = None) -> Executor:
+    if connection == "sandbox" and workspace_root is not None:
+        # Local mock warehouse (no snow CLI): see seekql.sandbox.
+        from seekql.sandbox.executor import SandboxExecutor, sandbox_db_path
+
+        return SandboxExecutor(sandbox_db_path(workspace_root))
     return SnowExecutor(connection)
 
 

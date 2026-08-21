@@ -49,6 +49,24 @@ seekql doctor                    # verify snow CLI + connection
 seekql harness init cursor       # teach your agent the protocol (or claude-code | codex)
 ```
 
+## Try it without Snowflake (sandbox)
+
+No warehouse handy? `seekql sandbox init` scaffolds a demo workspace backed by a
+local mock warehouse (SQLite behind the same guarded executor path) seeded with
+mock retail data containing planted, workflow-matched problems — a join fan-out
+bug for `bug-hunter`, an email-NULL regression plus duplicate keys for
+`table-health`, and dropped/drifted rows for `migration-parity`:
+
+```bash
+seekql sandbox init my-demo && cd my-demo
+seekql doctor                        # checks the sandbox warehouse, not snow
+seekql harness init claude-code      # teach your agent the protocol
+```
+
+`SANDBOX_ANSWER_KEY.md` holds the exact ground truth (counts, root causes, and a
+scoring rubric) — keep it away from the agent and use it to grade the findings it
+produces. `seekql sandbox reset` re-seeds the data.
+
 ## Typical session (driven by your agent)
 
 ```bash

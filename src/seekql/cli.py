@@ -46,6 +46,7 @@ library_app = typer.Typer(help="Team library repo linking.", no_args_is_help=Tru
 harness_app = typer.Typer(help="Agent harness integration.", no_args_is_help=True)
 mcp_app = typer.Typer(help="MCP server.", no_args_is_help=True)
 ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
+sandbox_app = typer.Typer(help="Local demo warehouse (no Snowflake needed).", no_args_is_help=True)
 app.add_typer(session_app, name="session")
 app.add_typer(query_app, name="query")
 app.add_typer(cache_app, name="cache")
@@ -62,6 +63,7 @@ app.add_typer(library_app, name="library")
 app.add_typer(harness_app, name="harness")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(ui_app, name="ui")
+app.add_typer(sandbox_app, name="sandbox")
 
 
 def emit(obj: object) -> None:
@@ -129,15 +131,28 @@ def doctor() -> None:
     except FileNotFoundError as e:
         checks.append({"check": "workspace", "ok": False, "detail": str(e)})
 
+    sandbox = ws is not None and ws.config.connection == "sandbox"
+    if sandbox:
+        from seekql.sandbox.executor import sandbox_db_path
+
+        db = sandbox_db_path(ws.root)
+        checks.append(
+            {
+                "check": "sandbox_warehouse",
+                "ok": db.is_file(),
+                "detail": str(db) if db.is_file() else "missing — run `seekql sandbox init`",
+            }
+        )
     snow = shutil.which("snow")
-    checks.append(
-        {
-            "check": "snow_cli",
-            "ok": snow is not None,
-            "detail": snow or "snow not found on PATH — install Snowflake CLI",
-        }
-    )
-    if snow and ws:
+    if not sandbox:
+        checks.append(
+            {
+                "check": "snow_cli",
+                "ok": snow is not None,
+                "detail": snow or "snow not found on PATH — install Snowflake CLI",
+            }
+        )
+    if snow and ws and not sandbox:
         try:
             proc = subprocess.run(  # noqa: S603
                 [snow, "connection", "list", "--format", "json"],
@@ -1024,6 +1039,82 @@ def harness_init(
         emit(generate_harness(path.resolve(), harness, with_mcp=not no_mcp))
     except ValueError as e:
         fail(str(e))
+
+
+# -- sandbox -------------------------------------------------------------
+
+SANDBOX_CONFIG = """\
+# seekql sandbox workspace — mock warehouse, no Snowflake needed
+
+[connection]
+name = "sandbox"          # routes execution to the local sandbox warehouse
+
+[defaults]
+guard_profile = "moderate"
+
+[scopes]
+allowed = ["SANDBOX.*"]
+strict = false
+"""
+
+
+@sandbox_app.command("init")
+def sandbox_init(
+    path: Path = typer.Argument(Path("seekql-sandbox"), help="Directory for the demo workspace."),
+) -> None:
+    """Create a demo workspace with a local mock warehouse and planted QA problems.
+
+    Seeds SANDBOX.SHOP.* tables (customers, orders, promos, payments) containing
+    problems matched to the built-in workflows, and writes an answer key for the
+    human. Point your agent at the workspace WITHOUT showing it the answer key.
+    """
+    from seekql.sandbox.executor import sandbox_db_path
+    from seekql.sandbox.seed import render_answer_key, seed_sandbox
+
+    try:
+        ws = Workspace.init(path)
+    except FileExistsError as e:
+        fail(str(e))
+        return
+    (ws.root / "seekql.toml").write_text(SANDBOX_CONFIG, encoding="utf-8")
+    truth = seed_sandbox(sandbox_db_path(ws.root))
+    key_path = ws.root / "SANDBOX_ANSWER_KEY.md"
+    key_path.write_text(render_answer_key(truth), encoding="utf-8")
+    emit(
+        {
+            "workspace": str(ws.root),
+            "warehouse": str(sandbox_db_path(ws.root)),
+            "tables": [
+                "SANDBOX.SHOP.CUSTOMERS",
+                "SANDBOX.SHOP.ORDERS",
+                "SANDBOX.SHOP.PROMOS",
+                "SANDBOX.SHOP.ORDERS_ENRICHED",
+                "SANDBOX.SHOP.PAYMENTS",
+                "SANDBOX.SHOP.PAYMENTS_V2",
+            ],
+            "answer_key": str(key_path),
+            "next": [
+                f"cd {path}",
+                "seekql harness init claude-code   # or cursor | codex",
+                "ask your agent to run a workflow (see the answer key for targets)",
+                "keep SANDBOX_ANSWER_KEY.md away from the agent",
+            ],
+        }
+    )
+
+
+@sandbox_app.command("reset")
+def sandbox_reset() -> None:
+    """Re-seed the sandbox warehouse (fresh data, same planted problems)."""
+    from seekql.sandbox.executor import sandbox_db_path
+    from seekql.sandbox.seed import seed_sandbox
+
+    ws = _workspace()
+    if ws.config.connection != "sandbox":
+        fail("this workspace is not a sandbox (connection name is not 'sandbox')")
+        return
+    seed_sandbox(sandbox_db_path(ws.root))
+    emit({"reseeded": str(sandbox_db_path(ws.root))})
 
 
 # -- mcp -----------------------------------------------------------------

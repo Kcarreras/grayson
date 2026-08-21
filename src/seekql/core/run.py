@@ -61,7 +61,7 @@ def run_statement(
             "warnings": verdict.warnings,
         }
 
-    executor = executor or get_executor(session.connection)
+    executor = executor or get_executor(session.connection, session.workspace.root)
     settings = session.guard_settings
     # Any raise between here and the terminal update would otherwise strand the
     # audit row at 'pending'. Catch, record the failure, and re-report.
@@ -174,7 +174,7 @@ def snapshot_metadata(session: Session, executor: Executor | None = None) -> dic
     sql = metadata_query(session.targets)
     if sql is None:
         return {"status": "skipped", "reason": "no fully-qualified targets"}
-    executor = executor or get_executor(session.connection)
+    executor = executor or get_executor(session.connection, session.workspace.root)
     result = executor.execute(sql, timeout_seconds=60)
     if not result.ok:
         return {"status": result.status, "error": result.error}
@@ -219,7 +219,7 @@ def cache_find(
         source_tables = sorted({t for m in matches for t in m.get("source_tables", [])})
         sql = metadata_query(source_tables)
         if sql:
-            executor = executor or get_executor(session.connection)
+            executor = executor or get_executor(session.connection, session.workspace.root)
             result = executor.execute(sql, timeout_seconds=60)
             if result.ok:
                 for row in result.rows:
