@@ -18,8 +18,11 @@ from seekql.core.engine import EnforcementError
 from seekql.core.proposals import ProposalError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
 from seekql.core.session import STAGES, Session
+from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request, validate_response
 from seekql.interventions.types import InterventionError
+from seekql.knowledge import KnowledgeStore
+from seekql.views import ViewEntry, ViewRegistry
 from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
 
@@ -36,6 +39,9 @@ checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_he
 finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_args_is_help=True)
 intervention_app = typer.Typer(help="Human-in-the-loop tasks.", no_args_is_help=True)
 proposal_app = typer.Typer(help="Fix proposals and verification.", no_args_is_help=True)
+knowledge_app = typer.Typer(help="Team knowledge library.", no_args_is_help=True)
+views_app = typer.Typer(help="QA view library.", no_args_is_help=True)
+library_app = typer.Typer(help="Team library repo linking.", no_args_is_help=True)
 ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
 app.add_typer(session_app, name="session")
 app.add_typer(query_app, name="query")
@@ -47,6 +53,9 @@ app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(finding_app, name="finding")
 app.add_typer(intervention_app, name="intervention")
 app.add_typer(proposal_app, name="proposal")
+app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(views_app, name="views")
+app.add_typer(library_app, name="library")
 app.add_typer(ui_app, name="ui")
 
 
@@ -182,8 +191,14 @@ def session_start(
     except WorkflowNotFound as e:
         fail(str(e))
         return
+    # Precedence for the base profile: explicit flag > last-used on these tables
+    # > workflow suggestion. Per-setting overrides then apply on top.
+    last_used = None if guard_profile else suggest_guard_profile(ws, tables)
+    chosen_profile = guard_profile or last_used or tpl.suggested_guard_profile
+    if chosen_profile not in ws.config.guard_profiles:
+        chosen_profile = tpl.suggested_guard_profile
     try:
-        settings = ws.config.resolve_profile(guard_profile or tpl.suggested_guard_profile)
+        settings = ws.config.resolve_profile(chosen_profile)
     except KeyError as e:
         fail(str(e.args[0]))
         return
@@ -201,7 +216,7 @@ def session_start(
         workflow=workflow,
         targets=tables,
         guard=settings,
-        guard_profile=guard_profile or tpl.suggested_guard_profile,
+        guard_profile=chosen_profile,
         title=title,
         workers=workers,
         strict_scope=strict_scope,
@@ -209,6 +224,9 @@ def session_start(
     engine.seed_from_workflow(session, ws.workflows_dir)
     result = {
         "session": session.summary(),
+        "guard_profile_source": (
+            "flag" if guard_profile else "last_used" if last_used else "workflow_default"
+        ),
         "workflow": {
             "name": tpl.name,
             "title": tpl.title,
@@ -218,7 +236,19 @@ def session_start(
         },
     }
     if not skip_snapshot:
-        result["metadata_snapshot"] = snapshot_metadata(session)
+        snap = snapshot_metadata(session)
+        result["metadata_snapshot"] = snap
+        current = {
+            fq: info.get("last_altered")
+            for fq, info in (snap.get("tables") or {}).items()
+            if isinstance(info, dict) and info.get("last_altered")
+        }
+    else:
+        current = {}
+    # front-load view coverage and relevant knowledge so analysis isn't interrupted
+    result["view_coverage"] = ViewRegistry(ws.views_dir).coverage_check(tables, current)
+    knowledge = KnowledgeStore(ws.knowledge_dir)
+    result["knowledge"] = {t: knowledge.read(t)["facts"] for t in tables}
     emit(result)
 
 
@@ -740,6 +770,165 @@ def proposal_verify(
         emit(proposals_engine.verify(_session(session_id), pid, before, after, verdict, note))
     except ProposalError as e:
         fail(str(e))
+
+
+# -- knowledge -----------------------------------------------------------
+
+
+@knowledge_app.command("show")
+def knowledge_show(table: str) -> None:
+    """Show the knowledge library entry for a table."""
+    ws = _workspace()
+    try:
+        emit(KnowledgeStore(ws.knowledge_dir).read(table))
+    except ValueError as e:
+        fail(str(e))
+
+
+@knowledge_app.command("add")
+def knowledge_add(
+    table: str,
+    fact: str = typer.Option(..., "--fact", help="The fact text."),
+    status: str = typer.Option(
+        "proposed", "--status", help="proposed|data_inferred|user_confirmed"
+    ),
+    fact_id: str = typer.Option(None, "--id"),
+    by: str = typer.Option("agent", "--by"),
+    evidence: list[str] = typer.Option([], "--evidence", "-e"),
+) -> None:
+    """Add a fact about a table. Agents propose; users confirm."""
+    ws = _workspace()
+    try:
+        emit(
+            KnowledgeStore(ws.knowledge_dir).add_fact(
+                table,
+                fact,
+                fact_id=fact_id,
+                status=status,
+                created_by=by,
+                evidence=list(evidence),
+            )
+        )
+    except ValueError as e:
+        fail(str(e))
+
+
+@knowledge_app.command("confirm")
+def knowledge_confirm(table: str, fact_id: str, by: str = typer.Option("user", "--by")) -> None:
+    """Confirm a proposed/inferred fact (a user action)."""
+    ws = _workspace()
+    try:
+        emit(KnowledgeStore(ws.knowledge_dir).confirm_fact(table, fact_id, by))
+    except (ValueError, KeyError) as e:
+        fail(str(e.args[0] if e.args else e))
+
+
+@knowledge_app.command("set-files")
+def knowledge_set_files(table: str, files: list[str] = typer.Option(..., "--file", "-f")) -> None:
+    """Point future agents at the work-repo files that define this table."""
+    ws = _workspace()
+    try:
+        emit(KnowledgeStore(ws.knowledge_dir).set_definition_files(table, list(files)))
+    except ValueError as e:
+        fail(str(e))
+
+
+@knowledge_app.command("search")
+def knowledge_search(term: str) -> None:
+    emit(KnowledgeStore(_workspace().knowledge_dir).search(term))
+
+
+# -- views ---------------------------------------------------------------
+
+
+@views_app.command("list")
+def views_list() -> None:
+    emit([v.model_dump() for v in ViewRegistry(_workspace().views_dir).list()])
+
+
+@views_app.command("show")
+def views_show(name: str) -> None:
+    v = ViewRegistry(_workspace().views_dir).get(name)
+    if v is None:
+        fail(f"no view '{name}' in the registry")
+        return
+    emit(v.model_dump())
+
+
+@views_app.command("check")
+def views_check(
+    tables: list[str] = typer.Option(..., "--table", "-t", help="Target tables."),
+) -> None:
+    """Coverage check: which library views to reuse, refresh, or build."""
+    emit(ViewRegistry(_workspace().views_dir).coverage_check(list(tables)))
+
+
+@views_app.command("register")
+def views_register(
+    name: str,
+    purpose: str = typer.Option("", "--purpose"),
+    source_tables: list[str] = typer.Option([], "--source", "-s"),
+    base_files: list[str] = typer.Option([], "--base-file", "-b"),
+    ddl_file: Path = typer.Option(None, "--ddl-file", help="File with the view DDL."),
+) -> None:
+    """Register a QA view (after the user has created it) so the library compounds."""
+    ws = _workspace()
+    ddl = None
+    if ddl_file is not None:
+        if not ddl_file.is_file():
+            fail(f"ddl file not found: {ddl_file}")
+        ddl = ddl_file.read_text(encoding="utf-8")
+    entry = ViewEntry(
+        name=name,
+        purpose=purpose,
+        source_tables=list(source_tables),
+        base_files=list(base_files),
+    )
+    emit(ViewRegistry(ws.views_dir).register(entry, ddl).model_dump())
+
+
+# -- library -------------------------------------------------------------
+
+
+@library_app.command("init")
+def library_init(
+    path: Path = typer.Argument(..., help="Directory for the new library repo."),
+) -> None:
+    """Scaffold a fresh team library repo (knowledge/, views/, workflows/)."""
+    from seekql.library import init_library
+
+    created = init_library(path)
+    emit(
+        {
+            "library": str(created),
+            "next": "git init & push this dir, then set [library] path in your seekql.toml",
+        }
+    )
+
+
+@library_app.command("status")
+def library_status_cmd() -> None:
+    """Check whether the linked team library clone is behind its remote."""
+    from seekql.library import library_status
+
+    emit(library_status(_workspace()))
+
+
+@library_app.command("pull")
+def library_pull_cmd() -> None:
+    from seekql.library import library_pull
+
+    emit(library_pull(_workspace()))
+
+
+@library_app.command("extract")
+def library_extract_cmd(
+    dest: Path = typer.Argument(..., help="Destination for the extracted library repo."),
+) -> None:
+    """Split this workspace's assets out into a new shareable library repo."""
+    from seekql.library import extract_library
+
+    emit(extract_library(_workspace(), dest))
 
 
 # -- ui ------------------------------------------------------------------
