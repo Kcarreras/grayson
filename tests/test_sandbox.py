@@ -174,6 +174,19 @@ def test_seed_is_deterministic(tmp_path):
     assert t1 == t2
 
 
+def test_init_into_uncreatable_path_fails_cleanly(tmp_path):
+    # parent is a regular file, so mkdir raises OSError — expect a clean JSON
+    # error and exit 1, not a traceback (a fresh user running from a protected
+    # cwd like C:\Windows\system32 hits the same path via PermissionError)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    for cmd in (["sandbox", "init"], ["init"]):
+        result = runner.invoke(app, [*cmd, str(blocker / "demo")])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert json.loads(result.output)["error"]
+
+
 def test_executor_errors_without_db(tmp_path):
     result = SandboxExecutor(tmp_path / "missing.db").execute("SELECT 1")
     assert result.status == "error"

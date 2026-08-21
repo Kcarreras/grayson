@@ -117,6 +117,9 @@ def init(path: Path = typer.Argument(Path("."), help="Directory to initialize.")
     except FileExistsError as e:
         fail(str(e))
         return
+    except OSError as e:
+        fail(f"cannot create a workspace at '{path.resolve()}': {e}. cd to a writable directory")
+        return
     emit({"initialized": str(ws.root), "next": "edit seekql.toml, then `seekql doctor`"})
 
 
@@ -989,7 +992,11 @@ def library_init(
     """Scaffold a fresh team library repo (knowledge/, views/, workflows/)."""
     from seekql.library import init_library
 
-    created = init_library(path)
+    try:
+        created = init_library(path)
+    except OSError as e:
+        fail(f"cannot create a library at '{path.resolve()}': {e}. cd to a writable directory")
+        return
     emit(
         {
             "library": str(created),
@@ -1075,6 +1082,9 @@ def sandbox_init(
         ws = Workspace.init(path)
     except FileExistsError as e:
         fail(str(e))
+        return
+    except OSError as e:
+        fail(f"cannot create a workspace at '{path.resolve()}': {e}. cd to a writable directory")
         return
     (ws.root / "seekql.toml").write_text(SANDBOX_CONFIG, encoding="utf-8")
     truth = seed_sandbox(sandbox_db_path(ws.root))
