@@ -428,19 +428,24 @@ per-launch session token in the URL. v1 views:
 
 ## 15. Build phases
 
-1. **Core + guard + executor + cache** — workspace init, config, session basics, guarded
-   `query run`, result caching with freshness, audit log. *(usable value immediately)*
-2. **Workflows + checkpoints + findings** — templates, state machine, evidence
+1. ✅ **Core + guard + executor + cache** — workspace init, config, session basics,
+   guarded `query run`, result caching with freshness, audit log.
+2. ✅ **Workflows + checkpoints + findings** — templates, state machine, evidence
    enforcement, findings schemas.
-3. **UI console + interventions** — dashboard, query log, intervention forms, findings
+3. ✅ **UI console + interventions** — dashboard, query log, intervention forms, findings
    review.
-4. **Proposals + verification** — fix proposals, approval flow, parity verification.
-5. **Knowledge + view libraries** — libraries, provenance, coverage check at setup.
-6. **MCP server + harness generators** — typed tool surface, skill file generation,
-   multi-worker registration polish.
+4. ✅ **Proposals + verification** — fix proposals, approval flow, before/after verification.
+5. ✅ **Knowledge + view libraries** — libraries, provenance, coverage check at setup,
+   team library linking, last-used guard defaults.
+6. ✅ **MCP server + harness generators** — typed tool surface mirroring the CLL, skill
+   file generation (cursor / claude-code / codex), worker registration.
 
-Each phase lands tested (pytest; guard gets an adversarial test suite — injection
-attempts, sneaky DDL, multi-statements, comment tricks) and lint-clean before the next.
+All six phases are implemented, tested (253 pytest cases including an adversarial guard
+suite and a passed multi-agent security review — see docs/SECURITY.md), and lint-clean.
+
+One implementation note that diverged from this spec: result storage uses stdlib SQLite
+rather than duckdb/Parquet, because duckdb's native DLL is blocked by the Windows
+Application Control policy on the target work machine (§8).
 
 ---
 

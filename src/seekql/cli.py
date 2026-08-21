@@ -42,6 +42,8 @@ proposal_app = typer.Typer(help="Fix proposals and verification.", no_args_is_he
 knowledge_app = typer.Typer(help="Team knowledge library.", no_args_is_help=True)
 views_app = typer.Typer(help="QA view library.", no_args_is_help=True)
 library_app = typer.Typer(help="Team library repo linking.", no_args_is_help=True)
+harness_app = typer.Typer(help="Agent harness integration.", no_args_is_help=True)
+mcp_app = typer.Typer(help="MCP server.", no_args_is_help=True)
 ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
 app.add_typer(session_app, name="session")
 app.add_typer(query_app, name="query")
@@ -56,6 +58,8 @@ app.add_typer(proposal_app, name="proposal")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(views_app, name="views")
 app.add_typer(library_app, name="library")
+app.add_typer(harness_app, name="harness")
+app.add_typer(mcp_app, name="mcp")
 app.add_typer(ui_app, name="ui")
 
 
@@ -929,6 +933,35 @@ def library_extract_cmd(
     from seekql.library import extract_library
 
     emit(extract_library(_workspace(), dest))
+
+
+# -- harness -------------------------------------------------------------
+
+
+@harness_app.command("init")
+def harness_init(
+    harness: str = typer.Argument(..., help="cursor | claude-code | codex"),
+    path: Path = typer.Option(Path("."), "--path", help="Repo root to write into."),
+    no_mcp: bool = typer.Option(False, "--no-mcp", help="Omit the MCP note."),
+) -> None:
+    """Generate the skill/instruction file that teaches a harness the seekql protocol."""
+    from seekql.harness import generate_harness
+
+    try:
+        emit(generate_harness(path.resolve(), harness, with_mcp=not no_mcp))
+    except ValueError as e:
+        fail(str(e))
+
+
+# -- mcp -----------------------------------------------------------------
+
+
+@mcp_app.command("serve")
+def mcp_serve() -> None:
+    """Run the MCP server over stdio (for Cursor/Claude Code/Codex MCP configs)."""
+    from seekql.mcp import serve_stdio
+
+    serve_stdio(_workspace())
 
 
 # -- ui ------------------------------------------------------------------
