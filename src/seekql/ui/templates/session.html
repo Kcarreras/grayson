@@ -91,6 +91,49 @@
 {% endfor %}
 {% if not findings %}<div class="card muted">No findings recorded yet.</div>{% endif %}
 
+{% if proposals %}
+<h2>Fix proposals</h2>
+{% for p in proposals %}
+<div class="card">
+  <div class="pill-row" style="justify-content: space-between;">
+    <b>{{ p.title }}</b>
+    <span class="pill-row">
+      <span class="tag">{{ p.kind }}</span>
+      {% if p.status == "proposed" %}<span class="tag warn">awaiting decision</span>
+      {% elif p.status == "approved" %}<span class="tag accent">approved</span>
+      {% elif p.status == "applied" %}<span class="tag accent">applied</span>
+      {% elif p.status == "verified" %}<span class="tag ok">verified</span>
+      {% elif p.status == "verification_failed" %}<span class="tag danger">verification failed</span>
+      {% elif p.status == "rejected" %}<span class="tag danger">rejected</span>
+      {% else %}<span class="tag">{{ p.status }}</span>{% endif %}
+    </span>
+  </div>
+  {% if p.finding_fid %}<div class="muted mono">fixes {{ p.finding_fid }}</div>{% endif %}
+  {% if p.payload.rationale %}<div style="margin:8px 0;">{{ p.payload.rationale }}</div>{% endif %}
+  {% if p.kind == "file_diff" %}
+    <div class="muted mono">target: {{ p.payload.target_file }}</div>
+    {% if p.payload.diff %}<pre class="mono scroll">{{ p.payload.diff }}</pre>{% endif %}
+  {% else %}
+    <pre class="mono scroll">{{ p.payload.ddl }}</pre>
+  {% endif %}
+  {% if p.verification %}
+    <div class="muted" style="margin-top:6px;">
+      verification: <b>{{ p.verification.verdict }}</b>
+      (rows {{ p.verification.comparison.before.row_count }} →
+       {{ p.verification.comparison.after.row_count }})</div>
+  {% endif %}
+  {% if p.status == "proposed" %}
+  <div class="pill-row" style="margin-top:10px;">
+    <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}">
+      <button class="btn secondary" type="submit">Approve</button></form>
+    <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/reject?t={{ token }}">
+      <button class="btn ghost" type="submit">Reject</button></form>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
 <h2>Query log</h2>
 <div class="card scroll">
 <table>

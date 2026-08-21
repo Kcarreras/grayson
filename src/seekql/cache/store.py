@@ -149,6 +149,34 @@ class CacheStore:
         return len(tables)
 
 
+def compare_artifacts(store: CacheStore, before_qid: str, after_qid: str) -> dict:
+    """Deterministic before/after comparison of two cached result sets.
+
+    Used for verification: e.g. an anomaly-count query that should drop to zero,
+    or a parity check whose mismatch set should shrink. Reports row-count delta
+    and, for small identically-shaped sets, whether values are identical.
+    """
+    before = store.get(before_qid)
+    after = store.get(after_qid)
+    missing = [q for q, sc in [(before_qid, before), (after_qid, after)] if sc is None]
+    if missing:
+        raise KeyError(f"unknown artifact(s): {missing}")
+    b_rows = store.preview(before_qid, limit=1000)
+    a_rows = store.preview(after_qid, limit=1000)
+    b_count, a_count = before["row_count"], after["row_count"]
+    same_columns = before["columns"] == after["columns"]
+    identical = same_columns and b_count == a_count and b_count <= 1000 and b_rows == a_rows
+    return {
+        "before": {"qid": before_qid, "row_count": b_count, "columns": before["columns"]},
+        "after": {"qid": after_qid, "row_count": a_count, "columns": after["columns"]},
+        "row_count_delta": a_count - b_count,
+        "same_columns": same_columns,
+        "identical": identical,
+        "before_empty": b_count == 0,
+        "after_empty": a_count == 0,
+    }
+
+
 def staleness(sidecar: dict, current_last_altered: dict[str, str]) -> str:
     """fresh | stale | unknown — compare captured vs current LAST_ALTERED."""
     captured: dict[str, str] = sidecar.get("source_last_altered") or {}

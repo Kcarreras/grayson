@@ -119,3 +119,35 @@ def test_advance_gate_blocks_in_ui(client, session):
     r = client.post(f"/session/{session.id}/advance?t={TOKEN}", data={"to": "review"})
     assert r.status_code == 400
     assert "required checkpoints still open" in r.text
+
+
+def test_proposal_approve_via_ui(client, session):
+    from seekql.core import proposals
+
+    qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    fid = engine.record_finding(
+        session,
+        {
+            "title": "Bad categories",
+            "severity": "high",
+            "confidence": "high",
+            "summary": "Categories are wrong for a meaningful fraction of URLs.",
+            "evidence": [qid],
+        },
+    )["fid"]
+    p = proposals.record_proposal(
+        session,
+        "ddl_snippet",
+        "Fix rule",
+        {"ddl": "CREATE OR REPLACE VIEW v AS SELECT 1", "rationale": "adds finance bucket"},
+        fid,
+    )
+    # renders on the session page
+    page = client.get(f"/session/{session.id}?t={TOKEN}")
+    assert "Fix rule" in page.text and "awaiting decision" in page.text
+    # approve
+    r = client.post(
+        f"/session/{session.id}/proposal/{p['pid']}/approve?t={TOKEN}", follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert session.proposal(p["pid"])["status"] == "approved"

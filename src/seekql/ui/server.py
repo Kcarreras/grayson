@@ -80,6 +80,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "checkpoints": s.checkpoints(),
                 "findings": s.findings(),
                 "interventions": s.interventions(),
+                "proposals": s.proposals(),
                 "queries": s.query_log(100),
                 "events": s.events(40),
             },
@@ -125,6 +126,19 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(e.args[0])) from e
         return _redirect(f"/session/{sid}")
 
+    def _session_context(s: Session, error: str | None = None) -> dict:
+        return {
+            "s": s.summary(),
+            "readiness": engine.readiness(s, workspace.workflows_dir),
+            "checkpoints": s.checkpoints(),
+            "findings": s.findings(),
+            "interventions": s.interventions(),
+            "proposals": s.proposals(),
+            "queries": s.query_log(100),
+            "events": s.events(40),
+            "error": error,
+        }
+
     @app.post("/session/{sid}/advance")
     def advance(request: Request, sid: str, to: str = Form(...), force: bool = Form(False)) -> Any:
         _check(request)
@@ -132,21 +146,25 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         try:
             engine.advance_stage(s, to, "user", force, workspace.workflows_dir)
         except EnforcementError as e:
-            # surface the gate message on the session page
             return templates.TemplateResponse(
-                request,
-                "session.html",
-                {
-                    "s": s.summary(),
-                    "readiness": engine.readiness(s, workspace.workflows_dir),
-                    "checkpoints": s.checkpoints(),
-                    "findings": s.findings(),
-                    "interventions": s.interventions(),
-                    "queries": s.query_log(100),
-                    "events": s.events(40),
-                    "error": str(e),
-                },
-                status_code=400,
+                request, "session.html", _session_context(s, str(e)), status_code=400
+            )
+        return _redirect(f"/session/{sid}")
+
+    @app.post("/session/{sid}/proposal/{pid}/{decision}")
+    def decide_proposal(request: Request, sid: str, pid: str, decision: str) -> Any:
+        _check(request)
+        s = _session(sid)
+        if decision not in {"approve", "reject"}:
+            raise HTTPException(status_code=400, detail="decision must be approve or reject")
+        from seekql.core import proposals as proposals_engine
+        from seekql.core.proposals import ProposalError
+
+        try:
+            proposals_engine.decide(s, pid, approve=(decision == "approve"))
+        except ProposalError as e:
+            return templates.TemplateResponse(
+                request, "session.html", _session_context(s, str(e)), status_code=400
             )
         return _redirect(f"/session/{sid}")
 

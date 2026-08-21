@@ -13,7 +13,9 @@ import typer
 from seekql.cache.local import LocalQueryError, query_artifacts
 from seekql.config import GuardSettings
 from seekql.core import engine
+from seekql.core import proposals as proposals_engine
 from seekql.core.engine import EnforcementError
+from seekql.core.proposals import ProposalError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
 from seekql.core.session import STAGES, Session
 from seekql.interventions import build_request, validate_response
@@ -33,6 +35,7 @@ workflow_app = typer.Typer(help="Workflow templates.", no_args_is_help=True)
 checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_help=True)
 finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_args_is_help=True)
 intervention_app = typer.Typer(help="Human-in-the-loop tasks.", no_args_is_help=True)
+proposal_app = typer.Typer(help="Fix proposals and verification.", no_args_is_help=True)
 ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
 app.add_typer(session_app, name="session")
 app.add_typer(query_app, name="query")
@@ -43,6 +46,7 @@ app.add_typer(workflow_app, name="workflow")
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(finding_app, name="finding")
 app.add_typer(intervention_app, name="intervention")
+app.add_typer(proposal_app, name="proposal")
 app.add_typer(ui_app, name="ui")
 
 
@@ -639,6 +643,103 @@ def intervention_respond(
         fail(str(e.args[0] if e.args else e))
         return
     emit(s.intervention(iid))
+
+
+# -- proposals -----------------------------------------------------------
+
+
+@proposal_app.command("add")
+def proposal_add(
+    session_id: str,
+    kind: str = typer.Option(..., "--kind", "-k", help="file_diff|ddl_snippet"),
+    title: str = typer.Option(..., "--title"),
+    finding: str = typer.Option(None, "--finding", help="Finding id this fixes."),
+    file: Path = typer.Option(None, "--file", "-f", help="JSON proposal payload."),
+    json_str: str = typer.Option(None, "--json"),
+    worker: str = typer.Option(None, "--worker"),
+) -> None:
+    """Draft a fix proposal (file diff or DDL snippet) linked to a finding."""
+    if file and json_str:
+        fail("pass --file or --json, not both")
+    if file:
+        if not file.is_file():
+            fail(f"file not found: {file}")
+        raw = file.read_text(encoding="utf-8")
+    elif json_str:
+        raw = json_str
+    elif not sys.stdin.isatty():
+        raw = sys.stdin.read()
+    else:
+        fail("no payload: use --file, --json, or stdin")
+        return
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        fail(f"invalid JSON: {e}")
+        return
+    s = _session(session_id)
+    try:
+        proposal = proposals_engine.record_proposal(s, kind, title, payload, finding, worker)
+    except ProposalError as e:
+        fail(str(e))
+        return
+    emit(proposal)
+
+
+@proposal_app.command("list")
+def proposal_list(session_id: str, status: str = typer.Option(None, "--status")) -> None:
+    emit(_session(session_id).proposals(status))
+
+
+@proposal_app.command("show")
+def proposal_show(session_id: str, pid: str) -> None:
+    p = _session(session_id).proposal(pid)
+    if p is None:
+        fail(f"no proposal '{pid}'")
+        return
+    emit(p)
+
+
+@proposal_app.command("approve")
+def proposal_approve(session_id: str, pid: str) -> None:
+    """Approve a proposal (a user action). The harness agent then applies it."""
+    try:
+        emit(proposals_engine.decide(_session(session_id), pid, approve=True))
+    except ProposalError as e:
+        fail(str(e))
+
+
+@proposal_app.command("reject")
+def proposal_reject(session_id: str, pid: str) -> None:
+    try:
+        emit(proposals_engine.decide(_session(session_id), pid, approve=False))
+    except ProposalError as e:
+        fail(str(e))
+
+
+@proposal_app.command("applied")
+def proposal_applied(session_id: str, pid: str) -> None:
+    """Mark an approved proposal as applied (agent records this after editing files)."""
+    try:
+        emit(proposals_engine.mark_applied(_session(session_id), pid))
+    except ProposalError as e:
+        fail(str(e))
+
+
+@proposal_app.command("verify")
+def proposal_verify(
+    session_id: str,
+    pid: str,
+    before: str = typer.Option(..., "--before", help="Pre-fix evidence query id."),
+    after: str = typer.Option(..., "--after", help="Post-fix (re-run) query id."),
+    verdict: str = typer.Option(..., "--verdict", help="pass|fail"),
+    note: str = typer.Option("", "--note"),
+) -> None:
+    """Record before/after verification for a proposal, citing executed queries."""
+    try:
+        emit(proposals_engine.verify(_session(session_id), pid, before, after, verdict, note))
+    except ProposalError as e:
+        fail(str(e))
 
 
 # -- ui ------------------------------------------------------------------

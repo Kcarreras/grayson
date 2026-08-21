@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS interventions(
     title TEXT NOT NULL, prompt TEXT, request TEXT NOT NULL,
     response TEXT, responded_at TEXT
 );
+CREATE TABLE IF NOT EXISTS proposals(
+    pid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
+    finding_fid TEXT, kind TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'proposed',
+    title TEXT NOT NULL, payload TEXT NOT NULL,
+    decided_by TEXT, decided_at TEXT, verification TEXT
+);
 """
 
 
@@ -559,6 +565,126 @@ class Session:
         finally:
             con.close()
         self.log_event(actor, "intervention_cancelled", {"iid": iid})
+
+    # -- proposals -------------------------------------------------------
+
+    def add_proposal(
+        self,
+        kind: str,
+        title: str,
+        payload: dict,
+        finding_fid: str | None,
+        worker: str | None = None,
+    ) -> str:
+        con = self._con()
+        try:
+            for _ in range(50):
+                con.execute("BEGIN IMMEDIATE")
+                n = con.execute("SELECT COUNT(*) FROM proposals").fetchone()[0]
+                pid = f"p_{n + 1:03d}"
+                try:
+                    con.execute(
+                        "INSERT INTO proposals(pid, ts, worker, finding_fid, kind, status, "
+                        "title, payload) VALUES(?, ?, ?, ?, ?, 'proposed', ?, ?)",
+                        (
+                            pid,
+                            utcnow(),
+                            worker,
+                            finding_fid,
+                            kind,
+                            title,
+                            json.dumps(payload, default=str),
+                        ),
+                    )
+                    con.commit()
+                    self.log_event(
+                        worker or "agent",
+                        "proposal_added",
+                        {"pid": pid, "kind": kind, "finding": finding_fid},
+                    )
+                    return pid
+                except sqlite3.IntegrityError:
+                    con.rollback()
+            raise RuntimeError("could not allocate proposal id")
+        finally:
+            con.close()
+
+    def _hydrate_proposal(self, row: sqlite3.Row) -> dict:
+        d = dict(row)
+        d["payload"] = json.loads(d["payload"]) if d["payload"] else {}
+        d["verification"] = json.loads(d["verification"]) if d["verification"] else None
+        return d
+
+    def proposals(self, status: str | None = None) -> list[dict]:
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            if status:
+                rows = con.execute(
+                    "SELECT * FROM proposals WHERE status = ? ORDER BY pid", (status,)
+                ).fetchall()
+            else:
+                rows = con.execute("SELECT * FROM proposals ORDER BY pid").fetchall()
+            return [self._hydrate_proposal(r) for r in rows]
+        finally:
+            con.close()
+
+    def proposal(self, pid: str) -> dict | None:
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            row = con.execute("SELECT * FROM proposals WHERE pid = ?", (pid,)).fetchone()
+            return self._hydrate_proposal(row) if row else None
+        finally:
+            con.close()
+
+    def decide_proposal(self, pid: str, status: str, actor: str = "user") -> None:
+        if status not in {"approved", "rejected"}:
+            raise ValueError("status must be approved or rejected")
+        con = self._con()
+        try:
+            cur = con.execute(
+                "UPDATE proposals SET status=?, decided_by=?, decided_at=? "
+                "WHERE pid=? AND status='proposed'",
+                (status, actor, utcnow(), pid),
+            )
+            con.commit()
+            if cur.rowcount == 0:
+                existing = con.execute(
+                    "SELECT status FROM proposals WHERE pid=?", (pid,)
+                ).fetchone()
+                if existing is None:
+                    raise KeyError(f"no proposal '{pid}'")
+                raise ValueError(f"proposal '{pid}' is not pending (status={existing[0]})")
+        finally:
+            con.close()
+        self.log_event(actor, f"proposal_{status}", {"pid": pid})
+
+    def set_proposal_status(self, pid: str, status: str, actor: str = "agent") -> None:
+        con = self._con()
+        try:
+            con.execute("UPDATE proposals SET status=? WHERE pid=?", (status, pid))
+            con.commit()
+        finally:
+            con.close()
+        self.log_event(actor, "proposal_status", {"pid": pid, "status": status})
+
+    def attach_verification(self, pid: str, verification: dict, actor: str = "agent") -> None:
+        con = self._con()
+        try:
+            status = "verified" if verification.get("verdict") == "pass" else "verification_failed"
+            cur = con.execute(
+                "UPDATE proposals SET verification=?, status=? WHERE pid=?",
+                (json.dumps(verification, default=str), status, pid),
+            )
+            con.commit()
+            if cur.rowcount == 0:
+                raise KeyError(f"no proposal '{pid}'")
+        finally:
+            con.close()
+        self.log_event(
+            actor, "proposal_verified", {"pid": pid, "verdict": verification.get("verdict")}
+        )
 
     # -- summary / cleanup ----------------------------------------------
 

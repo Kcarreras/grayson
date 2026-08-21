@@ -148,11 +148,17 @@ setup → analysis → synthesis → review → fixes → verification → close
    must cite query evidence. seekql validates structure + evidence links.
 4. **review** — evidence gate: all required checkpoints closed, all findings validated,
    all interventions resolved. Presented to user in UI; user accepts findings.
-5. **fixes** — agents write proposals (file diff or DDL snippet, each linked to the
-   finding it addresses). User approves/rejects per proposal in UI. Approved file-diffs
-   are applied by the harness agent in the work repo; user reruns definitions.
-6. **verification** — parity/regression checks re-run against the rebuilt objects,
-   compared with cached pre-fix evidence. Pass/fail per finding.
+5. **fixes** — agents write proposals (`file_diff` or `ddl_snippet`, each linked to the
+   finding it addresses and payload-validated). User approves/rejects per proposal in
+   UI/CLI. Approved file-diffs are applied by the harness agent in the work repo (seekql
+   never writes outside its workspace); the agent marks the proposal `applied`; user
+   reruns definitions.
+6. **verification** — the agent re-runs the anomaly/parity query post-fix and records a
+   verification on the proposal citing before and after query ids. seekql computes the
+   before/after comparison deterministically (`compare_artifacts`: row-count delta,
+   emptiness, value identity for small sets) and enforces that both ids were actually
+   executed; the pass/fail verdict rides on that evidence (`verified` /
+   `verification_failed`).
 7. **closed** — session summary generated; durable learnings promoted to the knowledge
    library (user-confirmed facts marked as such).
 
