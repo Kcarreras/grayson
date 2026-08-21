@@ -298,6 +298,18 @@ class Session:
         finally:
             con.close()
 
+    def budget_consumed_count(self) -> int:
+        """Queries counting against the budget: everything allocated except those
+        the guard rejected. Includes 'pending' (in-flight) rows so concurrent
+        workers see each other and cannot all slip under a hard cap (TOCTOU)."""
+        con = self._con()
+        try:
+            return con.execute(
+                "SELECT COUNT(*) FROM queries WHERE status != 'rejected'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+
     def executed_qids(self) -> set[str]:
         con = self._con()
         try:

@@ -13,12 +13,12 @@ from seekql.util import utcnow
 PREVIEW_ROWS = 10
 
 
-def guard_context(session: Session) -> GuardContext:
+def guard_context(session: Session, prior_count: int | None = None) -> GuardContext:
     return GuardContext(
         scope_tables=session.scope_tables,
         allowed_globs=session.workspace.config.scopes.allowed,
         strict_scope=session.strict_scope,
-        executed_count=session.executed_count(),
+        executed_count=session.budget_consumed_count() if prior_count is None else prior_count,
     )
 
 
@@ -37,7 +37,11 @@ def run_statement(
 ) -> dict:
     """Full path: allocate audit row, guard, execute, cache, report."""
     qid = session.allocate_qid(worker, sql, label)
-    verdict = validate_statement(sql, session.guard_settings, guard_context(session))
+    # The pending row for this query already exists; count everything else that
+    # consumes budget (executed + other in-flight) so a hard cap holds under
+    # concurrent workers rather than being a soft per-worker advisory.
+    prior = max(0, session.budget_consumed_count() - 1)
+    verdict = validate_statement(sql, session.guard_settings, guard_context(session, prior))
 
     if not verdict.allowed:
         session.update_query(
@@ -59,7 +63,21 @@ def run_statement(
 
     executor = executor or get_executor(session.connection)
     settings = session.guard_settings
-    result = executor.execute(verdict.executed_sql or sql, settings.timeout_seconds)
+    # Any raise between here and the terminal update would otherwise strand the
+    # audit row at 'pending'. Catch, record the failure, and re-report.
+    try:
+        result = executor.execute(verdict.executed_sql or sql, settings.timeout_seconds)
+    except Exception as e:  # noqa: BLE001 — must not drop the audit row on any failure
+        session.update_query(
+            qid,
+            status="error",
+            sql_executed=verdict.executed_sql,
+            error=f"executor raised: {type(e).__name__}: {e}",
+            warnings=json.dumps(verdict.warnings),
+            tables_json=json.dumps(verdict.tables),
+        )
+        session.log_event(worker or "agent", "query_failed", {"qid": qid, "status": "error"})
+        return {"qid": qid, "status": "error", "error": f"{type(e).__name__}: {e}"}
 
     if not result.ok:
         session.update_query(
@@ -87,15 +105,40 @@ def run_statement(
 
     snapshot = _last_altered_snapshot(session)
     captured = {t: snapshot[t] for t in verdict.tables if t in snapshot}
-    sidecar = session.cache.save(
-        qid,
-        result.rows,
-        sql=verdict.executed_sql or sql,
-        source_tables=verdict.tables,
-        truncated=bool(verdict.injected_limit and len(result.rows) >= verdict.injected_limit),
-        source_last_altered=captured,
-        worker=worker,
-    )
+    # The warehouse statement has already run. If caching the result fails
+    # (disk full, etc.), still record that it executed so the audit and budget
+    # stay accurate — the cache miss is reported, not silently swallowed.
+    try:
+        sidecar = session.cache.save(
+            qid,
+            result.rows,
+            sql=verdict.executed_sql or sql,
+            source_tables=verdict.tables,
+            truncated=bool(verdict.injected_limit and len(result.rows) >= verdict.injected_limit),
+            source_last_altered=captured,
+            worker=worker,
+        )
+    except Exception as e:  # noqa: BLE001 — statement ran; audit must reflect that
+        session.update_query(
+            qid,
+            status="executed",
+            sql_executed=verdict.executed_sql,
+            duration_ms=result.duration_ms,
+            row_count=len(result.rows),
+            error=f"result cache failed: {type(e).__name__}: {e}",
+            warnings=json.dumps(verdict.warnings),
+            tables_json=json.dumps(verdict.tables),
+        )
+        session.log_event(worker or "agent", "cache_failed", {"qid": qid})
+        return {
+            "qid": qid,
+            "status": "executed",
+            "row_count": len(result.rows),
+            "cache_error": f"{type(e).__name__}: {e}",
+            "columns": result.columns,
+            "preview": result.rows[:PREVIEW_ROWS],
+            "warnings": verdict.warnings,
+        }
     session.update_query(
         qid,
         status="executed",

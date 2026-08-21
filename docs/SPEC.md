@@ -175,6 +175,16 @@ The guard sees **every** statement before execution; there is no unguarded path.
   `EXPLAIN`. Everything else — DML, DDL, `CALL`, `COPY`, `USE`, session/account
   alterations — rejected. Rejections name the rule and suggest the compliant path
   (e.g. "propose a view instead").
+- **Function denylist**: side-effecting/scope-bypassing functions are rejected even
+  inside a legal SELECT — the whole `SYSTEM$*` family (session/query mutation:
+  `ABORT_SESSION`, `CANCEL_QUERY`, `WAIT`, …) and `RESULT_SCAN` (reads arbitrary prior
+  results by id, bypassing scope). UDTF/table-function row sources (`TABLE(udtf(...))`)
+  are scope-invisible, so they are blocked in strict mode and warned otherwise; built-in
+  table functions (`GENERATOR`, `FLATTEN`, …) are allowed. Ordinary analytical scalar
+  functions are unaffected.
+- **Strict-scope completeness**: in strict mode, *unqualified* table names (which
+  Snowflake would resolve against the connection's current namespace) are blocked, not
+  just warned — an unverifiable reference is treated as out-of-scope.
 - **Object scoping**: referenced objects are extracted and checked against the session's
   registered scope (target tables, view-library views, `INFORMATION_SCHEMA`, and
   scopes whitelisted in `seekql.toml`). Out-of-scope reads produce a *warning* by

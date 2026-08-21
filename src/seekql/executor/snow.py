@@ -18,6 +18,9 @@ from typing import Protocol
 
 SNOW_CMD_ENV = "SEEKQL_SNOW_CMD"  # JSON list overriding the snow binary (tests, wrappers)
 
+# Substrings that reliably indicate an auth/session problem. Kept specific so
+# ordinary SQL errors are not misclassified as auth_required (which would halt
+# the agent with a bogus re-auth prompt).
 _AUTH_MARKERS = [
     "authentication token has expired",
     "authentication token is invalid",
@@ -25,13 +28,16 @@ _AUTH_MARKERS = [
     "jwt token is invalid",
     "oauth access token expired",
     "id token is invalid",
-    "sso",
+    "sso authentication",
+    "browser flow",
     "390104",
     "390114",
     "390195",
     "incorrect username or password",
-    "connection.*not found",
+    "could not connect to snowflake",
+    "250001",
 ]
+_AUTH_MARKER_RES = [re.compile(r"connection\b.*\bnot found")]
 _TIMEOUT_MARKERS = ["statement reached its statement or warehouse timeout", "604 "]
 
 
@@ -68,12 +74,12 @@ def _snow_command() -> list[str]:
 
 def classify_failure(stderr: str, stdout: str = "") -> str:
     text = f"{stderr}\n{stdout}".lower()
-    for marker in _AUTH_MARKERS:
-        if re.search(marker, text):
-            return "auth_required"
-    for marker in _TIMEOUT_MARKERS:
-        if marker in text:
-            return "timeout"
+    if any(marker in text for marker in _AUTH_MARKERS):
+        return "auth_required"
+    if any(rx.search(text) for rx in _AUTH_MARKER_RES):
+        return "auth_required"
+    if any(marker in text for marker in _TIMEOUT_MARKERS):
+        return "timeout"
     return "error"
 
 
@@ -161,7 +167,7 @@ class SnowExecutor:
         return ExecutionResult(status="ok", rows=rows, columns=columns, duration_ms=duration_ms)
 
 
-_IDENT_RE = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
+_IDENT_RE = re.compile(r"[A-Z_][A-Z0-9_$]*\Z")  # \Z: true end, not before trailing \n
 
 
 def metadata_query(tables: list[str]) -> str | None:

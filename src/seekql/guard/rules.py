@@ -58,9 +58,20 @@ FORBIDDEN_TYPES: tuple[type[exp.Expression], ...] = tuple(
 )
 
 _SET_OPERATION: type[exp.Expression] = getattr(exp, "SetOperation", exp.Union)
+_TABLE_FROM_ROWS: type[exp.Expression] | None = getattr(exp, "TableFromRows", None)
 
 ALWAYS_ALLOWED_SCHEMAS = {"INFORMATION_SCHEMA"}
 ALWAYS_ALLOWED_CATALOGS = {"SNOWFLAKE"}
+
+# Scalar/table functions denied outright. SYSTEM$* is denied by prefix because
+# the family includes session/query-mutating side effects (ABORT_SESSION,
+# CANCEL_QUERY, WAIT); QA never needs them. RESULT_SCAN reads arbitrary prior
+# query output by id, bypassing scope — agents use seekql's own cache instead.
+DENIED_FUNCTIONS = {"RESULT_SCAN", "GET_ABSOLUTE_PATH", "GET_PRESIGNED_URL", "GET_STAGE_LOCATION"}
+DENIED_FUNCTION_PREFIXES = ("SYSTEM$",)
+
+# Built-in table functions that are safe as row sources (no scope/exfil concern).
+SAFE_TABLE_FUNCTIONS = {"GENERATOR", "FLATTEN", "SPLIT_TO_TABLE", "EXPLODE"}
 
 _SHOW_RE = re.compile(
     r"^\s*SHOW\s+(TERSE\s+)?"
@@ -197,14 +208,48 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
                 "read-only SELECT statements only; SELECT INTO, DML, and DDL are blocked",
             )
 
+    # -- denied functions (side-effecting/scope-bypassing built-ins & UDTFs).
+    #    Anonymous nodes carry the raw function name; typed exp.Func built-ins
+    #    (COUNT, SUM, GENERATOR, ...) are analytical and always fine.
+    for fn in tree.find_all(exp.Anonymous):
+        fname = str(fn.this or "").upper()
+        if fname in DENIED_FUNCTIONS or fname.startswith(DENIED_FUNCTION_PREFIXES):
+            return _reject(
+                "denied_function",
+                f"function '{fname}' is not allowed",
+                "this function can cause side effects or bypass scope; it is blocked "
+                "for read-only QA. Use a plain SELECT over the target tables instead.",
+            )
+
     # -- table extraction & scope check
     cte_names = {c.alias_or_name.upper() for c in tree.find_all(exp.CTE) if c.alias_or_name}
     tables: list[str] = []
     warnings: list[str] = []
+
+    # UDTF row sources (TABLE(udtf(...))) are invisible to the table scope check
+    # and could read/exfiltrate outside scope. Built-in table funcs are safe.
+    for tfr in _table_function_sources(tree):
+        anon = tfr.find(exp.Anonymous)
+        if anon is None:
+            continue  # typed built-in table function (GENERATOR, FLATTEN, ...)
+        fname = str(anon.this or "").upper()
+        if fname in SAFE_TABLE_FUNCTIONS:
+            continue
+        if context.strict_scope:
+            return _reject(
+                "table_function_scope",
+                f"table function '{fname}' cannot be scope-checked (strict mode)",
+                "table/UDTF functions can read outside the session scope; run a plain "
+                "SELECT over registered tables, or ask the user to relax strict scope",
+            )
+        warnings.append(
+            f"table function '{fname}' is not scope-checked — verify it reads only in-scope data"
+        )
+
     for t in tree.find_all(exp.Table):
         name = (t.name or "").upper()
         if not name:
-            continue  # table functions like TABLE(GENERATOR(...))
+            continue  # function-backed source, handled above
         catalog = (t.catalog or "").upper()
         schema = (t.db or "").upper()
         if not catalog and not schema and name in cte_names:
@@ -215,19 +260,27 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
             continue
         if fq in context.scope_tables:
             continue
-        if not schema:
-            warnings.append(f"unqualified table '{fq}' cannot be scope-checked")
-            continue
         schema_key = f"{catalog}.{schema}" if catalog else schema
-        if any(fnmatch(schema_key, g.upper()) for g in context.allowed_globs):
+        if schema and any(fnmatch(schema_key, g.upper()) for g in context.allowed_globs):
             continue
         if context.strict_scope:
+            # Unqualified names cannot be verified against scope; in strict mode
+            # that ambiguity is itself a block (Snowflake resolves them against
+            # the connection's current namespace, i.e. potentially anything).
+            detail = (
+                f"table '{fq}' is outside the session scope (strict mode)"
+                if schema
+                else f"unqualified table '{fq}' cannot be scope-verified (strict mode)"
+            )
             return _reject(
                 "out_of_scope",
-                f"table '{fq}' is outside the session scope (strict mode)",
+                detail,
                 "register the table at session start or ask the user to widen scope",
             )
-        warnings.append(f"table '{fq}' is outside the session scope")
+        if not schema:
+            warnings.append(f"unqualified table '{fq}' cannot be scope-checked")
+        else:
+            warnings.append(f"table '{fq}' is outside the session scope")
 
     # -- budget warn threshold
     if settings.budget_warn and context.executed_count + 1 >= settings.budget_warn:
@@ -254,6 +307,22 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
         injected_limit=injected,
         aggregate_only=aggregate_only,
     )
+
+
+def _table_function_sources(tree: exp.Expression) -> list[exp.Expression]:
+    """Row sources backed by a function call: TABLE(fn(...)) and bare fn('...').
+
+    These do not appear as normal exp.Table references, so the scope loop can
+    miss them. Returns the wrapper nodes for inspection.
+    """
+    sources: list[exp.Expression] = []
+    if _TABLE_FROM_ROWS is not None:
+        sources.extend(tree.find_all(_TABLE_FROM_ROWS))
+    # bare form: exp.Table with empty name but a function child (e.g. RESULT_SCAN)
+    for t in tree.find_all(exp.Table):
+        if not (t.name or "") and t.find(exp.Anonymous) is not None:
+            sources.append(t)
+    return sources
 
 
 def _existing_limit(tree: exp.Expression) -> int | None:
