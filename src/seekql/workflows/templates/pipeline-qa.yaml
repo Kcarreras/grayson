@@ -1,0 +1,43 @@
+name: pipeline-qa
+title: Pipeline / Transform QA
+description: >
+  QA two or more tables that form a pipeline: reconcile stage-to-stage,
+  validate that the transform logic did what it should, and surface rows lost,
+  duplicated, or corrupted between stages.
+suggested_guard_profile: moderate
+setup_inputs:
+  - key: pipeline_stages
+    prompt: >
+      List the pipeline stages in order (source → ... → output), with the
+      fully-qualified table name for each.
+    required: true
+  - key: transform_intent
+    prompt: What is each transform meant to do? Joins, filters, aggregations, dedup logic.
+    required: true
+  - key: grain
+    prompt: What is the grain (one row per what?) at each stage, and the key columns?
+    required: true
+required_checks:
+  - key: rowcount_reconciliation
+    title: Reconcile row counts across stages
+    description: >
+      Account for the row-count delta between each pair of adjacent stages.
+      Every drop or gain must be explained by a known filter/join/dedup, not
+      left as a mystery.
+  - key: key_integrity
+    title: Check key integrity
+    description: >
+      Verify grain and key uniqueness at each stage; check for unexpected
+      duplicates, nulls in keys, and orphaned keys across joins.
+  - key: transform_logic
+    title: Validate transform logic
+    description: >
+      Spot-check that the declared transform intent matches reality: sample
+      records through the transform and confirm values are derived correctly.
+  - key: boundary_values
+    title: Check boundaries and edge partitions
+    description: >
+      Inspect nulls, zeros, negatives, extreme dates, and the newest/oldest
+      partitions where transform bugs concentrate.
+open_stages: [analysis]
+findings_schema: standard_v1

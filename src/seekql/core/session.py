@@ -32,6 +32,16 @@ CREATE TABLE IF NOT EXISTS queries(
     duration_ms INTEGER, row_count INTEGER, truncated INTEGER,
     tables_json TEXT, error TEXT, label TEXT
 );
+CREATE TABLE IF NOT EXISTS checkpoints(
+    key TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+    evidence TEXT, note TEXT, completed_by TEXT, completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS findings(
+    fid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
+    schema_name TEXT NOT NULL, severity TEXT, confidence TEXT,
+    title TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0,
+    payload TEXT NOT NULL
+);
 """
 
 
@@ -287,6 +297,153 @@ class Session:
             ]
         finally:
             con.close()
+
+    def executed_qids(self) -> set[str]:
+        con = self._con()
+        try:
+            rows = con.execute("SELECT qid FROM queries WHERE status = 'executed'").fetchall()
+            return {r[0] for r in rows}
+        finally:
+            con.close()
+
+    def query_tables(self, qid: str) -> list[str]:
+        row = self.query_row(qid)
+        if not row or not row.get("tables_json"):
+            return []
+        try:
+            return json.loads(row["tables_json"])
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    # -- checkpoints -----------------------------------------------------
+
+    def seed_checkpoints(self, checks: list[tuple[str, str]]) -> None:
+        con = self._con()
+        try:
+            con.executemany(
+                "INSERT OR IGNORE INTO checkpoints(key, title, status) VALUES(?, ?, 'open')",
+                checks,
+            )
+            con.commit()
+        finally:
+            con.close()
+
+    def checkpoints(self) -> list[dict]:
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                "SELECT key, title, status, evidence, note, completed_by, completed_at "
+                "FROM checkpoints ORDER BY rowid"
+            ).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
+                out.append(d)
+            return out
+        finally:
+            con.close()
+
+    def checkpoint(self, key: str) -> dict | None:
+        return next((c for c in self.checkpoints() if c["key"] == key), None)
+
+    def complete_checkpoint(self, key: str, evidence: list[str], note: str, actor: str) -> None:
+        con = self._con()
+        try:
+            cur = con.execute(
+                "UPDATE checkpoints SET status='complete', evidence=?, note=?, "
+                "completed_by=?, completed_at=? WHERE key=?",
+                (json.dumps(evidence), note, actor, utcnow(), key),
+            )
+            con.commit()
+            if cur.rowcount == 0:
+                raise KeyError(f"no checkpoint '{key}'")
+        finally:
+            con.close()
+        self.log_event(actor, "checkpoint_completed", {"key": key, "evidence": evidence})
+
+    def reopen_checkpoint(self, key: str, actor: str = "user") -> None:
+        con = self._con()
+        try:
+            con.execute("UPDATE checkpoints SET status='open' WHERE key=?", (key,))
+            con.commit()
+        finally:
+            con.close()
+        self.log_event(actor, "checkpoint_reopened", {"key": key})
+
+    # -- findings --------------------------------------------------------
+
+    def add_finding(
+        self,
+        schema_name: str,
+        severity: str,
+        confidence: str,
+        title: str,
+        payload: dict,
+        worker: str | None = None,
+    ) -> str:
+        con = self._con()
+        try:
+            for _ in range(50):
+                con.execute("BEGIN IMMEDIATE")
+                n = con.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+                fid = f"f_{n + 1:03d}"
+                try:
+                    con.execute(
+                        "INSERT INTO findings(fid, ts, worker, schema_name, severity, "
+                        "confidence, title, payload) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            fid,
+                            utcnow(),
+                            worker,
+                            schema_name,
+                            severity,
+                            confidence,
+                            title,
+                            json.dumps(payload, default=str),
+                        ),
+                    )
+                    con.commit()
+                    self.log_event(worker or "agent", "finding_added", {"fid": fid})
+                    return fid
+                except sqlite3.IntegrityError:
+                    con.rollback()
+            raise RuntimeError("could not allocate finding id")
+        finally:
+            con.close()
+
+    def findings(self) -> list[dict]:
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                "SELECT fid, ts, worker, schema_name, severity, confidence, title, "
+                "accepted, payload FROM findings ORDER BY fid"
+            ).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["payload"] = json.loads(d["payload"])
+                d["accepted"] = bool(d["accepted"])
+                out.append(d)
+            return out
+        finally:
+            con.close()
+
+    def finding(self, fid: str) -> dict | None:
+        return next((f for f in self.findings() if f["fid"] == fid), None)
+
+    def accept_finding(self, fid: str, actor: str = "user") -> None:
+        con = self._con()
+        try:
+            cur = con.execute("UPDATE findings SET accepted=1 WHERE fid=?", (fid,))
+            con.commit()
+            if cur.rowcount == 0:
+                raise KeyError(f"no finding '{fid}'")
+        finally:
+            con.close()
+        self.log_event(actor, "finding_accepted", {"fid": fid})
 
     # -- summary / cleanup ----------------------------------------------
 

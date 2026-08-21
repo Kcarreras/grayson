@@ -1,0 +1,41 @@
+name: semantic-rule-qa
+title: Semantic Rule QA
+description: >
+  Validate a business rule or taxonomy that cannot be judged from data shape
+  alone — e.g. whether URL categorization is correct. Combines automated
+  profiling with human labeling loops that feed the agent's analysis.
+suggested_guard_profile: moderate
+setup_inputs:
+  - key: rule_description
+    prompt: What rule or taxonomy is being validated? How is it supposed to work?
+    required: true
+  - key: rule_location
+    prompt: Where is the rule implemented (column, transform file, logic)?
+    required: true
+  - key: correctness_criteria
+    prompt: What makes an assignment correct vs incorrect? Who can adjudicate edge cases?
+    required: true
+required_checks:
+  - key: rule_coverage
+    title: Profile rule coverage
+    description: >
+      Distribution of assigned categories, including the fallback/"other"
+      bucket; flag if coverage deviates from expectation.
+  - key: sample_for_review
+    title: Draw a review sample and get human labels
+    description: >
+      Draw a representative (and edge-weighted) sample and route it through a
+      human-labeling intervention; agents may not self-certify semantic
+      correctness.
+  - key: accuracy_estimate
+    title: Estimate accuracy from labels
+    description: >
+      Using returned human labels, estimate assignment accuracy and characterize
+      the error modes (which categories are confused, systematic biases).
+  - key: error_pattern_analysis
+    title: Analyze error patterns
+    description: >
+      For misassignments, find the shared structure (URL pattern, source,
+      regex gap) that explains them and points to a fix.
+open_stages: [analysis]
+findings_schema: standard_v1

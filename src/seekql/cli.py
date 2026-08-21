@@ -12,8 +12,11 @@ import typer
 
 from seekql.cache.local import LocalQueryError, query_artifacts
 from seekql.config import GuardSettings
+from seekql.core import engine
+from seekql.core.engine import EnforcementError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
 from seekql.core.session import STAGES, Session
+from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
 
 app = typer.Typer(
@@ -24,11 +27,17 @@ query_app = typer.Typer(help="Guarded query execution.", no_args_is_help=True)
 cache_app = typer.Typer(help="Cached results: find, preview, analyze.", no_args_is_help=True)
 worker_app = typer.Typer(help="Parallel worker registration.", no_args_is_help=True)
 guard_app = typer.Typer(help="Statement validation.", no_args_is_help=True)
+workflow_app = typer.Typer(help="Workflow templates.", no_args_is_help=True)
+checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_help=True)
+finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_args_is_help=True)
 app.add_typer(session_app, name="session")
 app.add_typer(query_app, name="query")
 app.add_typer(cache_app, name="cache")
 app.add_typer(worker_app, name="worker")
 app.add_typer(guard_app, name="guard")
+app.add_typer(workflow_app, name="workflow")
+app.add_typer(checkpoint_app, name="checkpoint")
+app.add_typer(finding_app, name="finding")
 
 
 def emit(obj: object) -> None:
@@ -159,7 +168,12 @@ def session_start(
     """Start a QA session. Guard profile is resolved then per-setting overrides apply."""
     ws = _workspace()
     try:
-        settings = ws.config.resolve_profile(guard_profile)
+        tpl = get_workflow(workflow, ws.workflows_dir)
+    except WorkflowNotFound as e:
+        fail(str(e))
+        return
+    try:
+        settings = ws.config.resolve_profile(guard_profile or tpl.suggested_guard_profile)
     except KeyError as e:
         fail(str(e.args[0]))
         return
@@ -177,12 +191,22 @@ def session_start(
         workflow=workflow,
         targets=tables,
         guard=settings,
-        guard_profile=guard_profile or ws.config.default_guard_profile,
+        guard_profile=guard_profile or tpl.suggested_guard_profile,
         title=title,
         workers=workers,
         strict_scope=strict_scope,
     )
-    result = {"session": session.summary()}
+    engine.seed_from_workflow(session, ws.workflows_dir)
+    result = {
+        "session": session.summary(),
+        "workflow": {
+            "name": tpl.name,
+            "title": tpl.title,
+            "setup_inputs": [i.model_dump() for i in tpl.setup_inputs],
+            "required_checks": [c.model_dump() for c in tpl.required_checks],
+            "findings_schema": tpl.findings_schema,
+        },
+    }
     if not skip_snapshot:
         result["metadata_snapshot"] = snapshot_metadata(session)
     emit(result)
@@ -219,14 +243,22 @@ def session_advance(
     session_id: str,
     stage: str = typer.Option(..., "--to", help=f"One of: {', '.join(STAGES)}"),
     actor: str = typer.Option("user", "--actor"),
+    force: bool = typer.Option(False, "--force", help="Override evidence gates (audited)."),
 ) -> None:
+    """Advance the stage. Evidence gates block review/fixes unless satisfied or forced."""
     s = _session(session_id)
     try:
-        s.set_stage(stage, actor)
-    except ValueError as e:
+        result = engine.advance_stage(s, stage, actor, force, _workspace().workflows_dir)
+    except EnforcementError as e:
         fail(str(e))
         return
-    emit({"id": session_id, "stage": s.stage})
+    emit({"id": session_id, "stage": s.stage, "readiness": result})
+
+
+@session_app.command("readiness")
+def session_readiness(session_id: str) -> None:
+    """What still blocks the next gated transition?"""
+    emit(engine.readiness(_session(session_id), _workspace().workflows_dir))
 
 
 @session_app.command("budget")
@@ -346,6 +378,143 @@ def cache_query(
             "rows": [dict(zip(columns, r, strict=True)) for r in data],
         }
     )
+
+
+# -- workflow ------------------------------------------------------------
+
+
+@workflow_app.command("list")
+def workflow_list() -> None:
+    """List available workflow templates (built-in + workspace overrides)."""
+    try:
+        ws = Workspace.find()
+        overrides = ws.workflows_dir
+    except FileNotFoundError:
+        overrides = None
+    emit(
+        [
+            {
+                "name": t.name,
+                "title": t.title,
+                "description": t.description.strip(),
+                "suggested_guard_profile": t.suggested_guard_profile,
+                "required_checks": t.required_check_keys(),
+                "findings_schema": t.findings_schema,
+            }
+            for t in list_workflows(overrides)
+        ]
+    )
+
+
+@workflow_app.command("show")
+def workflow_show(name: str) -> None:
+    """Show a workflow template's full definition (setup inputs, checks, schema)."""
+    try:
+        ws = Workspace.find()
+        overrides = ws.workflows_dir
+    except FileNotFoundError:
+        overrides = None
+    try:
+        emit(get_workflow(name, overrides).model_dump())
+    except WorkflowNotFound as e:
+        fail(str(e))
+
+
+# -- checkpoint ----------------------------------------------------------
+
+
+@checkpoint_app.command("list")
+def checkpoint_list(session_id: str) -> None:
+    emit(_session(session_id).checkpoints())
+
+
+@checkpoint_app.command("complete")
+def checkpoint_complete(
+    session_id: str,
+    key: str,
+    evidence: list[str] = typer.Option([], "--evidence", "-e", help="Executed query ids."),
+    note: str = typer.Option("", "--note"),
+    actor: str = typer.Option("agent", "--actor"),
+) -> None:
+    """Close a checkpoint — requires evidence (executed query ids) that exist."""
+    s = _session(session_id)
+    try:
+        cp = engine.complete_checkpoint(s, key, evidence, note, actor, _workspace().workflows_dir)
+    except EnforcementError as e:
+        fail(str(e))
+        return
+    emit(cp)
+
+
+@checkpoint_app.command("reopen")
+def checkpoint_reopen(session_id: str, key: str) -> None:
+    s = _session(session_id)
+    s.reopen_checkpoint(key)
+    emit(s.checkpoint(key))
+
+
+# -- findings ------------------------------------------------------------
+
+
+@finding_app.command("add")
+def finding_add(
+    session_id: str,
+    file: Path = typer.Option(None, "--file", "-f", help="JSON finding payload."),
+    json_str: str = typer.Option(None, "--json", help="Inline JSON finding payload."),
+    worker: str = typer.Option(None, "--worker"),
+) -> None:
+    """Record a finding — validated against the workflow schema and evidence."""
+    if file and json_str:
+        fail("pass --file or --json, not both")
+    if file:
+        if not file.is_file():
+            fail(f"file not found: {file}")
+        raw = file.read_text(encoding="utf-8")
+    elif json_str:
+        raw = json_str
+    elif not sys.stdin.isatty():
+        raw = sys.stdin.read()
+    else:
+        fail("no finding payload: use --file, --json, or stdin")
+        return
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        fail(f"invalid JSON: {e}")
+        return
+    s = _session(session_id)
+    try:
+        finding = engine.record_finding(s, payload, worker, _workspace().workflows_dir)
+    except EnforcementError as e:
+        fail(str(e))
+        return
+    emit(finding)
+
+
+@finding_app.command("list")
+def finding_list(session_id: str) -> None:
+    emit(_session(session_id).findings())
+
+
+@finding_app.command("show")
+def finding_show(session_id: str, fid: str) -> None:
+    f = _session(session_id).finding(fid)
+    if f is None:
+        fail(f"no finding '{fid}'")
+        return
+    emit(f)
+
+
+@finding_app.command("accept")
+def finding_accept(session_id: str, fid: str) -> None:
+    """Accept a finding (a user action in the review stage)."""
+    s = _session(session_id)
+    try:
+        s.accept_finding(fid)
+    except KeyError as e:
+        fail(str(e.args[0]))
+        return
+    emit(s.finding(fid))
 
 
 def main() -> None:

@@ -91,3 +91,79 @@ def test_init_is_idempotent_guard(tmp_path, monkeypatch):
     invoke("init", str(tmp_path / "w1"))
     result = runner.invoke(app, ["init", str(tmp_path / "w1")])
     assert result.exit_code == 1
+
+
+def test_workflow_list_and_show(workspace):
+    names = {w["name"] for w in invoke("workflow", "list")}
+    assert "bug-hunter" in names
+    show = invoke("workflow", "show", "bug-hunter")
+    assert show["findings_schema"] == "bug_hunter_v1"
+
+
+def test_unknown_workflow_start_fails(workspace, fake_snow_env):
+    result = runner.invoke(app, ["session", "start", "--workflow", "nope", "--table", "DB.S.T1"])
+    assert result.exit_code == 1
+
+
+def test_checkpoint_and_findings_flow(workspace, fake_snow_env):
+    out = invoke(
+        "session",
+        "start",
+        "--workflow",
+        "bug-hunter",
+        "--table",
+        "DB.S.T1",
+        "--title",
+        "bug",
+    )
+    sid = out["session"]["id"]
+    assert out["workflow"]["required_checks"]
+
+    # checkpoints seeded and open
+    cps = invoke("checkpoint", "list", sid)
+    assert cps and all(c["status"] == "open" for c in cps)
+
+    # cannot enter review yet
+    blocked = runner.invoke(app, ["session", "advance", sid, "--to", "review"])
+    assert blocked.exit_code == 1
+
+    # run a query for evidence
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    qid = run["qid"]
+
+    # completing a checkpoint without evidence fails
+    no_ev = runner.invoke(app, ["checkpoint", "complete", sid, "replicate_anomaly"])
+    assert no_ev.exit_code == 1
+
+    # complete every checkpoint with evidence
+    for c in cps:
+        invoke("checkpoint", "complete", sid, c["key"], "-e", qid, "--note", "done")
+
+    ready = invoke("session", "readiness", sid)
+    assert ready["checks_complete"]
+
+    # add a finding
+    finding = {
+        "title": "Fan-out duplicates in output",
+        "severity": "high",
+        "confidence": "high",
+        "summary": "A one-to-many join duplicates rows in the final table.",
+        "evidence": [qid],
+        "extra": {
+            "root_cause": "join fan-out on non-unique key",
+            "blast_radius": "1200 rows since 2026-08-01",
+            "alternatives_tested": "source dup and dedup bug both ruled out",
+        },
+    }
+    added = invoke("finding", "add", sid, "--json", json.dumps(finding))
+    assert added["fid"] == "f_001"
+
+    # now review is reachable
+    adv = invoke("session", "advance", sid, "--to", "review")
+    assert adv["stage"] == "review"
+
+    invoke("finding", "accept", sid, "f_001")
+    assert invoke("finding", "show", sid, "f_001")["accepted"] is True
+
+    # fixes reachable now that a finding exists
+    invoke("session", "advance", sid, "--to", "fixes")

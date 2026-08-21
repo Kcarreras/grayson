@@ -1,0 +1,44 @@
+name: bug-hunter
+title: Bug Hunter
+description: >
+  Replicate a user-reported data anomaly and isolate its source. The user
+  describes something they cannot explain — an impossible value, a duplicated
+  row, a count that does not reconcile — and the agent reproduces it, bounds
+  it, and traces it to a cause.
+suggested_guard_profile: moderate
+setup_inputs:
+  - key: anomaly_description
+    prompt: What is the anomaly? Describe what you observed and why it is unexpected.
+    required: true
+  - key: example_locator
+    prompt: >
+      How can the anomaly be located? A filter, key values, a date range, or
+      sample rows that exhibit it.
+    required: true
+  - key: expectation
+    prompt: What did you expect to see instead, and what rule makes you expect it?
+    required: true
+required_checks:
+  - key: replicate_anomaly
+    title: Reproduce the anomaly in a query
+    description: >
+      Produce a query whose result set demonstrates the reported anomaly. This
+      is the anchor for everything else — no cause-hunting until it reproduces.
+  - key: scope_blast_radius
+    title: Bound the blast radius
+    description: >
+      Quantify how widespread the anomaly is — how many rows/keys/partitions,
+      over what time range, since when. Distinguishes a one-off from systemic.
+  - key: upstream_trace
+    title: Trace toward the source
+    description: >
+      Walk the lineage from the symptom toward its origin, checking at each
+      stage whether the anomaly is already present. Isolate the earliest stage
+      that exhibits it.
+  - key: rule_out_alternatives
+    title: Test competing explanations
+    description: >
+      Enumerate at least two plausible causes and test each with evidence.
+      A single unfalsified hypothesis is not a conclusion.
+open_stages: [analysis]
+findings_schema: bug_hunter_v1

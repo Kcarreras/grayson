@@ -1,0 +1,43 @@
+name: migration-parity
+title: Migration / Parity Check
+description: >
+  Compare an old and a new version of a table after a definition change —
+  row counts, schema, key sets, and value-level parity. Also serves as the
+  built-in verification stage for every other workflow (before vs after a fix).
+suggested_guard_profile: moderate
+setup_inputs:
+  - key: old_table
+    prompt: The baseline (old / pre-change) fully-qualified table or view.
+    required: true
+  - key: new_table
+    prompt: The candidate (new / post-change) fully-qualified table or view.
+    required: true
+  - key: key_columns
+    prompt: The key column(s) that identify a row for row-to-row comparison.
+    required: true
+  - key: expected_differences
+    prompt: >
+      What differences are expected and acceptable (the intent of the change)?
+      Everything else is a parity violation to surface.
+    required: false
+required_checks:
+  - key: schema_parity
+    title: Compare schemas
+    description: Column names, types, and nullability; flag additions, drops, and type changes.
+  - key: rowcount_parity
+    title: Compare row counts and key sets
+    description: >
+      Total counts and the set of keys present in each; quantify keys only in
+      old, only in new, and in both.
+  - key: value_parity
+    title: Compare values on shared keys
+    description: >
+      For keys in both, compare column values and quantify mismatches per
+      column, separating expected changes from regressions.
+  - key: aggregate_parity
+    title: Compare key aggregates
+    description: >
+      Compare sums/averages/distinct-counts of important measures to catch
+      drift that row sampling could miss.
+open_stages: [analysis]
+findings_schema: parity_v1

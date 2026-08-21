@@ -1,0 +1,39 @@
+name: table-health
+title: Single-Table Health Check
+description: >
+  Validate one table's health: nulls, duplicates, distributions, freshness,
+  schema drift, and orphaned keys. A fast baseline for a new or existing table.
+suggested_guard_profile: moderate
+setup_inputs:
+  - key: table
+    prompt: The fully-qualified table to check.
+    required: true
+  - key: grain
+    prompt: What is the intended grain (one row per what?) and the key column(s)?
+    required: true
+  - key: known_expectations
+    prompt: >
+      Any known expectations — columns that should never be null, expected
+      value ranges or categories, expected freshness cadence.
+    required: false
+required_checks:
+  - key: grain_uniqueness
+    title: Verify grain and uniqueness
+    description: Confirm the key is unique at the declared grain; quantify any duplicates.
+  - key: null_completeness
+    title: Check nulls and completeness
+    description: >
+      Null rates per column; flag columns expected non-null that are not, and
+      unexpected all-null or constant columns.
+  - key: distributions
+    title: Profile distributions
+    description: >
+      Cardinality and value distribution of key dimensions; surface outliers,
+      unexpected categories, and suspicious spikes.
+  - key: freshness
+    title: Check freshness
+    description: >
+      Confirm the newest data matches the expected cadence and there are no
+      gaps or stale partitions.
+open_stages: [analysis]
+findings_schema: standard_v1
