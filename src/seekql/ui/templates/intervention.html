@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}seekql — {{ item.title }}{% endblock %}
+{% block content %}
+<p><a href="/session/{{ sid }}?t={{ token }}">← back to session</a></p>
+<h1>{{ item.title }}</h1>
+<div class="pill-row"><span class="tag warn">{{ item.kind }}</span>
+  <span class="tag">{{ item.status }}</span></div>
+{% if item.prompt %}<p class="muted">{{ item.prompt }}</p>{% endif %}
+
+{% if item.status != "open" %}
+<div class="card">This intervention is <b>{{ item.status }}</b>.
+  {% if item.response %}<pre class="mono scroll">{{ item.response | tojson(indent=2) }}</pre>{% endif %}
+</div>
+{% else %}
+<form method="post" action="/session/{{ sid }}/intervention/{{ item.iid }}/respond?t={{ token }}">
+{% set r = item.request %}
+
+{% if item.kind == "label_sample" %}
+  {% if r.instructions %}<div class="card muted">{{ r.instructions }}</div>{% endif %}
+  <div class="card scroll">
+  <table>
+    <tr><th>#</th>
+      {% for col in r.rows[0].keys() %}<th>{{ col }}</th>{% endfor %}
+      <th>label</th>{% if r.allow_notes %}<th>note</th>{% endif %}</tr>
+    {% for row in r.rows %}
+    <tr>
+      <td class="muted mono">{{ loop.index0 }}</td>
+      {% for col in r.rows[0].keys() %}<td class="mono">{{ row[col] }}</td>{% endfor %}
+      <td>
+        <select name="label_{{ loop.index0 }}">
+          <option value="">—</option>
+          {% for lab in r.labels %}<option value="{{ lab }}">{{ lab }}</option>{% endfor %}
+        </select>
+      </td>
+      {% if r.allow_notes %}<td><input type="text" name="note_{{ loop.index0 }}"></td>{% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+
+{% elif item.kind == "confirm_semantics" %}
+  <div class="card">
+    <p><b>Confirm or deny:</b> {{ r.statement }}</p>
+    {% if r.context %}<p class="muted">{{ r.context }}</p>{% endif %}
+    {% if r.sample %}<pre class="mono scroll">{{ r.sample | tojson(indent=2) }}</pre>{% endif %}
+    <div class="pill-row">
+      <label><input type="radio" name="decision" value="confirm" required> confirm</label>
+      <label><input type="radio" name="decision" value="deny"> deny</label>
+      <label><input type="radio" name="decision" value="unsure"> unsure</label>
+    </div>
+    <textarea name="note" rows="3" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
+  </div>
+
+{% elif item.kind == "choose" %}
+  <div class="card">
+    {% if r.question %}<p>{{ r.question }}</p>{% endif %}
+    {% for opt in r.options %}
+    <div><label>
+      <input type="{{ 'checkbox' if r.multi else 'radio' }}" name="selected" value="{{ opt }}"
+        {% if not r.multi %}required{% endif %}> {{ opt }}</label></div>
+    {% endfor %}
+    <textarea name="note" rows="2" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
+  </div>
+
+{% else %}
+  <div class="card">
+    {% if r.question %}<p>{{ r.question }}</p>{% endif %}
+    {% if r.context %}<p class="muted">{{ r.context }}</p>{% endif %}
+    <textarea name="text" rows="5" placeholder="your response" required></textarea>
+  </div>
+{% endif %}
+
+<button class="btn" type="submit">Submit response</button>
+</form>
+{% endif %}
+{% endblock %}

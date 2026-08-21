@@ -3,8 +3,8 @@ from __future__ import annotations
 import threading
 
 import pytest
-from conftest import FakeExecutor
 
+from conftest import FakeExecutor
 from seekql.config import GuardSettings
 from seekql.core.run import run_statement, snapshot_metadata
 from seekql.core.session import Session

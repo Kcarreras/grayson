@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS findings(
     title TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0,
     payload TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS interventions(
+    iid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
+    kind TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+    title TEXT NOT NULL, prompt TEXT, request TEXT NOT NULL,
+    response TEXT, responded_at TEXT
+);
 """
 
 
@@ -456,6 +462,103 @@ class Session:
         finally:
             con.close()
         self.log_event(actor, "finding_accepted", {"fid": fid})
+
+    # -- interventions ---------------------------------------------------
+
+    def add_intervention(
+        self, kind: str, title: str, prompt: str, request: dict, worker: str | None = None
+    ) -> str:
+        con = self._con()
+        try:
+            for _ in range(50):
+                con.execute("BEGIN IMMEDIATE")
+                n = con.execute("SELECT COUNT(*) FROM interventions").fetchone()[0]
+                iid = f"i_{n + 1:03d}"
+                try:
+                    con.execute(
+                        "INSERT INTO interventions(iid, ts, worker, kind, status, title, "
+                        "prompt, request) VALUES(?, ?, ?, ?, 'open', ?, ?, ?)",
+                        (
+                            iid,
+                            utcnow(),
+                            worker,
+                            kind,
+                            title,
+                            prompt,
+                            json.dumps(request, default=str),
+                        ),
+                    )
+                    con.commit()
+                    self.log_event(
+                        worker or "agent", "intervention_opened", {"iid": iid, "kind": kind}
+                    )
+                    return iid
+                except sqlite3.IntegrityError:
+                    con.rollback()
+            raise RuntimeError("could not allocate intervention id")
+        finally:
+            con.close()
+
+    def _hydrate_intervention(self, row: sqlite3.Row) -> dict:
+        d = dict(row)
+        d["request"] = json.loads(d["request"]) if d["request"] else {}
+        d["response"] = json.loads(d["response"]) if d["response"] else None
+        return d
+
+    def interventions(self, status: str | None = None) -> list[dict]:
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            if status:
+                rows = con.execute(
+                    "SELECT * FROM interventions WHERE status = ? ORDER BY iid", (status,)
+                ).fetchall()
+            else:
+                rows = con.execute("SELECT * FROM interventions ORDER BY iid").fetchall()
+            return [self._hydrate_intervention(r) for r in rows]
+        finally:
+            con.close()
+
+    def intervention(self, iid: str) -> dict | None:
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            row = con.execute("SELECT * FROM interventions WHERE iid = ?", (iid,)).fetchone()
+            return self._hydrate_intervention(row) if row else None
+        finally:
+            con.close()
+
+    def respond_intervention(self, iid: str, response: dict, actor: str = "user") -> None:
+        con = self._con()
+        try:
+            cur = con.execute(
+                "UPDATE interventions SET status='answered', response=?, responded_at=? "
+                "WHERE iid=? AND status='open'",
+                (json.dumps(response, default=str), utcnow(), iid),
+            )
+            con.commit()
+            if cur.rowcount == 0:
+                existing = con.execute(
+                    "SELECT status FROM interventions WHERE iid=?", (iid,)
+                ).fetchone()
+                if existing is None:
+                    raise KeyError(f"no intervention '{iid}'")
+                raise ValueError(f"intervention '{iid}' is not open (status={existing[0]})")
+        finally:
+            con.close()
+        self.log_event(actor, "intervention_answered", {"iid": iid})
+
+    def cancel_intervention(self, iid: str, actor: str = "agent") -> None:
+        con = self._con()
+        try:
+            con.execute(
+                "UPDATE interventions SET status='cancelled' WHERE iid=? AND status='open'",
+                (iid,),
+            )
+            con.commit()
+        finally:
+            con.close()
+        self.log_event(actor, "intervention_cancelled", {"iid": iid})
 
     # -- summary / cleanup ----------------------------------------------
 

@@ -16,6 +16,8 @@ from seekql.core import engine
 from seekql.core.engine import EnforcementError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
 from seekql.core.session import STAGES, Session
+from seekql.interventions import build_request, validate_response
+from seekql.interventions.types import InterventionError
 from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
 
@@ -30,6 +32,8 @@ guard_app = typer.Typer(help="Statement validation.", no_args_is_help=True)
 workflow_app = typer.Typer(help="Workflow templates.", no_args_is_help=True)
 checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_help=True)
 finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_args_is_help=True)
+intervention_app = typer.Typer(help="Human-in-the-loop tasks.", no_args_is_help=True)
+ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
 app.add_typer(session_app, name="session")
 app.add_typer(query_app, name="query")
 app.add_typer(cache_app, name="cache")
@@ -38,6 +42,8 @@ app.add_typer(guard_app, name="guard")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(finding_app, name="finding")
+app.add_typer(intervention_app, name="intervention")
+app.add_typer(ui_app, name="ui")
 
 
 def emit(obj: object) -> None:
@@ -515,6 +521,139 @@ def finding_accept(session_id: str, fid: str) -> None:
         fail(str(e.args[0]))
         return
     emit(s.finding(fid))
+
+
+# -- interventions -------------------------------------------------------
+
+
+@intervention_app.command("request")
+def intervention_request(
+    session_id: str,
+    kind: str = typer.Option(
+        ..., "--kind", "-k", help="label_sample|confirm_semantics|choose|free_response"
+    ),
+    title: str = typer.Option(..., "--title"),
+    prompt: str = typer.Option("", "--prompt", help="What you'll do with the answer."),
+    file: Path = typer.Option(None, "--file", "-f", help="JSON request payload."),
+    json_str: str = typer.Option(None, "--json", help="Inline JSON request payload."),
+    worker: str = typer.Option(None, "--worker"),
+) -> None:
+    """File a human-input task. Returns the intervention id to await."""
+    if file and json_str:
+        fail("pass --file or --json, not both")
+    if file:
+        if not file.is_file():
+            fail(f"file not found: {file}")
+        raw = file.read_text(encoding="utf-8")
+    elif json_str:
+        raw = json_str
+    elif not sys.stdin.isatty():
+        raw = sys.stdin.read()
+    else:
+        fail("no request payload: use --file, --json, or stdin")
+        return
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        fail(f"invalid JSON: {e}")
+        return
+    s = _session(session_id)
+    try:
+        request = build_request(kind, payload)
+    except InterventionError as e:
+        fail(str(e))
+        return
+    iid = s.add_intervention(kind, title, prompt, request, worker)
+    emit(s.intervention(iid))
+
+
+@intervention_app.command("list")
+def intervention_list(
+    session_id: str,
+    status: str = typer.Option(None, "--status", help="open|answered|cancelled"),
+) -> None:
+    emit(_session(session_id).interventions(status))
+
+
+@intervention_app.command("show")
+def intervention_show(session_id: str, iid: str) -> None:
+    item = _session(session_id).intervention(iid)
+    if item is None:
+        fail(f"no intervention '{iid}'")
+        return
+    emit(item)
+
+
+@intervention_app.command("await")
+def intervention_await(
+    session_id: str,
+    iid: str,
+    timeout: int = typer.Option(0, "--timeout", help="Max seconds to wait (0 = poll once)."),
+    interval: float = typer.Option(2.0, "--interval"),
+) -> None:
+    """Block until the user answers the intervention (or timeout). Agents call this."""
+    import time
+
+    s = _session(session_id)
+    deadline = time.monotonic() + timeout
+    while True:
+        item = s.intervention(iid)
+        if item is None:
+            fail(f"no intervention '{iid}'")
+            return
+        if item["status"] != "open":
+            emit(item)
+            return
+        if timeout <= 0 or time.monotonic() >= deadline:
+            emit({"iid": iid, "status": "open", "waiting": True})
+            return
+        time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+
+
+@intervention_app.command("respond")
+def intervention_respond(
+    session_id: str,
+    iid: str,
+    file: Path = typer.Option(None, "--file", "-f"),
+    json_str: str = typer.Option(None, "--json"),
+) -> None:
+    """Submit a response (normally done via the UI; provided for scripting/tests)."""
+    if file:
+        raw = file.read_text(encoding="utf-8") if file.is_file() else fail(f"no file: {file}")
+    elif json_str:
+        raw = json_str
+    elif not sys.stdin.isatty():
+        raw = sys.stdin.read()
+    else:
+        fail("no response payload: use --file, --json, or stdin")
+        return
+    s = _session(session_id)
+    item = s.intervention(iid)
+    if item is None:
+        fail(f"no intervention '{iid}'")
+        return
+    try:
+        response = validate_response(item["kind"], item["request"], json.loads(raw))
+        s.respond_intervention(iid, response)
+    except (InterventionError, ValueError, KeyError, json.JSONDecodeError) as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    emit(s.intervention(iid))
+
+
+# -- ui ------------------------------------------------------------------
+
+
+@ui_app.command("serve")
+def ui_serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8765, "--port"),
+    no_token: bool = typer.Option(False, "--no-token", help="Disable the URL access token."),
+) -> None:
+    """Launch the local web console (loopback only, token-gated)."""
+    from seekql.ui.server import serve
+
+    serve(_workspace(), host=host, port=port, use_token=not no_token)
 
 
 def main() -> None:

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}seekql{% endblock %}</title>
+<style>
+:root {
+  --bg: #0f1115; --panel: #181b22; --panel2: #1f2430; --border: #2a303c;
+  --text: #e6e9ef; --muted: #9aa4b2; --accent: #5b9dff; --accent2: #7ee0c0;
+  --warn: #ffcf6b; --danger: #ff7a85; --ok: #7ee0a0;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --panel2: #f0f2f5; --border: #d9dde4;
+    --text: #1b1f27; --muted: #5b6472; --accent: #2563eb; --accent2: #0f9d78;
+    --warn: #b3801f; --danger: #c0392b; --ok: #1a8a4e;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header { padding: 12px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 16px; background: var(--panel); }
+header .brand { font-weight: 700; letter-spacing: .5px; }
+main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 24px 0 10px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .6px; }
+.card { background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border);
+  vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .5px; }
+.scroll { overflow-x: auto; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
+.tag.ok { color: var(--ok); border-color: var(--ok); }
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+.tag.danger { color: var(--danger); border-color: var(--danger); }
+.tag.accent { color: var(--accent); border-color: var(--accent); }
+.muted { color: var(--muted); }
+.btn { display: inline-block; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  font-size: 13px; font-weight: 600; }
+.btn.secondary { background: transparent; color: var(--accent); }
+.btn.ghost { background: transparent; color: var(--muted); border-color: var(--border); }
+form.inline { display: inline; }
+.banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
+  border: 1px solid var(--danger); color: var(--danger); background: rgba(255,122,133,.08); }
+.kv { display: flex; gap: 8px; flex-wrap: wrap; }
+.kv .item { background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; }
+.kv .item b { color: var(--muted); font-weight: 600; }
+input[type=text], textarea, select { width: 100%; background: var(--panel2);
+  border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 8px;
+  font: inherit; }
+.rowcard { border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+  margin-bottom: 8px; background: var(--panel2); }
+.pill-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">seekql</span>
+  <a href="/?t={{ token }}">sessions</a>
+</header>
+<main>
+{% if error %}<div class="banner">{{ error }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

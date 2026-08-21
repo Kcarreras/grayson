@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}seekql — {{ s.title or s.id }}{% endblock %}
+{% block content %}
+<div class="pill-row" style="justify-content: space-between;">
+  <h1>{{ s.title or s.id }}</h1>
+  <span class="tag accent">{{ s.stage }}</span>
+</div>
+<div class="muted mono">{{ s.id }}</div>
+
+<div class="kv" style="margin: 12px 0;">
+  <div class="item"><b>workflow</b> {{ s.workflow }}</div>
+  <div class="item"><b>guard</b> {{ s.guard_profile }}</div>
+  <div class="item"><b>queries</b> {{ s.queries_executed }}</div>
+  <div class="item"><b>strict scope</b> {{ "yes" if s.strict_scope else "no" }}</div>
+  <div class="item"><b>targets</b> {{ s.targets | join(", ") or "—" }}</div>
+</div>
+
+<div class="card">
+  <div class="pill-row" style="justify-content: space-between;">
+    <div>
+      <b>Stage:</b> {{ s.stage }}
+      {% if readiness.checks_complete %}
+        <span class="tag ok">checks complete</span>
+      {% else %}
+        <span class="tag warn">{{ readiness.open_checks | length }} checks open</span>
+      {% endif %}
+    </div>
+    <form class="inline" method="post" action="/session/{{ s.id }}/advance?t={{ token }}">
+      <select name="to" style="width:auto; display:inline;">
+        {% for st in ["analysis","synthesis","review","fixes","verification","closed"] %}
+        <option value="{{ st }}">{{ st }}</option>{% endfor %}
+      </select>
+      <button class="btn secondary" type="submit">advance →</button>
+    </form>
+  </div>
+</div>
+
+{% set open_iv = interventions | selectattr("status","equalto","open") | list %}
+{% if open_iv %}
+<h2>Needs your input</h2>
+{% for iv in open_iv %}
+<div class="card">
+  <div class="pill-row" style="justify-content: space-between;">
+    <b>{{ iv.title }}</b><span class="tag warn">{{ iv.kind }}</span>
+  </div>
+  {% if iv.prompt %}<div class="muted" style="margin:6px 0;">{{ iv.prompt }}</div>{% endif %}
+  <a class="btn" href="/session/{{ s.id }}/intervention/{{ iv.iid }}?t={{ token }}">Respond →</a>
+</div>
+{% endfor %}
+{% endif %}
+
+<h2>Checkpoints</h2>
+<div class="card scroll">
+<table>
+<tr><th>check</th><th>status</th><th>evidence</th><th>note</th></tr>
+{% for c in checkpoints %}
+<tr>
+  <td>{{ c.title }}<div class="muted mono">{{ c.key }}</div></td>
+  <td>{% if c.status == "complete" %}<span class="tag ok">complete</span>
+      {% else %}<span class="tag">open</span>{% endif %}</td>
+  <td class="mono">{{ c.evidence | join(", ") }}</td>
+  <td class="muted">{{ c.note or "" }}</td>
+</tr>
+{% endfor %}
+{% if not checkpoints %}<tr><td colspan="4" class="muted">No checkpoints.</td></tr>{% endif %}
+</table>
+</div>
+
+<h2>Findings</h2>
+{% for f in findings %}
+<div class="card">
+  <div class="pill-row" style="justify-content: space-between;">
+    <b>{{ f.title }}</b>
+    <span class="pill-row">
+      <span class="tag {{ 'danger' if f.severity in ['critical','high'] else 'warn' }}">{{ f.severity }}</span>
+      <span class="tag">conf: {{ f.confidence }}</span>
+      {% if f.accepted %}<span class="tag ok">accepted</span>{% endif %}
+    </span>
+  </div>
+  <div style="margin:8px 0;">{{ f.payload.summary }}</div>
+  <div class="muted mono">evidence: {{ f.payload.evidence | join(", ") }}</div>
+  {% if f.payload.proposed_remediation %}
+  <div class="muted" style="margin-top:6px;"><b>fix:</b> {{ f.payload.proposed_remediation }}</div>
+  {% endif %}
+  {% if not f.accepted %}
+  <form class="inline" method="post" action="/session/{{ s.id }}/finding/{{ f.fid }}/accept?t={{ token }}">
+    <button class="btn secondary" style="margin-top:10px;" type="submit">Accept finding</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+{% if not findings %}<div class="card muted">No findings recorded yet.</div>{% endif %}
+
+<h2>Query log</h2>
+<div class="card scroll">
+<table>
+<tr><th>qid</th><th>status</th><th>rows</th><th>ms</th><th>worker</th><th>label</th></tr>
+{% for q in queries %}
+<tr>
+  <td class="mono">{{ q.qid }}</td>
+  <td>{% if q.status == "executed" %}<span class="tag ok">executed</span>
+      {% elif q.status == "rejected" %}<span class="tag danger">rejected</span>
+      {% else %}<span class="tag warn">{{ q.status }}</span>{% endif %}
+      {% if q.guard_rule %}<div class="muted mono">{{ q.guard_rule }}</div>{% endif %}</td>
+  <td>{{ q.row_count if q.row_count is not none else "" }}{% if q.truncated %} <span class="muted">(trunc)</span>{% endif %}</td>
+  <td class="muted">{{ q.duration_ms or "" }}</td>
+  <td class="muted mono">{{ q.worker or "" }}</td>
+  <td class="muted">{{ q.label or "" }}</td>
+</tr>
+{% endfor %}
+{% if not queries %}<tr><td colspan="6" class="muted">No queries yet.</td></tr>{% endif %}
+</table>
+</div>
+
+<h2>Recent events</h2>
+<div class="card scroll">
+<table>
+<tr><th>time</th><th>actor</th><th>event</th></tr>
+{% for e in events %}
+<tr><td class="muted mono">{{ e.ts }}</td><td class="mono">{{ e.actor }}</td>
+    <td>{{ e.type }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endblock %}

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from conftest import FakeExecutor
 
+from conftest import FakeExecutor
 from seekql.cache.local import LocalQueryError, query_artifacts
 from seekql.cache.store import CacheStore
 from seekql.config import GuardSettings

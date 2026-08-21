@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from conftest import FakeExecutor
 
+from conftest import FakeExecutor
 from seekql.config import GuardSettings
 from seekql.core import engine
 from seekql.core.engine import EnforcementError

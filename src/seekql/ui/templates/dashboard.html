@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}seekql — sessions{% endblock %}
+{% block content %}
+<h1>Sessions</h1>
+<p class="muted">Supervise active and recent QA investigations.</p>
+{% if not sessions %}
+<div class="card muted">No sessions yet. Start one with
+  <code>seekql session start --workflow &lt;name&gt; --table DB.SCHEMA.TABLE</code>.</div>
+{% endif %}
+<div class="grid">
+{% for row in sessions %}
+{% set s = row.summary %}
+<div class="card">
+  <div class="pill-row" style="justify-content: space-between;">
+    <a href="/session/{{ s.id }}?t={{ token }}"><b>{{ s.title or s.id }}</b></a>
+    <span class="tag accent">{{ s.stage }}</span>
+  </div>
+  <div class="muted mono" style="margin: 4px 0 10px;">{{ s.id }}</div>
+  <div class="pill-row">
+    <span class="tag">{{ s.workflow }}</span>
+    {% if row.open_interventions %}
+      <span class="tag warn">{{ row.open_interventions }} to review</span>{% endif %}
+    {% if row.open_checks %}
+      <span class="tag">{{ row.open_checks }} checks open</span>{% endif %}
+    {% if row.findings %}<span class="tag">{{ row.findings }} findings</span>{% endif %}
+  </div>
+  <div class="muted" style="margin-top: 10px; font-size: 12px;">
+    {{ s.targets | join(", ") or "no targets" }}</div>
+</div>
+{% endfor %}
+</div>
+{% endblock %}
