@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}seekql — sessions{% endblock %}
+{# live view: agents file interventions/findings while this page is open #}
+{% block head %}<meta http-equiv="refresh" content="10">{% endblock %}
 {% block content %}
 <h1>Sessions</h1>
 <p class="muted">Supervise active and recent QA investigations.</p>

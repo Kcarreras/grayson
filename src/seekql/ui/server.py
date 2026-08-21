@@ -201,8 +201,15 @@ def _form_to_response(item: dict, form: Any) -> dict:
 
 
 def serve(
-    workspace: Workspace, host: str = "127.0.0.1", port: int = 8765, use_token: bool = True
+    workspace: Workspace,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    use_token: bool = True,
+    open_browser: bool = True,
 ) -> None:
+    import threading
+    import webbrowser
+
     import uvicorn
 
     if host not in {"127.0.0.1", "localhost", "::1"}:
@@ -214,4 +221,7 @@ def serve(
         url += f"?t={token}"
     print(f"seekql console: {url}")
     print("(loopback only; keep this token private — it grants access to this workspace)")
+    if open_browser:
+        # after uvicorn has had a moment to bind; daemon so it never blocks exit
+        threading.Timer(0.8, webbrowser.open, [url]).start()
     uvicorn.run(app, host=host, port=port, log_level="warning")

@@ -17,7 +17,7 @@ from seekql.core import proposals as proposals_engine
 from seekql.core.engine import EnforcementError
 from seekql.core.proposals import ProposalError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
-from seekql.core.session import STAGES, Session
+from seekql.core.session import STAGES, Session, resolve_session_id
 from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request, validate_response
 from seekql.interventions.types import InterventionError
@@ -28,7 +28,10 @@ from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
 
 app = typer.Typer(
-    name="seekql", help="Agentic QA infrastructure for SQL tables.", no_args_is_help=True
+    name="seekql",
+    help="Agentic QA infrastructure for SQL tables. "
+    "Tip: 'latest' works anywhere a session id is expected.",
+    no_args_is_help=True,
 )
 session_app = typer.Typer(help="Session lifecycle.", no_args_is_help=True)
 query_app = typer.Typer(help="Guarded query execution.", no_args_is_help=True)
@@ -85,7 +88,8 @@ def _workspace() -> Workspace:
 
 def _session(session_id: str) -> Session:
     try:
-        return Session(_workspace(), session_id)
+        ws = _workspace()
+        return Session(ws, resolve_session_id(ws, session_id))
     except (FileNotFoundError, ValueError) as e:
         fail(str(e))
         raise  # unreachable
@@ -190,6 +194,70 @@ def doctor() -> None:
     emit({"ok": all(c["ok"] for c in checks), "checks": checks})
 
 
+@app.command()
+def status() -> None:
+    """Where am I? Workspace, latest session, and what needs attention next."""
+    ws = _workspace()
+    ids = ws.list_session_ids()
+    out: dict = {
+        "workspace": str(ws.root),
+        "connection": ws.config.connection,
+        "sessions": len(ids),
+    }
+    hints: list[str] = []
+    if not ids:
+        out["latest_session"] = None
+        hints.append(
+            "start a session: seekql session start --workflow <name> "
+            "--table DB.SCHEMA.TABLE (workflows: seekql workflow list)"
+        )
+        if ws.config.connection == "sandbox":
+            hints.append(
+                "sandbox targets: SANDBOX.SHOP.CUSTOMERS (table-health), "
+                "SANDBOX.SHOP.ORDERS_ENRICHED (bug-hunter), "
+                "SANDBOX.SHOP.PAYMENTS + PAYMENTS_V2 (migration-parity)"
+            )
+    else:
+        s = Session(ws, ids[-1])
+        summary = s.summary()
+        ready = engine.readiness(s, ws.workflows_dir)
+        open_iv = s.interventions("open")
+        pending = s.proposals("proposed")
+        out["latest_session"] = {
+            "id": s.id,
+            "title": summary["title"],
+            "workflow": summary["workflow"],
+            "stage": summary["stage"],
+            "queries_executed": summary["queries_executed"],
+            "open_checks": ready["open_checks"],
+            "findings_total": ready["findings_total"],
+            "findings_unaccepted": ready["findings_unaccepted"],
+            "open_interventions": [i["iid"] for i in open_iv],
+            "proposals_pending": [p["pid"] for p in pending],
+        }
+        if open_iv:
+            hints.append(
+                f"{len(open_iv)} intervention(s) await your answer — "
+                "seekql ui serve (opens the console)"
+            )
+        if ready["findings_unaccepted"]:
+            hints.append(
+                f"{len(ready['findings_unaccepted'])} finding(s) to review — "
+                "accept in the console or: seekql finding accept latest <fid>"
+            )
+        if pending:
+            hints.append(
+                f"{len(pending)} proposal(s) awaiting decision — approve/reject in the console"
+            )
+        if ready["open_checks"]:
+            hints.append(f"checkpoints still open for the agent: {', '.join(ready['open_checks'])}")
+        if not hints:
+            hints.append("nothing waiting on you — full detail: seekql session report latest")
+        hints.append("tip: 'latest' works anywhere a session id is expected")
+    out["hints"] = hints
+    emit(out)
+
+
 # -- session -------------------------------------------------------------
 
 
@@ -272,6 +340,11 @@ def session_start(
     result["view_coverage"] = ViewRegistry(ws.views_dir).coverage_check(tables, current)
     knowledge = KnowledgeStore(ws.knowledge_dir)
     result["knowledge"] = {t: knowledge.read(t)["facts"] for t in tables}
+    result["hints"] = [
+        "human console (interventions, reviews, approvals): seekql ui serve",
+        f'run a guarded query: seekql query run {session.id} -q "SELECT ..."',
+        "'latest' works in place of the session id in any command",
+    ]
     emit(result)
 
 
@@ -1106,6 +1179,7 @@ def sandbox_init(
             "next": [
                 f"cd {path}",
                 "seekql harness init claude-code   # or cursor | codex",
+                "seekql status                     # what to do next, any time",
                 "ask your agent to run a workflow (see the answer key for targets)",
                 "keep SANDBOX_ANSWER_KEY.md away from the agent",
             ],
@@ -1146,11 +1220,14 @@ def ui_serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8765, "--port"),
     no_token: bool = typer.Option(False, "--no-token", help="Disable the URL access token."),
+    open_browser: bool = typer.Option(
+        True, "--open/--no-open", help="Open the console in your browser."
+    ),
 ) -> None:
-    """Launch the local web console (loopback only, token-gated)."""
+    """Launch the local web console (loopback only, token-gated); opens your browser."""
     from seekql.ui.server import serve
 
-    serve(_workspace(), host=host, port=port, use_token=not no_token)
+    serve(_workspace(), host=host, port=port, use_token=not no_token, open_browser=open_browser)
 
 
 def main() -> None:

@@ -15,7 +15,7 @@ from seekql.core import proposals as proposals_engine
 from seekql.core.engine import EnforcementError
 from seekql.core.proposals import ProposalError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
-from seekql.core.session import Session
+from seekql.core.session import Session, resolve_session_id
 from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request
 from seekql.interventions.types import InterventionError
@@ -40,7 +40,7 @@ def build_server(workspace: Workspace) -> Any:
     mcp = MCPServer(name="seekql", instructions=INSTRUCTIONS)
 
     def _session(session_id: str) -> Session:
-        return Session(workspace, session_id)
+        return Session(workspace, resolve_session_id(workspace, session_id))
 
     def _err(e: Exception) -> dict:
         return {"error": str(e.args[0] if e.args else e), "type": type(e).__name__}

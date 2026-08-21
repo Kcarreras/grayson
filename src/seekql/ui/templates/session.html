@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}seekql — {{ s.title or s.id }}{% endblock %}
+{# live view: refresh so agent activity appears without manual reloads. The
+   intervention form page deliberately has no refresh (it would clear input). #}
+{% block head %}{% if not error %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
 {% block content %}
 <div class="pill-row" style="justify-content: space-between;">
   <h1>{{ s.title or s.id }}</h1>

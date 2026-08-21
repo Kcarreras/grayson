@@ -82,11 +82,15 @@ seekql session start --workflow bug-hunter --table ANALYTICS.WEB.PAGE_EVENTS
 seekql query run <sid> --sql "SELECT ... "          # guarded; results cached as q_0001…
 seekql checkpoint complete <sid> replicate_anomaly --evidence q_0003
 seekql finding add <sid> --json '{...}'             # schema + evidence validated
-seekql ui serve                                     # localhost console for interventions & approvals
+seekql ui serve                                     # human console — opens in your browser
 seekql session report <sid> --out report.md         # shareable session report (also plain JSON)
 seekql cache export <sid> q_0003 --out rows.csv     # export a cached result set (csv/json)
 seekql query rerun <sid> q_0003                     # re-run a prior query for a freshness re-check
 ```
+
+Quality-of-life: `latest` works anywhere a session id is expected
+(`seekql query log latest`), and `seekql status` tells you where you are and
+what needs your attention next. The console live-refreshes while agents work.
 
 The MCP server (`seekql mcp serve`, stdio) exposes the same operations as typed tools.
 

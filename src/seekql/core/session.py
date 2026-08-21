@@ -15,6 +15,20 @@ from seekql.workspace import Workspace
 
 STAGES = ["setup", "analysis", "synthesis", "review", "fixes", "verification", "closed"]
 
+#: aliases accepted anywhere a session id is expected; resolve to the newest session
+LATEST_ALIASES = {"latest", "last", "."}
+
+
+def resolve_session_id(workspace: Workspace, session_id: str) -> str:
+    """Resolve 'latest'/'last'/'.' to the most recently created session id."""
+    if session_id not in LATEST_ALIASES:
+        return session_id
+    ids = workspace.list_session_ids()  # sorted; ids start with a UTC timestamp
+    if not ids:
+        raise FileNotFoundError("no sessions yet — start one with `seekql session start`")
+    return ids[-1]
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events(
