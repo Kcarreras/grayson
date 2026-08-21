@@ -11,3 +11,8 @@ wheels/
 
 # seekql session state and cached warehouse data
 .seekql/
+
+# a seekql workspace must not be initialized in the tool repo itself
+/seekql.toml
+/knowledge/
+/views/
