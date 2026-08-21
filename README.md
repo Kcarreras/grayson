@@ -36,10 +36,15 @@ for the guard's threat model and review history.
 - [uv](https://docs.astral.sh/uv/) (manages Python and all dependencies)
 - Python 3.12+ (uv installs one automatically if missing)
 - [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli) (`snow`)
-  with a configured named connection — seekql delegates all auth to it and never handles
-  credentials.
+  with a configured named connection — **only for real warehouses**. The sandbox
+  (below) needs no Snowflake at all. seekql delegates all auth to `snow` and never
+  handles credentials.
 
 ## Install & set up
+
+seekql is a command-line tool: run everything below in a terminal (PowerShell,
+bash, …). Double-clicking the installed `seekql` executable just flashes its help
+text and closes — that's normal.
 
 ```bash
 uv tool install git+https://github.com/Kcarreras/seekql   # or: git clone && uv sync
@@ -48,6 +53,9 @@ seekql init .                    # scaffold a workspace (seekql.toml, .seekql/, 
 seekql doctor                    # verify snow CLI + connection
 seekql harness init cursor       # teach your agent the protocol (or claude-code | codex)
 ```
+
+No Snowflake yet? Skip `init`/`doctor` and jump to the sandbox below — it is the
+fastest way to see the whole loop work.
 
 ## Try it without Snowflake (sandbox)
 
