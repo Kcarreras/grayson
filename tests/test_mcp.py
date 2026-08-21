@@ -59,7 +59,13 @@ def test_tools_registered(server):
         "intervention_list",
         "proposal_add",
         "proposal_list",
+        "proposal_applied",
         "proposal_verify",
+        "session_list",
+        "session_report",
+        "worker_join",
+        "cache_show",
+        "cache_query",
         "knowledge_show",
         "knowledge_add",
         "knowledge_search",
@@ -95,6 +101,31 @@ def test_session_lifecycle_via_mcp(server, workspace):
         {"session_id": sid, "key": key, "evidence": [run["qid"]], "note": "ok"},
     )
     assert done["status"] == "complete"
+
+
+def test_cache_and_report_via_mcp(server, workspace):
+    started = _call(server, "session_start", {"workflow": "table-health", "tables": ["DB.S.T1"]})
+    sid = started["session"]["id"]
+    run = _call(server, "query_run", {"session_id": sid, "sql": "SELECT * FROM DB.S.T1"})
+    qid = run["qid"]
+
+    shown = _call(server, "cache_show", {"session_id": sid, "qid": qid, "rows": 2})
+    assert shown["qid"] == qid
+    assert len(shown["preview"]) == 2
+
+    local = _call(
+        server, "cache_query", {"session_id": sid, "sql": f"SELECT COUNT(*) AS n FROM {qid}"}
+    )
+    assert local["rows"][0]["n"] == 5
+
+    sessions = _call(server, "session_list", {})
+    assert any(s["id"] == sid for s in sessions)
+
+    report = _call(server, "session_report", {"session_id": sid})
+    assert report["query_stats"]["by_status"]["executed"] == 1
+
+    joined = _call(server, "worker_join", {"session_id": sid, "label": "w1"})
+    assert joined["worker"].startswith("w-")
 
 
 def test_knowledge_via_mcp(server, workspace):

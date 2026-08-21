@@ -130,6 +130,13 @@ class Session:
         finally:
             con.close()
 
+    def meta_all(self) -> dict[str, str]:
+        con = self._con()
+        try:
+            return dict(con.execute("SELECT key, value FROM meta").fetchall())
+        finally:
+            con.close()
+
     def set_meta(self, key: str, value: str) -> None:
         con = self._con()
         try:
@@ -243,7 +250,8 @@ class Session:
         try:
             for _ in range(50):
                 con.execute("BEGIN IMMEDIATE")
-                n = con.execute("SELECT COUNT(*) FROM queries").fetchone()[0]
+                # MAX(rowid) is O(1); rows are never deleted so it equals COUNT(*).
+                n = con.execute("SELECT COALESCE(MAX(rowid), 0) FROM queries").fetchone()[0]
                 qid = f"q_{n + 1:04d}"
                 try:
                     con.execute(
@@ -294,7 +302,7 @@ class Session:
             rows = con.execute(
                 "SELECT qid, worker, ts, status, guard_rule, reason, duration_ms, "
                 "row_count, truncated, label, tables_json FROM queries "
-                "ORDER BY qid DESC LIMIT ?",
+                "ORDER BY rowid DESC LIMIT ?",
                 (limit,),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -331,13 +339,47 @@ class Session:
             con.close()
 
     def query_tables(self, qid: str) -> list[str]:
-        row = self.query_row(qid)
-        if not row or not row.get("tables_json"):
-            return []
+        return self.query_tables_many([qid]).get(qid, [])
+
+    def query_tables_many(self, qids: list[str]) -> dict[str, list[str]]:
+        """Source tables for several queries in one round-trip."""
+        if not qids:
+            return {}
+        con = self._con()
         try:
-            return json.loads(row["tables_json"])
-        except (json.JSONDecodeError, TypeError):
-            return []
+            marks = ", ".join("?" for _ in qids)
+            rows = con.execute(
+                f"SELECT qid, tables_json FROM queries WHERE qid IN ({marks})",  # noqa: S608
+                qids,
+            ).fetchall()
+        finally:
+            con.close()
+        out: dict[str, list[str]] = {}
+        for qid, tables_json in rows:
+            try:
+                out[qid] = json.loads(tables_json) if tables_json else []
+            except (json.JSONDecodeError, TypeError):
+                out[qid] = []
+        return out
+
+    def query_stats(self) -> dict:
+        """Aggregate query counts and totals, grouped by status."""
+        con = self._con()
+        try:
+            rows = con.execute(
+                "SELECT status, COUNT(*), COALESCE(SUM(duration_ms), 0), "
+                "COALESCE(SUM(row_count), 0) FROM queries GROUP BY status"
+            ).fetchall()
+        finally:
+            con.close()
+        by_status = {r[0]: r[1] for r in rows}
+        executed = next((r for r in rows if r[0] == "executed"), (None, 0, 0, 0))
+        return {
+            "total": sum(by_status.values()),
+            "by_status": by_status,
+            "executed_duration_ms": executed[2],
+            "executed_rows": executed[3],
+        }
 
     # -- checkpoints -----------------------------------------------------
 
@@ -370,7 +412,21 @@ class Session:
             con.close()
 
     def checkpoint(self, key: str) -> dict | None:
-        return next((c for c in self.checkpoints() if c["key"] == key), None)
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            row = con.execute(
+                "SELECT key, title, status, evidence, note, completed_by, completed_at "
+                "FROM checkpoints WHERE key = ?",
+                (key,),
+            ).fetchone()
+        finally:
+            con.close()
+        if row is None:
+            return None
+        d = dict(row)
+        d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
+        return d
 
     def complete_checkpoint(self, key: str, evidence: list[str], note: str, actor: str) -> None:
         con = self._con()
@@ -411,7 +467,7 @@ class Session:
         try:
             for _ in range(50):
                 con.execute("BEGIN IMMEDIATE")
-                n = con.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+                n = con.execute("SELECT COALESCE(MAX(rowid), 0) FROM findings").fetchone()[0]
                 fid = f"f_{n + 1:03d}"
                 try:
                     con.execute(
@@ -443,7 +499,7 @@ class Session:
             con.row_factory = sqlite3.Row
             rows = con.execute(
                 "SELECT fid, ts, worker, schema_name, severity, confidence, title, "
-                "accepted, payload FROM findings ORDER BY fid"
+                "accepted, payload FROM findings ORDER BY rowid"
             ).fetchall()
             out = []
             for r in rows:
@@ -456,7 +512,22 @@ class Session:
             con.close()
 
     def finding(self, fid: str) -> dict | None:
-        return next((f for f in self.findings() if f["fid"] == fid), None)
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            row = con.execute(
+                "SELECT fid, ts, worker, schema_name, severity, confidence, title, "
+                "accepted, payload FROM findings WHERE fid = ?",
+                (fid,),
+            ).fetchone()
+        finally:
+            con.close()
+        if row is None:
+            return None
+        d = dict(row)
+        d["payload"] = json.loads(d["payload"])
+        d["accepted"] = bool(d["accepted"])
+        return d
 
     def accept_finding(self, fid: str, actor: str = "user") -> None:
         con = self._con()
@@ -478,7 +549,7 @@ class Session:
         try:
             for _ in range(50):
                 con.execute("BEGIN IMMEDIATE")
-                n = con.execute("SELECT COUNT(*) FROM interventions").fetchone()[0]
+                n = con.execute("SELECT COALESCE(MAX(rowid), 0) FROM interventions").fetchone()[0]
                 iid = f"i_{n + 1:03d}"
                 try:
                     con.execute(
@@ -580,7 +651,7 @@ class Session:
         try:
             for _ in range(50):
                 con.execute("BEGIN IMMEDIATE")
-                n = con.execute("SELECT COUNT(*) FROM proposals").fetchone()[0]
+                n = con.execute("SELECT COALESCE(MAX(rowid), 0) FROM proposals").fetchone()[0]
                 pid = f"p_{n + 1:03d}"
                 try:
                     con.execute(
@@ -689,19 +760,34 @@ class Session:
     # -- summary / cleanup ----------------------------------------------
 
     def summary(self) -> dict:
+        # One connection for everything: meta, workers, and the executed count.
+        con = self._con()
+        try:
+            meta = dict(con.execute("SELECT key, value FROM meta").fetchall())
+            workers = [
+                {"id": r[0], "label": r[1], "joined_at": r[2]}
+                for r in con.execute("SELECT id, label, joined_at FROM workers").fetchall()
+            ]
+            executed = con.execute(
+                "SELECT COUNT(*) FROM queries WHERE status = 'executed'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+        guard_raw = meta.get("guard")
+        guard = GuardSettings.model_validate_json(guard_raw) if guard_raw else GuardSettings()
         return {
             "id": self.id,
-            "title": self.get_meta("title", ""),
-            "workflow": self.workflow,
-            "stage": self.stage,
-            "created_at": self.get_meta("created_at"),
-            "targets": self.targets,
-            "guard_profile": self.get_meta("guard_profile"),
-            "guard": self.guard_settings.model_dump(),
-            "strict_scope": self.strict_scope,
-            "connection": self.connection,
-            "workers": self.workers(),
-            "queries_executed": self.executed_count(),
+            "title": meta.get("title", ""),
+            "workflow": meta.get("workflow", ""),
+            "stage": meta.get("stage", "setup"),
+            "created_at": meta.get("created_at"),
+            "targets": json.loads(meta.get("targets") or "[]"),
+            "guard_profile": meta.get("guard_profile"),
+            "guard": guard.model_dump(),
+            "strict_scope": bool(json.loads(meta.get("strict_scope") or "false")),
+            "connection": meta.get("connection", "default"),
+            "workers": workers,
+            "queries_executed": executed,
         }
 
     def scrub_data(self) -> int:

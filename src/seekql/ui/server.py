@@ -88,24 +88,23 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         _set_cookie(response)  # subsequent navigation authenticates via cookie, not URL
         return response
 
+    def _session_context(s: Session, error: str | None = None) -> dict:
+        return {
+            "s": s.summary(),
+            "readiness": engine.readiness(s, workspace.workflows_dir),
+            "checkpoints": s.checkpoints(),
+            "findings": s.findings(),
+            "interventions": s.interventions(),
+            "proposals": s.proposals(),
+            "queries": s.query_log(100),
+            "events": s.events(40),
+            "error": error,
+        }
+
     @app.get("/session/{sid}", response_class=HTMLResponse)
     def session_detail(request: Request, sid: str) -> Any:
         _check(request)
-        s = _session(sid)
-        return templates.TemplateResponse(
-            request,
-            "session.html",
-            {
-                "s": s.summary(),
-                "readiness": engine.readiness(s, workspace.workflows_dir),
-                "checkpoints": s.checkpoints(),
-                "findings": s.findings(),
-                "interventions": s.interventions(),
-                "proposals": s.proposals(),
-                "queries": s.query_log(100),
-                "events": s.events(40),
-            },
-        )
+        return templates.TemplateResponse(request, "session.html", _session_context(_session(sid)))
 
     @app.get("/session/{sid}/intervention/{iid}", response_class=HTMLResponse)
     def intervention_detail(request: Request, sid: str, iid: str) -> Any:
@@ -146,19 +145,6 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e.args[0])) from e
         return _redirect(f"/session/{sid}")
-
-    def _session_context(s: Session, error: str | None = None) -> dict:
-        return {
-            "s": s.summary(),
-            "readiness": engine.readiness(s, workspace.workflows_dir),
-            "checkpoints": s.checkpoints(),
-            "findings": s.findings(),
-            "interventions": s.interventions(),
-            "proposals": s.proposals(),
-            "queries": s.query_log(100),
-            "events": s.events(40),
-            "error": error,
-        }
 
     @app.post("/session/{sid}/advance")
     def advance(request: Request, sid: str, to: str = Form(...), force: bool = Form(False)) -> Any:

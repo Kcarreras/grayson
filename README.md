@@ -57,6 +57,9 @@ seekql query run <sid> --sql "SELECT ... "          # guarded; results cached as
 seekql checkpoint complete <sid> replicate_anomaly --evidence q_0003
 seekql finding add <sid> --json '{...}'             # schema + evidence validated
 seekql ui serve                                     # localhost console for interventions & approvals
+seekql session report <sid> --out report.md         # shareable session report (also plain JSON)
+seekql cache export <sid> q_0003 --out rows.csv     # export a cached result set (csv/json)
+seekql query rerun <sid> q_0003                     # re-run a prior query for a freshness re-check
 ```
 
 The MCP server (`seekql mcp serve`, stdio) exposes the same operations as typed tools.

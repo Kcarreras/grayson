@@ -133,6 +133,21 @@ class CacheStore:
         finally:
             con.close()
 
+    def rows(self, qid: str, limit: int | None = None) -> tuple[list[str], list[tuple]]:
+        """Full cached rows for an artifact (columns, row tuples)."""
+        if not QID_RE.match(qid) or qid not in self.artifact_tables():
+            return [], []
+        con = self._con()
+        try:
+            sql = f"SELECT * FROM {_quote_ident(qid)}"  # noqa: S608 — validated qid
+            cursor = (
+                con.execute(sql) if limit is None else con.execute(sql + " LIMIT ?", (int(limit),))
+            )
+            columns = [d[0] for d in cursor.description] if cursor.description else []
+            return columns, cursor.fetchall()
+        finally:
+            con.close()
+
     def row_count(self, qid: str) -> int | None:
         """Actual row count from the cached table (not the sidecar), or None."""
         if not QID_RE.match(qid) or qid not in self.artifact_tables():

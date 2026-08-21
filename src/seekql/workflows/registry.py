@@ -16,9 +16,20 @@ class WorkflowNotFound(KeyError):
     pass
 
 
+# Parsed templates cached by (path, mtime) so repeated lookups (each readiness
+# call, each dashboard render) do not re-read and re-parse unchanged YAML.
+_file_cache: dict[Path, tuple[float, WorkflowTemplate]] = {}
+
+
 def _load_file(path: Path) -> WorkflowTemplate:
+    mtime = path.stat().st_mtime
+    cached = _file_cache.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return WorkflowTemplate.model_validate(data)
+    tpl = WorkflowTemplate.model_validate(data)
+    _file_cache[path] = (mtime, tpl)
+    return tpl
 
 
 @lru_cache(maxsize=1)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from seekql.cache.local import LocalQueryError, query_artifacts
 from seekql.core import engine
 from seekql.core import proposals as proposals_engine
 from seekql.core.engine import EnforcementError
@@ -111,10 +112,48 @@ def build_server(workspace: Workspace) -> Any:
             "knowledge": {t: knowledge.read(t)["facts"] for t in tables},
         }
 
+    @mcp.tool(description="List sessions in this workspace.")
+    def session_list() -> list[dict]:
+        out = []
+        for sid in workspace.list_session_ids():
+            try:
+                meta = Session(workspace, sid).meta_all()
+            except (OSError, ValueError):
+                continue
+            out.append(
+                {
+                    "id": sid,
+                    "title": meta.get("title", ""),
+                    "workflow": meta.get("workflow", ""),
+                    "stage": meta.get("stage", "setup"),
+                    "created_at": meta.get("created_at"),
+                }
+            )
+        return out
+
     @mcp.tool(description="Get a session's status summary.")
     def session_status(session_id: str) -> dict:
         try:
             return _session(session_id).summary()
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Build a full session report: checkpoints, findings, proposals "
+        "(with verification), and query statistics."
+    )
+    def session_report(session_id: str) -> dict:
+        from seekql.report import build_report
+
+        try:
+            return build_report(_session(session_id), workspace.workflows_dir)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(description="Register a parallel worker; returns its id for labeling queries.")
+    def worker_join(session_id: str, label: str = "") -> dict:
+        try:
+            return {"worker": _session(session_id).worker_join(label)}
         except (FileNotFoundError, ValueError) as e:
             return _err(e)
 
@@ -173,6 +212,33 @@ def build_server(workspace: Workspace) -> Any:
             return cache_find(_session(session_id), tables, check_freshness)
         except (FileNotFoundError, ValueError) as e:
             return [_err(e)]
+
+    @mcp.tool(description="Show a cached artifact's sidecar metadata and a row preview.")
+    def cache_show(session_id: str, qid: str, rows: int = 10) -> dict:
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        sidecar = s.cache.get(qid)
+        if sidecar is None:
+            return {"error": f"no cached artifact '{qid}'"}
+        return {**sidecar, "preview": s.cache.preview(qid, rows)}
+
+    @mcp.tool(
+        description="Local read-only SELECT over cached artifacts (table names are qids, "
+        "e.g. q_0003). Re-slice already-fetched data without a warehouse round-trip."
+    )
+    def cache_query(session_id: str, sql: str, max_rows: int = 1000) -> dict:
+        try:
+            s = _session(session_id)
+            columns, data = query_artifacts(s.dir / "data", sql, max_rows)
+        except (LocalQueryError, FileNotFoundError, ValueError) as e:
+            return _err(e)
+        return {
+            "columns": columns,
+            "row_count": len(data),
+            "rows": [dict(zip(columns, r, strict=True)) for r in data],
+        }
 
     # -- checkpoints & findings ---------------------------------------
 
@@ -281,6 +347,16 @@ def build_server(workspace: Workspace) -> Any:
             return _session(session_id).proposals()
         except (FileNotFoundError, ValueError) as e:
             return [_err(e)]
+
+    @mcp.tool(
+        description="Mark an approved proposal as applied (after the harness agent "
+        "edited the files)."
+    )
+    def proposal_applied(session_id: str, pid: str) -> dict:
+        try:
+            return proposals_engine.mark_applied(_session(session_id), pid)
+        except (ProposalError, FileNotFoundError, ValueError) as e:
+            return _err(e)
 
     @mcp.tool(
         description="Record before/after verification for a proposal, citing executed "

@@ -48,9 +48,8 @@ def _validate_evidence(session: Session, evidence: list[str]) -> None:
     # session declared no targets (nothing to bind relevance to).
     scope = session.scope_tables
     if scope:
-        touched: set[str] = set()
-        for qid in evidence:
-            touched.update(t.upper() for t in session.query_tables(qid))
+        tables_by_qid = session.query_tables_many(list(evidence))
+        touched = {t.upper() for tables in tables_by_qid.values() for t in tables}
         if not (touched & scope):
             raise EnforcementError(
                 "evidence does not touch any table under investigation "
@@ -159,9 +158,10 @@ def advance_stage(
             f"{ready['open_checks']}. Complete them with evidence first."
         )
     # Gate: reaching fixes or later requires at least one user-accepted finding.
+    # (readiness already counted findings; accepted = total - unaccepted)
     if target_idx >= _FIXES_IDX and not force:
-        accepted = [f for f in session.findings() if f["accepted"]]
-        if not accepted:
+        accepted_count = ready["findings_total"] - len(ready["findings_unaccepted"])
+        if accepted_count == 0:
             raise EnforcementError(
                 f"cannot reach '{to_stage}': no user-accepted finding. Findings must be "
                 "recorded and accepted by the user (in the console) before fixes."

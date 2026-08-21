@@ -22,6 +22,7 @@ from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request, validate_response
 from seekql.interventions.types import InterventionError
 from seekql.knowledge import KnowledgeStore
+from seekql.util import write_json
 from seekql.views import ViewEntry, ViewRegistry
 from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
@@ -335,6 +336,22 @@ def session_close(session_id: str) -> None:
     emit({"id": session_id, "stage": "closed"})
 
 
+@session_app.command("report")
+def session_report(
+    session_id: str,
+    out: Path = typer.Option(None, "--out", "-o", help="Also write a markdown report here."),
+) -> None:
+    """Build a full session report: checkpoints, findings, proposals, query stats."""
+    from seekql.report import build_report, render_markdown
+
+    report = build_report(_session(session_id), _workspace().workflows_dir)
+    if out is not None:
+        out.write_text(render_markdown(report), encoding="utf-8")
+        emit({"written": str(out), "report": report})
+        return
+    emit(report)
+
+
 # -- worker --------------------------------------------------------------
 
 
@@ -373,6 +390,22 @@ def query_run(
     emit(run_statement(_session(session_id), _read_sql(sql, file), worker=worker, label=label))
 
 
+@query_app.command("rerun")
+def query_rerun(
+    session_id: str,
+    qid: str,
+    worker: str = typer.Option(None, "--worker"),
+    label: str = typer.Option("", "--label"),
+) -> None:
+    """Re-run a prior query's SQL as a fresh guarded execution (freshness re-check)."""
+    s = _session(session_id)
+    row = s.query_row(qid)
+    if row is None:
+        fail(f"no query '{qid}' in this session")
+        return
+    emit(run_statement(s, row["sql_raw"], worker=worker, label=label or f"rerun of {qid}"))
+
+
 @query_app.command("log")
 def query_log(session_id: str, limit: int = typer.Option(50, "--limit")) -> None:
     emit(_session(session_id).query_log(limit))
@@ -399,6 +432,46 @@ def cache_show(session_id: str, qid: str, rows: int = typer.Option(10, "--rows")
         fail(f"no cached artifact '{qid}'")
         return
     emit({**sidecar, "preview": s.cache.preview(qid, rows)})
+
+
+@cache_app.command("export")
+def cache_export(
+    session_id: str,
+    qid: str,
+    out: Path = typer.Option(..., "--out", "-o", help="Destination file (.csv or .json)."),
+    fmt: str = typer.Option(None, "--format", help="csv|json (default: from extension)."),
+) -> None:
+    """Export a cached artifact's full rows to CSV or JSON."""
+    s = _session(session_id)
+    sidecar = s.cache.get(qid)
+    if sidecar is None:
+        fail(f"no cached artifact '{qid}'")
+        return
+    fmt = (fmt or ("json" if out.suffix.lower() == ".json" else "csv")).lower()
+    if fmt not in {"csv", "json"}:
+        fail("format must be csv or json")
+        return
+    columns, rows = s.cache.rows(qid)
+    if not columns:
+        columns = sidecar.get("columns", [])
+    if fmt == "csv":
+        import csv
+
+        with out.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(columns)
+            writer.writerows(rows)
+    else:
+        write_json(out, [dict(zip(columns, r, strict=True)) for r in rows])
+    emit(
+        {
+            "written": str(out),
+            "qid": qid,
+            "format": fmt,
+            "row_count": len(rows),
+            "truncated": bool(sidecar.get("truncated")),
+        }
+    )
 
 
 @cache_app.command("query")
