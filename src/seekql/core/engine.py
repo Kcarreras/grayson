@@ -31,7 +31,7 @@ def seed_from_workflow(session: Session, overrides_dir: Path | None = None) -> l
     return session.checkpoints()
 
 
-def _validate_evidence(session: Session, evidence: list[str], relevant_tables=None) -> None:
+def _validate_evidence(session: Session, evidence: list[str]) -> None:
     if not evidence:
         raise EnforcementError(
             "evidence required: cite the executed query ids (q_XXXX) that support this"
@@ -43,6 +43,20 @@ def _validate_evidence(session: Session, evidence: list[str], relevant_tables=No
             f"evidence cites query ids that were not executed successfully: {missing}. "
             "Only successfully executed queries count as evidence."
         )
+    # Relevance: evidence must actually touch the tables under investigation, so a
+    # trivial `SELECT 1` can't be laundered into evidence. Skipped only when the
+    # session declared no targets (nothing to bind relevance to).
+    scope = session.scope_tables
+    if scope:
+        touched: set[str] = set()
+        for qid in evidence:
+            touched.update(t.upper() for t in session.query_tables(qid))
+        if not (touched & scope):
+            raise EnforcementError(
+                "evidence does not touch any table under investigation "
+                f"(session scope: {sorted(scope)}). Cite queries that actually read the "
+                "target tables, not unrelated probes."
+            )
 
 
 def complete_checkpoint(
@@ -107,6 +121,12 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
     }
 
 
+#: stages at or beyond this index require all checkpoints complete
+_REVIEW_IDX = STAGES.index("review")
+#: stages at or beyond this index require at least one accepted finding
+_FIXES_IDX = STAGES.index("fixes")
+
+
 def advance_stage(
     session: Session,
     to_stage: str,
@@ -114,25 +134,37 @@ def advance_stage(
     force: bool = False,
     overrides_dir: Path | None = None,
 ) -> dict:
-    """Gate stage transitions on the workflow's evidence requirements."""
+    """Gate stage transitions on the workflow's evidence requirements.
+
+    Gates are *cumulative and target-index based*, not keyed to one specific
+    target stage — so jumping straight to 'verification' or 'closed' cannot skip
+    them. Loop-backs to earlier stages are always allowed. `force` is a human
+    escape hatch: it is honored only for the 'user' actor (an agent cannot
+    self-authorize a bypass).
+    """
     if to_stage not in STAGES:
         raise EnforcementError(f"unknown stage '{to_stage}' (stages: {', '.join(STAGES)})")
-    ready = readiness(session, overrides_dir)
-
-    # Gate: leaving analysis/synthesis into review requires all checks complete.
-    entering_review = to_stage == "review"
-    if entering_review and not force and not ready["checks_complete"]:
+    if force and actor != "user":
         raise EnforcementError(
-            "cannot enter 'review': required checkpoints still open: "
-            f"{ready['open_checks']}. Complete them with evidence, or override with force."
+            "force override is a user action; agents cannot bypass evidence gates. "
+            "Ask the user to advance with force if a bypass is genuinely needed."
         )
-    # Gate: entering fixes requires at least one accepted finding (nothing to fix otherwise).
-    if to_stage == "fixes" and not force:
-        findings = session.findings()
-        if not findings:
+    ready = readiness(session, overrides_dir)
+    target_idx = STAGES.index(to_stage)
+
+    # Gate: reaching review or later requires all required checkpoints complete.
+    if target_idx >= _REVIEW_IDX and not force and not ready["checks_complete"]:
+        raise EnforcementError(
+            f"cannot reach '{to_stage}': required checkpoints still open: "
+            f"{ready['open_checks']}. Complete them with evidence first."
+        )
+    # Gate: reaching fixes or later requires at least one user-accepted finding.
+    if target_idx >= _FIXES_IDX and not force:
+        accepted = [f for f in session.findings() if f["accepted"]]
+        if not accepted:
             raise EnforcementError(
-                "cannot enter 'fixes': no findings recorded. Record findings first, "
-                "or override with force if fixes are being made without formal findings."
+                f"cannot reach '{to_stage}': no user-accepted finding. Findings must be "
+                "recorded and accepted by the user (in the console) before fixes."
             )
     session.set_stage(to_stage, actor)
     if force:

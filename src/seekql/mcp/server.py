@@ -125,11 +125,14 @@ def build_server(workspace: Workspace) -> Any:
         except (FileNotFoundError, ValueError) as e:
             return _err(e)
 
-    @mcp.tool(description="Advance the session stage (evidence gates apply unless force).")
-    def session_advance(session_id: str, to_stage: str, force: bool = False) -> dict:
+    @mcp.tool(
+        description="Advance the session stage. Evidence gates apply and cannot be forced "
+        "by an agent — the user forces a bypass from the console if ever needed."
+    )
+    def session_advance(session_id: str, to_stage: str) -> dict:
         try:
             s = _session(session_id)
-            return engine.advance_stage(s, to_stage, "agent", force, workspace.workflows_dir)
+            return engine.advance_stage(s, to_stage, "agent", False, workspace.workflows_dir)
         except (EnforcementError, FileNotFoundError, ValueError) as e:
             return _err(e)
 

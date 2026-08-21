@@ -105,6 +105,18 @@ def verify(
     p = session.proposal(pid)
     if p is None:
         raise ProposalError(f"no proposal '{pid}'")
+    # Verification comes after the user approved and the fix was applied — it must
+    # not be a back door that stamps an un-approved (or rejected) proposal 'verified'.
+    if p["status"] not in {"approved", "applied", "verification_failed"}:
+        raise ProposalError(
+            f"proposal '{pid}' must be approved (and applied) before verification "
+            f"(status={p['status']})"
+        )
+    if before_qid == after_qid:
+        raise ProposalError(
+            "before and after evidence must be different queries — a query compared "
+            "to itself proves nothing"
+        )
     executed = session.executed_qids()
     missing = [q for q in (before_qid, after_qid) if q not in executed]
     if missing:

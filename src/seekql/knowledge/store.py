@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from seekql.util import utcnow
 
 FactStatus = Literal["proposed", "data_inferred", "user_confirmed"]
-_FQN_PART = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+_FQN_PART = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")  # \Z: no trailing-newline match
 
 
 class Fact(BaseModel):
@@ -98,6 +98,14 @@ class KnowledgeStore:
         created_by: str = "agent",
         evidence: list[str] | None = None,
     ) -> dict:
+        # 'agents propose; users confirm': user_confirmed status is reachable ONLY
+        # through confirm_fact (a user action), never by writing a new fact. This
+        # stops an agent from laundering an assertion into human-authority provenance.
+        if status == "user_confirmed":
+            raise ValueError(
+                "cannot create a fact as 'user_confirmed'; add it as 'proposed' or "
+                "'data_inferred', then confirm it via a user action (knowledge confirm)"
+            )
         doc = self.read(fqn)
         fid = fact_id or _slug(fact_text, {f["id"] for f in doc["facts"]})
         if any(f["id"] == fid for f in doc["facts"]):

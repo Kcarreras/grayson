@@ -18,7 +18,9 @@ TOKEN = "test-token"
 
 @pytest.fixture
 def client(workspace):
-    return TestClient(build_app(workspace, token=TOKEN))
+    # base_url sets the Host header to a loopback name the server's DNS-rebinding
+    # guard accepts (the TestClient default 'testserver' is rejected by design).
+    return TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1")
 
 
 @pytest.fixture

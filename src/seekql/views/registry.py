@@ -7,17 +7,33 @@ work-repo base files to assemble any missing view — all executed by the user.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from seekql.util import utcnow
+
+_VIEW_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}\Z")
 
 
 class ViewEntry(BaseModel):
     name: str
     purpose: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, v: str) -> str:
+        # A view name becomes part of a DDL filename; reject anything that could
+        # escape views/ddl (path separators, '..', newlines).
+        if not _VIEW_NAME.match(v):
+            raise ValueError(
+                f"invalid view name {v!r}: use a bare or dotted SQL identifier "
+                "(letters, digits, _ , $)"
+            )
+        return v
+
     source_tables: list[str] = Field(default_factory=list)
     base_files: list[str] = Field(default_factory=list)  # work-repo paths/globs
     ddl_path: str | None = None  # relative to views/

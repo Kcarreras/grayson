@@ -54,6 +54,20 @@ def test_extract_library(workspace, tmp_path):
     assert any("T.md" in c for c in result["copied"])
 
 
+def test_extract_library_skips_symlinks(workspace, tmp_path):
+    # a symlink planted under an asset dir must not be dereferenced into the library
+    secret = tmp_path / "secret.txt"
+    secret.write_text("SENSITIVE")
+    link = workspace.knowledge_dir / "leak.md"
+    try:
+        link.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
+    result = extract_library(workspace, tmp_path / "extracted")
+    assert not (tmp_path / "extracted" / "knowledge" / "leak.md").exists()
+    assert any("leak.md" in s for s in result["skipped_symlinks"])
+
+
 # -- linked library resolution ------------------------------------------
 
 

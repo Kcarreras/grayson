@@ -108,20 +108,27 @@ def extract_library(workspace: Workspace, dest: Path) -> dict:
     """Split a solo workspace's assets out into a new library repo."""
     dest = dest.resolve()
     init_library(dest)
-    copied = []
+    copied, skipped = [], []
     for asset in LIBRARY_ASSETS:
         src = workspace.root / asset
         if not src.is_dir():
             continue
         for item in src.rglob("*"):
+            # Never dereference symlinks: a link planted under an asset dir could
+            # otherwise copy out-of-tree secrets (e.g. ~/.ssh/id_rsa) into a repo
+            # the user then pushes to a shared remote.
+            if item.is_symlink():
+                skipped.append(str(item.relative_to(workspace.root)))
+                continue
             if item.is_file():
                 rel = item.relative_to(workspace.root)
                 target = dest / rel
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
+                shutil.copy2(item, target, follow_symlinks=False)
                 copied.append(str(rel))
     return {
         "dest": str(dest),
         "copied": copied,
+        "skipped_symlinks": skipped,
         "next": "commit/push this repo, then set [library] path in seekql.toml",
     }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from seekql.cache.local import LocalQueryError, query_artifacts
-from seekql.cache.store import CacheStore, staleness
+from seekql.cache.store import CacheStore, compare_artifacts, staleness
 
 ROWS = [{"ID": 1, "VAL": "a"}, {"ID": 2, "VAL": "b"}, {"ID": 3, "VAL": None}]
 
@@ -100,6 +100,31 @@ def test_local_query_join_and_cte(store):
 def test_local_query_max_rows(store):
     cols, rows = query_artifacts(store.data_dir, "SELECT * FROM q_0001", max_rows=2)
     assert len(rows) == 2
+
+
+def test_compare_uses_real_table_count_not_sidecar(store, tmp_path):
+    import json
+
+    store.save("q_0002", [{"ID": 1}], sql="a", source_tables=["DB.S.T1"], truncated=False)
+    # tamper the sidecar to claim 0 rows while the table still holds 1
+    sc_path = store.sidecar_path("q_0002")
+    sc = json.loads(sc_path.read_text())
+    sc["row_count"] = 0
+    sc_path.write_text(json.dumps(sc))
+    result = compare_artifacts(store, "q_0001", "q_0002")
+    # real table count (1) is used, so after is NOT reported empty
+    assert result["after"]["row_count"] == 1
+    assert result["after_empty"] is False
+
+
+def test_compare_truncated_never_identical(tmp_path):
+    s = CacheStore(tmp_path / "d3")
+    rows = [{"ID": i} for i in range(3)]
+    s.save("q_0001", rows, sql="a", source_tables=[], truncated=True)
+    s.save("q_0002", rows, sql="b", source_tables=[], truncated=True)
+    result = compare_artifacts(s, "q_0001", "q_0002")
+    assert result["identical"] is False
+    assert result["counts_truncated"] is True
 
 
 BAD_LOCAL = [

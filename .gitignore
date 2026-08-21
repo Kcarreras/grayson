@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# seekql session state and cached warehouse data
+.seekql/

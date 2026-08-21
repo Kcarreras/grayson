@@ -12,7 +12,7 @@ import secrets
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -24,6 +24,7 @@ from seekql.interventions.types import InterventionError
 from seekql.workspace import Workspace
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+_COOKIE = "seekql_token"
 
 
 def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
@@ -31,9 +32,27 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.globals["token"] = token or ""
 
+    def _valid(supplied: str | None) -> bool:
+        return bool(supplied) and secrets.compare_digest(supplied, token)
+
     def _check(request: Request) -> None:
-        if token and request.query_params.get("t") != token:
-            raise HTTPException(status_code=403, detail="invalid or missing access token")
+        # Host allowlist defeats DNS-rebinding (a malicious hostname resolving to
+        # 127.0.0.1): the browser sends that hostname in Host, which we reject.
+        host = (request.headers.get("host") or "").split(":")[0]
+        if host and host not in {"127.0.0.1", "localhost", "::1", ""}:
+            raise HTTPException(status_code=403, detail="unexpected Host header")
+        # Accept the token from a cookie (set on first authenticated load) or the
+        # query string, constant-time compared. The cookie keeps the secret out of
+        # subsequent URLs (history/referrer). Loopback-bound; see docs/SECURITY.md.
+        if not token:
+            return
+        if _valid(request.cookies.get(_COOKIE)) or _valid(request.query_params.get("t")):
+            return
+        raise HTTPException(status_code=403, detail="invalid or missing access token")
+
+    def _set_cookie(response: Response) -> None:
+        if token:
+            response.set_cookie(_COOKIE, token, httponly=True, samesite="strict", path="/")
 
     def _session(sid: str) -> Session:
         try:
@@ -65,7 +84,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 }
             )
         sessions.sort(key=lambda x: x["summary"]["created_at"] or "", reverse=True)
-        return templates.TemplateResponse(request, "dashboard.html", {"sessions": sessions})
+        response = templates.TemplateResponse(request, "dashboard.html", {"sessions": sessions})
+        _set_cookie(response)  # subsequent navigation authenticates via cookie, not URL
+        return response
 
     @app.get("/session/{sid}", response_class=HTMLResponse)
     def session_detail(request: Request, sid: str) -> Any:

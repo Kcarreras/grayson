@@ -112,7 +112,15 @@
   {% if p.payload.rationale %}<div style="margin:8px 0;">{{ p.payload.rationale }}</div>{% endif %}
   {% if p.kind == "file_diff" %}
     <div class="muted mono">target: {{ p.payload.target_file }}</div>
-    {% if p.payload.diff %}<pre class="mono scroll">{{ p.payload.diff }}</pre>{% endif %}
+    {% if p.payload.diff %}
+      <div class="muted" style="margin-top:6px;">diff:</div>
+      <pre class="mono scroll">{{ p.payload.diff }}</pre>
+    {% endif %}
+    {% if p.payload.new_content %}
+      <div class="muted" style="margin-top:6px;">full replacement content to be written
+        (this is what actually gets applied — review it, not just the diff):</div>
+      <pre class="mono scroll">{{ p.payload.new_content }}</pre>
+    {% endif %}
   {% else %}
     <pre class="mono scroll">{{ p.payload.ddl }}</pre>
   {% endif %}

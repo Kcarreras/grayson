@@ -60,6 +60,35 @@ path containment is sound) and one as a non-issue (guard depends on sqlglot/SQLi
 parsing, but the read-only connection and artifact allowlist make divergence
 non-exploitable).
 
+### 2026-08-21 — Phase 2-6 adversarial review (26-agent workflow, find → verify)
+
+A second multi-agent review targeted the state-mutating surfaces added after Phase 1:
+the evidence engine, proposals/verification, interventions, the web console, and the MCP
+server. Because seekql's whole value is keeping a *semi-trusted agent* honest, integrity
+gaps in the gates are treated as first-class security issues. 17 findings were confirmed
+and fixed (regressions in `tests/test_integrity_hardening.py` and additions to
+`tests/test_cache.py`, `tests/test_engine.py`, `tests/test_ui.py`):
+
+| # | Severity | Issue | Fix |
+|---|---|---|---|
+| 1 | critical | Stage gates skippable by jumping straight to `verification`/`closed` | Gates are cumulative by target index, not keyed to one target stage |
+| 2 | high | Agent could self-authorize a gate bypass via `force` | `force` honored only for the `user` actor; removed from the MCP tool |
+| 3 | high | Evidence checked for existence but not relevance (`SELECT 1` passed) | Evidence must touch a table in the session scope |
+| 4 | high | `verify()` stamped un-approved/rejected proposals `verified` | Verification requires an approved/applied proposal |
+| 5 | high | file_diff: reviewer saw `diff` but `new_content` was applied | Console renders `new_content` explicitly as what will be written |
+| 6 | high | Agent could forge `user_confirmed` knowledge provenance | `add_fact` refuses `user_confirmed`; only `confirm_fact` (a user action) sets it |
+| 7 | medium | fixes gate accepted any recorded finding | Requires a user-accepted finding |
+| 8 | medium | Verification accepted `before_qid == after_qid` | Rejected; the two must differ |
+| 9 | medium | `compare_artifacts` ignored the truncation flag | Truncated sets can't be certified identical; flag surfaced |
+| 10 | medium | Comparison trusted tamperable sidecar `row_count` | Counts read from the actual cached table |
+| 11 | medium | Access token rode in every URL | Token also accepted via httponly `SameSite=Strict` cookie, set on first load |
+| 12 | medium | Path traversal via unvalidated view name | View name validated as a SQL identifier |
+| 13 | medium | `extract_library` followed symlinks (secret exfiltration) | Symlinks skipped, `follow_symlinks=False` |
+| 14 | low | Token compared non-constant-time | `secrets.compare_digest` |
+| 15 | low | No Host/Origin check (DNS-rebinding) | Host-header allowlist (loopback names only) |
+| 16 | low | `_FQN_PART` accepted a trailing newline | Anchored with `\Z` |
+| 17 | low | MCP exposed `force` (dup of #2) | Removed from the MCP surface |
+
 ## Residual risks (accepted)
 
 - A pre-existing malicious UDF with an external-access integration could exfiltrate

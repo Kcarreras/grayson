@@ -133,6 +133,16 @@ class CacheStore:
         finally:
             con.close()
 
+    def row_count(self, qid: str) -> int | None:
+        """Actual row count from the cached table (not the sidecar), or None."""
+        if not QID_RE.match(qid) or qid not in self.artifact_tables():
+            return None
+        con = self._con()
+        try:
+            return con.execute(f"SELECT COUNT(*) FROM {_quote_ident(qid)}").fetchone()[0]  # noqa: S608
+        finally:
+            con.close()
+
     def drop_all_data(self) -> int:
         """Delete all cached rows (sidecars and audit trail are kept)."""
         tables = self.artifact_tables()
@@ -161,19 +171,46 @@ def compare_artifacts(store: CacheStore, before_qid: str, after_qid: str) -> dic
     missing = [q for q, sc in [(before_qid, before), (after_qid, after)] if sc is None]
     if missing:
         raise KeyError(f"unknown artifact(s): {missing}")
+    # Counts come from the actual cached tables, not the sidecar JSON (which is a
+    # plain file an agent could tamper with). Fall back to the sidecar only when
+    # the table is absent (empty result: no table is written).
+    b_count = store.row_count(before_qid)
+    a_count = store.row_count(after_qid)
+    b_count = before["row_count"] if b_count is None else b_count
+    a_count = after["row_count"] if a_count is None else a_count
+    b_trunc = bool(before.get("truncated"))
+    a_trunc = bool(after.get("truncated"))
     b_rows = store.preview(before_qid, limit=1000)
     a_rows = store.preview(after_qid, limit=1000)
-    b_count, a_count = before["row_count"], after["row_count"]
     same_columns = before["columns"] == after["columns"]
-    identical = same_columns and b_count == a_count and b_count <= 1000 and b_rows == a_rows
+    # A truncated set can't be certified identical — rows past the cap are unseen.
+    identical = (
+        same_columns
+        and not b_trunc
+        and not a_trunc
+        and b_count == a_count
+        and b_count <= 1000
+        and b_rows == a_rows
+    )
     return {
-        "before": {"qid": before_qid, "row_count": b_count, "columns": before["columns"]},
-        "after": {"qid": after_qid, "row_count": a_count, "columns": after["columns"]},
+        "before": {
+            "qid": before_qid,
+            "row_count": b_count,
+            "columns": before["columns"],
+            "truncated": b_trunc,
+        },
+        "after": {
+            "qid": after_qid,
+            "row_count": a_count,
+            "columns": after["columns"],
+            "truncated": a_trunc,
+        },
         "row_count_delta": a_count - b_count,
+        "counts_truncated": b_trunc or a_trunc,
         "same_columns": same_columns,
         "identical": identical,
-        "before_empty": b_count == 0,
-        "after_empty": a_count == 0,
+        "before_empty": b_count == 0 and not b_trunc,
+        "after_empty": a_count == 0 and not a_trunc,
     }
 
 

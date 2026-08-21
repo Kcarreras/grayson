@@ -124,8 +124,12 @@ def test_stage_gate_force_overrides(session):
     assert "stage_gate_forced" in events
 
 
-def test_fixes_gate_requires_findings(session):
-    with pytest.raises(EnforcementError, match="no findings"):
+def test_fixes_gate_requires_accepted_finding(session):
+    # complete checks first so the cumulative gate reaches the findings requirement
+    qids = _run(session, 1)
+    for c in session.checkpoints():
+        engine.complete_checkpoint(session, c["key"], qids, "done")
+    with pytest.raises(EnforcementError, match="no user-accepted finding"):
         engine.advance_stage(session, "fixes")
 
 
