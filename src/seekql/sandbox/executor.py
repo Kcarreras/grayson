@@ -12,6 +12,8 @@ against a real warehouse.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import sqlite3
 import time
@@ -23,7 +25,7 @@ from sqlglot import exp
 from seekql.executor.snow import ExecutionResult
 
 SANDBOX_CONNECTION = "sandbox"
-DB_FILENAME = "sandbox_warehouse.db"
+SANDBOX_DIR_ENV = "SEEKQL_SANDBOX_DIR"  # override the warehouse store location (tests)
 
 _DESCRIBE_RE = re.compile(
     r"^\s*DESC(?:RIBE)?\s+(?:TABLE\s+|VIEW\s+)?([\w.\"$]+)\s*$", re.IGNORECASE
@@ -31,7 +33,16 @@ _DESCRIBE_RE = re.compile(
 
 
 def sandbox_db_path(workspace_root: Path) -> Path:
-    return workspace_root / ".seekql" / DB_FILENAME
+    """Warehouse location for a sandbox workspace — deliberately OUTSIDE it.
+
+    The agent works inside the workspace; a warehouse file it could open
+    directly would let it bypass the guard entirely (and read the planted
+    problems unaudited). Keyed by workspace path so multiple sandboxes coexist.
+    """
+    base = os.environ.get(SANDBOX_DIR_ENV)
+    store = Path(base) if base else Path.home() / ".seekql" / "sandboxes"
+    digest = hashlib.sha256(str(workspace_root.resolve()).lower().encode()).hexdigest()[:12]
+    return store / f"{digest}.db"
 
 
 class SandboxSQLError(ValueError):

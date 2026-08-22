@@ -422,6 +422,23 @@ def session_events(session_id: str, limit: int = typer.Option(50, "--limit")) ->
     emit(_session(session_id).events(limit))
 
 
+@session_app.command("delete")
+def session_delete(
+    session_id: str,
+    yes: bool = typer.Option(False, "--yes", help="Confirm permanent deletion."),
+) -> None:
+    """Permanently delete a session — audit trail and cached data included."""
+    s = _session(session_id)
+    if not yes:
+        fail(
+            f"this permanently deletes session '{s.id}' (audit trail and cached data) — "
+            "re-run with --yes to confirm"
+        )
+        return
+    s.delete()
+    emit({"deleted": s.id})
+
+
 @session_app.command("scrub")
 def session_scrub(session_id: str) -> None:
     """Delete cached warehouse data for a session (audit trail is kept)."""

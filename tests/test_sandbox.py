@@ -14,6 +14,12 @@ from seekql.sandbox.seed import seed_sandbox
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_warehouse_store(tmp_path, monkeypatch):
+    # keep test warehouses out of the real ~/.seekql/sandboxes store
+    monkeypatch.setenv("SEEKQL_SANDBOX_DIR", str(tmp_path / "wh-store"))
+
+
 def invoke(*args):
     result = runner.invoke(app, list(args))
     assert result.exit_code == 0, result.output
@@ -32,6 +38,9 @@ def test_init_scaffolds_workspace_and_answer_key(sandbox_ws, tmp_path):
     assert (root / "seekql.toml").is_file()
     assert (root / "SANDBOX_ANSWER_KEY.md").is_file()
     assert sandbox_db_path(root).is_file()
+    # the warehouse must live OUTSIDE the workspace so agents cannot read it
+    # directly and bypass the guard
+    assert not sandbox_db_path(root).resolve().is_relative_to(root.resolve())
     key = (root / "SANDBOX_ANSWER_KEY.md").read_text(encoding="utf-8")
     assert "table-health" in key and "bug-hunter" in key and "migration-parity" in key
 

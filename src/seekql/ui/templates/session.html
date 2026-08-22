@@ -33,8 +33,17 @@
         {% for st in ["analysis","synthesis","review","fixes","verification","closed"] %}
         <option value="{{ st }}">{{ st }}</option>{% endfor %}
       </select>
-      <button class="btn secondary" type="submit">advance →</button>
+      <label class="muted" style="font-size:12px; white-space:nowrap;">
+        <input type="checkbox" name="force" value="true"> force
+      </label>
+      <button class="btn secondary" type="submit">set stage</button>
     </form>
+  </div>
+  <div class="muted" style="margin-top:8px; font-size:12px;">
+    Your control, not the agent's — it moves this session's stage directly and does not
+    instruct or prompt the agent. Gates apply: <i>review</i> needs all checkpoints complete,
+    <i>fixes</i> needs an accepted finding. <b>force</b> overrides the gates (audited).
+    Normally the agent advances stages itself as evidence accumulates.
   </div>
 </div>
 

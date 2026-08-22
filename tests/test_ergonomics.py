@@ -88,6 +88,17 @@ def test_table_onboarding_workflow_registered(workspace):
     }
 
 
+def test_session_delete_requires_confirmation(workspace, fake_snow_env, sid):
+    blocked = runner.invoke(app, ["session", "delete", sid])
+    assert blocked.exit_code == 1
+    assert "permanently deletes" in blocked.output
+    assert invoke("session", "status", sid)["id"] == sid  # still there
+    out = invoke("session", "delete", sid, "--yes")
+    assert out["deleted"] == sid
+    gone = runner.invoke(app, ["session", "status", sid])
+    assert gone.exit_code == 1
+
+
 def test_ui_pages_auto_refresh(workspace, fake_snow_env, sid):
     client = TestClient(build_app(workspace, token="tok"), base_url="http://127.0.0.1")
     dash = client.get("/?t=tok")

@@ -21,6 +21,10 @@ they are equivalent. Never query Snowflake except through seekql.
 - Only read statements run: SELECT / SHOW / DESCRIBE / EXPLAIN. DML/DDL are blocked.
   You never get warehouse write rights — to change a table definition, write a *fix
   proposal* for the user to apply.
+- Access warehouse data ONLY through seekql (`query run`, `cache query`). Never open
+  warehouse or `.seekql/` database/state files directly — including local or sandbox
+  files. Direct reads bypass the audit trail, so nothing learned from them counts as
+  evidence, and checkpoints/findings citing no executed queries will be rejected.
 - Every checkpoint and finding must cite **evidence**: the ids of queries you actually
   executed (`q_0001`, ...). seekql rejects claims without real evidence.
 - Check cached data and the knowledge library before re-querying.

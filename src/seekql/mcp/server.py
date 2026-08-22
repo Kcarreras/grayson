@@ -34,6 +34,9 @@ with before/after evidence. seekql enforces the rails; you supply the analysis.
 If a target table has no recorded knowledge, settle grain/semantics with the user early
 (or run the table-onboarding workflow), and persist durable intervention answers with
 knowledge_add so future sessions start briefed.
+Access warehouse data ONLY through these tools — never open warehouse or .seekql
+database/state files directly (including local or sandbox files); direct reads bypass
+the audit trail and produce nothing citable as evidence.
 """
 
 
