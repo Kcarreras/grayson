@@ -1,0 +1,45 @@
+name: table-onboarding
+title: Table Onboarding & Semantic Discovery
+description: >
+  Establish the semantic record for a table with little or no knowledge
+  coverage: profile its structure, hypothesize the grain and relationships
+  from the data, confirm what only a human can know via interventions, and
+  record the results as knowledge facts so every later session starts briefed.
+  "We don't know yet" is a valid, recordable outcome — capture open questions
+  as facts rather than guessing.
+suggested_guard_profile: moderate
+setup_inputs:
+  - key: table
+    prompt: The fully-qualified table to onboard.
+    required: true
+  - key: prior_context
+    prompt: >
+      Anything already known — source system, owning team, suspected grain,
+      related tables. Leave empty if nothing is known.
+    required: false
+required_checks:
+  - key: structure_profiled
+    title: Profile structure and content
+    description: >
+      Columns, types, row count, null rates, cardinalities, and value samples —
+      the factual baseline every hypothesis rests on.
+  - key: grain_established
+    title: Establish the grain
+    description: >
+      Hypothesize the grain from uniqueness evidence, then confirm it with the
+      user via an intervention. If the data and the user's expectation
+      disagree, record the discrepancy as a finding, not a silent resolution.
+  - key: relationships_mapped
+    title: Map relationships
+    description: >
+      Identify candidate join keys to sibling tables and validate them with
+      match-rate evidence (orphans, fan-out). Record confirmed relationships
+      and ruled-out candidates alike.
+  - key: semantics_recorded
+    title: Record semantics as knowledge
+    description: >
+      Save the confirmed grain, column semantics, relationships, and every
+      unresolved question to the knowledge library with provenance, so the
+      next session starts where this one ended.
+open_stages: [analysis]
+findings_schema: standard_v1

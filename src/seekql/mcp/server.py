@@ -31,6 +31,9 @@ run guarded queries (only SELECT/SHOW/DESCRIBE/EXPLAIN survive), close each requ
 checkpoint citing executed query ids as evidence, record findings against the schema,
 request human interventions when judgment is needed, then propose fixes and verify them
 with before/after evidence. seekql enforces the rails; you supply the analysis.
+If a target table has no recorded knowledge, settle grain/semantics with the user early
+(or run the table-onboarding workflow), and persist durable intervention answers with
+knowledge_add so future sessions start briefed.
 """
 
 
@@ -104,13 +107,23 @@ def build_server(workspace: Workspace) -> Any:
             if isinstance(info, dict) and info.get("last_altered")
         }
         knowledge = KnowledgeStore(workspace.knowledge_dir)
-        return {
+        facts = {t: knowledge.read(t)["facts"] for t in tables}
+        gaps = sorted(t for t, f in facts.items() if not f)
+        out = {
             "session": s.summary(),
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "findings_schema": tpl.findings_schema,
             "view_coverage": ViewRegistry(workspace.views_dir).coverage_check(tables, current),
-            "knowledge": {t: knowledge.read(t)["facts"] for t in tables},
+            "knowledge": facts,
+            "knowledge_gaps": gaps,
         }
+        if gaps:
+            out["hint"] = (
+                f"no recorded knowledge for {', '.join(gaps)} — confirm grain/semantics "
+                "with the user early (intervention), record durable answers with "
+                "knowledge_add, or run the table-onboarding workflow first"
+            )
+        return out
 
     @mcp.tool(description="List sessions in this workspace.")
     def session_list() -> list[dict]:

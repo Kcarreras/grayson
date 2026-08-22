@@ -65,6 +65,29 @@ def test_session_start_returns_hints(workspace, fake_snow_env):
     assert out["session"]["id"] in hints
 
 
+def test_session_start_flags_knowledge_gaps(workspace, fake_snow_env):
+    out = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    assert out["knowledge_gaps"] == ["DB.S.T1"]
+    assert any("table-onboarding" in h for h in out["hints"])
+    # once knowledge exists, the gap (and its hint) disappear
+    invoke("knowledge", "add", "DB.S.T1", "--fact", "one row per ID")
+    out2 = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    assert out2["knowledge_gaps"] == []
+    assert not any("table-onboarding" in h for h in out2["hints"])
+
+
+def test_table_onboarding_workflow_registered(workspace):
+    names = {w["name"] for w in invoke("workflow", "list")}
+    assert "table-onboarding" in names
+    show = invoke("workflow", "show", "table-onboarding")
+    assert {c["key"] for c in show["required_checks"]} == {
+        "structure_profiled",
+        "grain_established",
+        "relationships_mapped",
+        "semantics_recorded",
+    }
+
+
 def test_ui_pages_auto_refresh(workspace, fake_snow_env, sid):
     client = TestClient(build_app(workspace, token="tok"), base_url="http://127.0.0.1")
     dash = client.get("/?t=tok")

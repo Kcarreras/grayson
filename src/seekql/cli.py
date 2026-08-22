@@ -340,11 +340,19 @@ def session_start(
     result["view_coverage"] = ViewRegistry(ws.views_dir).coverage_check(tables, current)
     knowledge = KnowledgeStore(ws.knowledge_dir)
     result["knowledge"] = {t: knowledge.read(t)["facts"] for t in tables}
+    result["knowledge_gaps"] = sorted(t for t, facts in result["knowledge"].items() if not facts)
     result["hints"] = [
         "human console (interventions, reviews, approvals): seekql ui serve",
         f'run a guarded query: seekql query run {session.id} -q "SELECT ..."',
         "'latest' works in place of the session id in any command",
     ]
+    if result["knowledge_gaps"]:
+        result["hints"].insert(
+            0,
+            f"no recorded knowledge for {', '.join(result['knowledge_gaps'])} — confirm "
+            "grain/semantics with the user early (intervention), record durable answers "
+            "with `seekql knowledge add`, or run the table-onboarding workflow first",
+        )
     emit(result)
 
 

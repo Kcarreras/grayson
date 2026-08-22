@@ -30,7 +30,9 @@ they are equivalent. Never query Snowflake except through seekql.
 ## Workflow
 1. Discover: `seekql workflow list`; read the knowledge library for the target tables
    (`seekql knowledge show DB.SCHEMA.TABLE`). Ask the user for anything the data can't
-   tell you, and save durable answers with `seekql knowledge add`.
+   tell you, and save durable answers with `seekql knowledge add`. If a target has no
+   recorded knowledge at all, settle grain/semantics with the user early — or run the
+   `table-onboarding` workflow first to build the semantic record.
 2. Start: `seekql session start --workflow <name> --table DB.SCHEMA.TABLE ...`. Review
    the returned view coverage — reuse existing QA views, ask the user to create/refresh
    any the setup flags. Note the session id; use it in every later command.
@@ -40,7 +42,10 @@ they are equivalent. Never query Snowflake except through seekql.
    `seekql checkpoint complete <sid> <key> --evidence q_0003,q_0007 --note "..."`.
 4. Human input when needed: `seekql intervention request <sid> --kind label_sample ...`,
    then `seekql intervention await <sid> <iid> --timeout 600`. The user answers in the
-   web console (`seekql ui serve`).
+   web console (`seekql ui serve`). When an answer settles a durable fact about a table
+   (its grain, a semantic rule, an expectation), persist it for future sessions:
+   `seekql knowledge add <table> --fact "..." --evidence <iid>` — the user confirms it
+   from the console later.
 5. Findings: record them against the workflow schema, each citing evidence:
    `seekql finding add <sid> --json '{...}'`.
 6. Fixes: draft proposals linked to findings
