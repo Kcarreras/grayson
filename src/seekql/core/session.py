@@ -29,6 +29,42 @@ def resolve_session_id(workspace: Workspace, session_id: str) -> str:
     return ids[-1]
 
 
+def find_recent_duplicate(
+    workspace: Workspace, workflow: str, targets: list[str], window_minutes: int = 10
+) -> str | None:
+    """A just-created, still-empty session with the same workflow and targets.
+
+    Agents sometimes re-run `session start` (lost output, retry after a shell
+    hiccup); treating the re-run as idempotent beats litter of abandoned twins.
+    Only sessions with zero queries count — once work exists, a new session is
+    assumed intentional.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    wanted = sorted(t.upper() for t in targets)
+    for sid in reversed(workspace.list_session_ids()[-5:]):
+        try:
+            s = Session(workspace, sid)
+            meta = s.meta_all()
+        except (OSError, ValueError):
+            continue
+        if meta.get("workflow") != workflow or meta.get("stage") == "closed":
+            continue
+        if sorted(json.loads(meta.get("targets") or "[]")) != wanted:
+            continue
+        try:
+            created = datetime.strptime(meta.get("created_at") or "", "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=UTC
+            )
+        except ValueError:
+            continue
+        if datetime.now(UTC) - created > timedelta(minutes=window_minutes):
+            continue
+        if s.query_stats()["total"] == 0:
+            return sid
+    return None
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events(

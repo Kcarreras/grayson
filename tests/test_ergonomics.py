@@ -71,9 +71,27 @@ def test_session_start_flags_knowledge_gaps(workspace, fake_snow_env):
     assert any("table-onboarding" in h for h in out["hints"])
     # once knowledge exists, the gap (and its hint) disappear
     invoke("knowledge", "add", "DB.S.T1", "--fact", "one row per ID")
-    out2 = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    out2 = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1", "--new")
     assert out2["knowledge_gaps"] == []
     assert not any("table-onboarding" in h for h in out2["hints"])
+
+
+def test_session_start_idempotent_on_quick_rerun(workspace, fake_snow_env):
+    first = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    again = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    assert again["reused_existing"] is True
+    assert again["session"]["id"] == first["session"]["id"]
+    assert again["checkpoints"]  # enough context to continue working
+    forced = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1", "--new")
+    assert forced["session"]["id"] != first["session"]["id"]
+
+
+def test_session_start_not_deduped_once_work_exists(workspace, fake_snow_env):
+    first = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    invoke("query", "run", first["session"]["id"], "-q", "SELECT * FROM DB.S.T1")
+    second = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    assert "reused_existing" not in second
+    assert second["session"]["id"] != first["session"]["id"]
 
 
 def test_table_onboarding_workflow_registered(workspace):

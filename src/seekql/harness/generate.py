@@ -27,7 +27,13 @@ they are equivalent. Never query Snowflake except through seekql.
   evidence, and checkpoints/findings citing no executed queries will be rejected.
 - Every checkpoint and finding must cite **evidence**: the ids of queries you actually
   executed (`q_0001`, ...). seekql rejects claims without real evidence.
-- Check cached data and the knowledge library before re-querying.
+- Check cached data and the knowledge library before re-querying. An empty cache,
+  knowledge library, or view registry is normal in a fresh workspace — it is not a
+  problem to fix or report; build them as you work.
+- Setup and admin commands (`init`, `sandbox *`, `library *`, `harness *`, `ui serve`)
+  belong to the user. If infrastructure looks missing or broken — no workspace, a
+  missing warehouse, expired auth — pause and ask the user; never scaffold, reseed,
+  or reconfigure it yourself.
 - When a judgement needs a human (semantic correctness, ambiguous rules), file an
   intervention and wait for the answer instead of guessing.
 

@@ -15,7 +15,7 @@ from seekql.core import proposals as proposals_engine
 from seekql.core.engine import EnforcementError
 from seekql.core.proposals import ProposalError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
-from seekql.core.session import Session, resolve_session_id
+from seekql.core.session import Session, find_recent_duplicate, resolve_session_id
 from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request
 from seekql.interventions.types import InterventionError
@@ -37,6 +37,9 @@ knowledge_add so future sessions start briefed.
 Access warehouse data ONLY through these tools — never open warehouse or .seekql
 database/state files directly (including local or sandbox files); direct reads bypass
 the audit trail and produce nothing citable as evidence.
+Setup/admin operations (workspace init, sandbox seeding, library config) belong to the
+user: if infrastructure looks missing or broken, pause and ask instead of fixing it.
+An empty knowledge library, cache, or view registry is normal in a fresh workspace.
 """
 
 
@@ -83,11 +86,24 @@ def build_server(workspace: Workspace) -> Any:
         title: str = "",
         guard_profile: str | None = None,
         strict_scope: bool | None = None,
+        new: bool = False,
     ) -> dict:
         try:
             tpl = get_workflow(workflow, workspace.workflows_dir)
         except WorkflowNotFound as e:
             return _err(e)
+        if not new:
+            dup = find_recent_duplicate(workspace, workflow, tables)
+            if dup:
+                s = _session(dup)
+                return {
+                    "reused_existing": True,
+                    "session": s.summary(),
+                    "checkpoints": s.checkpoints(),
+                    "note": f"an identical session '{dup}' was created moments ago and "
+                    "has no work yet — continuing with it. Pass new=true to force "
+                    "a separate one.",
+                }
         last_used = None if guard_profile else suggest_guard_profile(workspace, tables)
         chosen = guard_profile or last_used or tpl.suggested_guard_profile
         if chosen not in workspace.config.guard_profiles:

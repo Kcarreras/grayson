@@ -45,6 +45,21 @@ def sandbox_db_path(workspace_root: Path) -> Path:
     return store / f"{digest}.db"
 
 
+def locate_warehouse(workspace_root: Path) -> Path:
+    """The workspace's warehouse path, migrating a legacy in-workspace file.
+
+    Early versions seeded `.seekql/sandbox_warehouse.db` inside the workspace;
+    those files are moved to the store on first touch so upgraded installs keep
+    working without a reseed.
+    """
+    target = sandbox_db_path(workspace_root)
+    legacy = workspace_root / ".seekql" / "sandbox_warehouse.db"
+    if not target.is_file() and legacy.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        legacy.replace(target)
+    return target
+
+
 class SandboxSQLError(ValueError):
     pass
 
@@ -57,7 +72,9 @@ class SandboxExecutor:
         if not self.db_path.is_file():
             return ExecutionResult(
                 status="error",
-                error="sandbox warehouse not found — run `seekql sandbox init` first",
+                error="sandbox warehouse not found. This is a setup problem, not an "
+                "analysis problem: pause and ask the user to run `seekql sandbox reset` — "
+                "do not run setup commands yourself.",
             )
         start = time.monotonic()
         try:

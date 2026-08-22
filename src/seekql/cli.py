@@ -17,7 +17,7 @@ from seekql.core import proposals as proposals_engine
 from seekql.core.engine import EnforcementError
 from seekql.core.proposals import ProposalError
 from seekql.core.run import cache_find, check_statement, run_statement, snapshot_metadata
-from seekql.core.session import STAGES, Session, resolve_session_id
+from seekql.core.session import STAGES, Session, find_recent_duplicate, resolve_session_id
 from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request, validate_response
 from seekql.interventions.types import InterventionError
@@ -95,6 +95,19 @@ def _session(session_id: str) -> Session:
         raise  # unreachable
 
 
+def _refuse_nested_workspace(path: Path) -> None:
+    """Workspaces must not nest — sessions/config would silently split by cwd."""
+    try:
+        existing = Workspace.find(path.resolve().parent)
+    except FileNotFoundError:
+        return
+    fail(
+        f"'{path}' is inside the existing workspace at {existing.root} — workspaces "
+        "must not nest (commands would target one or the other depending on cwd). "
+        "cd outside it and pick a separate directory."
+    )
+
+
 def _read_sql(sql: str | None, file: Path | None) -> str:
     if sql and file:
         fail("pass --sql or --file, not both")
@@ -116,6 +129,7 @@ def _read_sql(sql: str | None, file: Path | None) -> str:
 @app.command()
 def init(path: Path = typer.Argument(Path("."), help="Directory to initialize.")) -> None:
     """Initialize a seekql workspace (seekql.toml, library dirs, .seekql/)."""
+    _refuse_nested_workspace(path)
     try:
         ws = Workspace.init(path)
     except FileExistsError as e:
@@ -140,14 +154,14 @@ def doctor() -> None:
 
     sandbox = ws is not None and ws.config.connection == "sandbox"
     if sandbox:
-        from seekql.sandbox.executor import sandbox_db_path
+        from seekql.sandbox.executor import locate_warehouse
 
-        db = sandbox_db_path(ws.root)
+        db = locate_warehouse(ws.root)
         checks.append(
             {
                 "check": "sandbox_warehouse",
                 "ok": db.is_file(),
-                "detail": str(db) if db.is_file() else "missing — run `seekql sandbox init`",
+                "detail": str(db) if db.is_file() else "missing — run `seekql sandbox reset`",
             }
         )
     snow = shutil.which("snow")
@@ -274,6 +288,9 @@ def session_start(
     workers: int = typer.Option(1, "--workers", min=1, max=16),
     strict_scope: bool = typer.Option(None, "--strict-scope/--no-strict-scope"),
     skip_snapshot: bool = typer.Option(False, "--skip-snapshot", help="Skip metadata snapshot."),
+    new: bool = typer.Option(
+        False, "--new", help="Start even if an identical just-created session exists."
+    ),
 ) -> None:
     """Start a QA session. Guard profile is resolved then per-setting overrides apply."""
     ws = _workspace()
@@ -282,6 +299,22 @@ def session_start(
     except WorkflowNotFound as e:
         fail(str(e))
         return
+    # Re-running session start moments later (lost output, shell retry) reuses
+    # the fresh session instead of littering the workspace with twins.
+    if not new:
+        dup = find_recent_duplicate(ws, workflow, tables)
+        if dup:
+            s = Session(ws, dup)
+            emit(
+                {
+                    "reused_existing": True,
+                    "session": s.summary(),
+                    "checkpoints": s.checkpoints(),
+                    "note": f"an identical session '{dup}' was created moments ago and has "
+                    "no work yet — continuing with it. Pass --new to force a separate one.",
+                }
+            )
+            return
     # Precedence for the base profile: explicit flag > last-used on these tables
     # > workflow suggestion. Per-setting overrides then apply on top.
     last_used = None if guard_profile else suggest_guard_profile(ws, tables)
@@ -1176,6 +1209,7 @@ def sandbox_init(
     from seekql.sandbox.executor import sandbox_db_path
     from seekql.sandbox.seed import render_answer_key, seed_sandbox
 
+    _refuse_nested_workspace(path)
     try:
         ws = Workspace.init(path)
     except FileExistsError as e:
@@ -1215,15 +1249,16 @@ def sandbox_init(
 @sandbox_app.command("reset")
 def sandbox_reset() -> None:
     """Re-seed the sandbox warehouse (fresh data, same planted problems)."""
-    from seekql.sandbox.executor import sandbox_db_path
+    from seekql.sandbox.executor import locate_warehouse
     from seekql.sandbox.seed import seed_sandbox
 
     ws = _workspace()
     if ws.config.connection != "sandbox":
         fail("this workspace is not a sandbox (connection name is not 'sandbox')")
         return
-    seed_sandbox(sandbox_db_path(ws.root))
-    emit({"reseeded": str(sandbox_db_path(ws.root))})
+    path = locate_warehouse(ws.root)  # migrates any legacy in-workspace file first
+    seed_sandbox(path)
+    emit({"reseeded": str(path)})
 
 
 # -- mcp -----------------------------------------------------------------

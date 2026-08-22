@@ -177,6 +177,27 @@ def test_describe_and_show_tables(sandbox_ws):
     assert any(r["name"] == "CUSTOMERS" for r in show["preview"])
 
 
+def test_nested_workspace_init_refused(sandbox_ws, tmp_path):
+    for cmd in (["sandbox", "init", "inner"], ["init", "inner2"]):
+        result = runner.invoke(app, cmd)
+        assert result.exit_code == 1, result.output
+        assert "must not nest" in result.output
+    assert not (tmp_path / "demo" / "inner").exists()
+
+
+def test_legacy_warehouse_migrates_to_store(sandbox_ws, tmp_path):
+    # simulate a workspace seeded by a pre-relocation version: warehouse inside .seekql
+    root = tmp_path / "demo"
+    store_db = sandbox_db_path(root)
+    legacy = root / ".seekql" / "sandbox_warehouse.db"
+    store_db.replace(legacy)
+    assert not store_db.is_file()
+    out = invoke("doctor")
+    assert out["ok"] is True
+    assert store_db.is_file()
+    assert not legacy.is_file()
+
+
 def test_seed_is_deterministic(tmp_path):
     t1 = seed_sandbox(tmp_path / "a.db")
     t2 = seed_sandbox(tmp_path / "b.db")
@@ -199,4 +220,4 @@ def test_init_into_uncreatable_path_fails_cleanly(tmp_path):
 def test_executor_errors_without_db(tmp_path):
     result = SandboxExecutor(tmp_path / "missing.db").execute("SELECT 1")
     assert result.status == "error"
-    assert "sandbox init" in result.error
+    assert "ask the user" in result.error  # agents must not run setup commands themselves

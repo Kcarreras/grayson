@@ -62,9 +62,9 @@ class Executor(Protocol):
 def get_executor(connection: str, workspace_root: Path | None = None) -> Executor:
     if connection == "sandbox" and workspace_root is not None:
         # Local mock warehouse (no snow CLI): see seekql.sandbox.
-        from seekql.sandbox.executor import SandboxExecutor, sandbox_db_path
+        from seekql.sandbox.executor import SandboxExecutor, locate_warehouse
 
-        return SandboxExecutor(sandbox_db_path(workspace_root))
+        return SandboxExecutor(locate_warehouse(workspace_root))
     return SnowExecutor(connection)
 
 
