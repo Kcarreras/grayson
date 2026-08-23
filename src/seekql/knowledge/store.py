@@ -20,6 +20,19 @@ from seekql.util import utcnow
 FactStatus = Literal["proposed", "data_inferred", "user_confirmed"]
 _FQN_PART = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")  # \Z: no trailing-newline match
 
+#: structured base-descriptor fields, alongside the open-ended facts list.
+#: `columns` entries are {name, type?, description?, nullable?}; `relationships`
+#: entries are {to, on, cardinality?, note?}.
+PROFILE_KEYS = ("grain", "freshness", "owners", "columns", "relationships", "open_questions")
+_PROFILE_DEFAULTS: dict[str, object] = {
+    "grain": "",
+    "freshness": "",
+    "owners": [],
+    "columns": [],
+    "relationships": [],
+    "open_questions": [],
+}
+
 
 class Fact(BaseModel):
     id: str
@@ -54,17 +67,29 @@ class KnowledgeStore:
     def read(self, fqn: str) -> dict[str, Any]:
         path = self.table_path(fqn)
         if not path.is_file():
-            return {"table": fqn.upper(), "facts": [], "definition_files": [], "notes": ""}
+            return {
+                "table": fqn.upper(),
+                "facts": [],
+                "definition_files": [],
+                "notes": "",
+                **{
+                    k: (v.copy() if isinstance(v, list) else v)
+                    for k, v in _PROFILE_DEFAULTS.items()
+                },
+            }
         front, body = _split_frontmatter(path.read_text(encoding="utf-8"))
         data = yaml.safe_load(front) or {} if front else {}
         facts = [Fact.model_validate(f).model_dump() for f in data.get("facts", [])]
         table = data.get("table", fqn.upper())
-        return {
+        doc = {
             "table": table,
             "facts": facts,
             "definition_files": data.get("definition_files", []),
             "notes": _strip_heading(body, table),
         }
+        for key, default in _PROFILE_DEFAULTS.items():
+            doc[key] = data.get(key, default.copy() if isinstance(default, list) else default)
+        return doc
 
     def fact(self, fqn: str, fact_id: str) -> dict | None:
         return next((f for f in self.read(fqn)["facts"] if f["id"] == fact_id), None)
@@ -74,8 +99,11 @@ class KnowledgeStore:
     def _write(self, fqn: str, doc: dict[str, Any]) -> None:
         path = self.table_path(fqn)
         path.parent.mkdir(parents=True, exist_ok=True)
-        front = {
-            "table": doc["table"],
+        front = {"table": doc["table"]}
+        for key in PROFILE_KEYS:  # only write populated profile fields (small diffs)
+            if doc.get(key):
+                front[key] = doc[key]
+        front |= {
             "definition_files": doc.get("definition_files", []),
             "facts": doc.get("facts", []),
         }
@@ -132,6 +160,23 @@ class KnowledgeStore:
                 return f
         raise KeyError(f"no fact '{fact_id}' for {fqn}")
 
+    def set_profile(self, fqn: str, updates: dict[str, Any]) -> dict:
+        """Merge structured base-descriptor fields (grain, columns, ...) into the doc."""
+        allowed = {*PROFILE_KEYS, "definition_files", "notes"}
+        bad = set(updates) - allowed
+        if bad:
+            raise ValueError(f"unknown profile fields: {sorted(bad)} (allowed: {sorted(allowed)})")
+        if "columns" in updates:
+            cols = updates["columns"]
+            if not isinstance(cols, list) or not all(
+                isinstance(c, dict) and c.get("name") for c in cols
+            ):
+                raise ValueError("columns must be a list of objects, each with at least a 'name'")
+        doc = self.read(fqn)
+        doc.update(updates)
+        self._write(fqn, doc)
+        return self.read(fqn)
+
     def set_definition_files(self, fqn: str, files: list[str]) -> dict:
         doc = self.read(fqn)
         doc["definition_files"] = list(dict.fromkeys(files))
@@ -183,6 +228,42 @@ class KnowledgeStore:
             if len(parts) == 3:
                 out.append(".".join(parts).upper())
         return out
+
+
+def completeness(doc: dict[str, Any]) -> dict[str, Any]:
+    """How fully described a table is, in the base sense.
+
+    Base-complete means: grain declared, every listed column described,
+    freshness expectation stated, relationships mapped, and definition files
+    pointed at. Open questions and facts are counted, not required — 'we don't
+    know yet' recorded as an open question is legitimate knowledge.
+    """
+    cols = doc.get("columns") or []
+    described = sum(1 for c in cols if c.get("description"))
+    missing = []
+    if not doc.get("grain"):
+        missing.append("grain")
+    if not cols:
+        missing.append("columns")
+    elif described < len(cols):
+        missing.append(f"column_descriptions ({described}/{len(cols)})")
+    if not doc.get("freshness"):
+        missing.append("freshness")
+    if not doc.get("relationships"):
+        missing.append("relationships")
+    if not doc.get("definition_files"):
+        missing.append("definition_files")
+    return {
+        "base_complete": not missing,
+        "missing": missing,
+        "columns_total": len(cols),
+        "columns_described": described,
+        "facts": len(doc.get("facts") or []),
+        "facts_user_confirmed": sum(
+            1 for f in doc.get("facts") or [] if f.get("status") == "user_confirmed"
+        ),
+        "open_questions": len(doc.get("open_questions") or []),
+    }
 
 
 def _strip_heading(body: str, table: str) -> str:

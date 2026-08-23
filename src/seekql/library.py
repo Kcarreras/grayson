@@ -7,13 +7,17 @@ library repo that each workspace links via [library] in seekql.toml.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
+from seekql.config import CONFIG_FILENAME
 from seekql.workspace import Workspace
 
 LIBRARY_ASSETS = ("knowledge", "views", "workflows")
+
+_REMOTE_RE = re.compile(r"^[\w.-]+@[\w.-]+:")  # scp-style git remote (git@host:org/repo)
 
 
 def init_library(path: Path) -> Path:
@@ -48,6 +52,98 @@ def _git(repo: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProce
         text=True,
         timeout=timeout,
     )
+
+
+def set_library_config(workspace_root: Path, lib_path: Path, auto_push: bool) -> None:
+    """Rewrite the [library] section of seekql.toml (other sections untouched)."""
+    cfg = workspace_root / CONFIG_FILENAME
+    lines = cfg.read_text(encoding="utf-8").splitlines()
+    kept, skipping = [], False
+    for ln in lines:
+        stripped = ln.strip()
+        if stripped.startswith("["):
+            skipping = stripped == "[library]"
+        if not skipping:
+            kept.append(ln)
+    # forward slashes: backslashes are escape characters in TOML basic strings
+    block = [
+        "",
+        "[library]",
+        f'path = "{lib_path.as_posix()}"',
+        f"auto_push = {str(auto_push).lower()}",
+    ]
+    cfg.write_text("\n".join(kept).rstrip() + "\n" + "\n".join(block) + "\n", encoding="utf-8")
+
+
+def link_library(
+    workspace: Workspace,
+    source: str,
+    dest: Path | None = None,
+    auto_push: bool = False,
+) -> dict:
+    """Connect the workspace to a team library: clone a git URL, or link a local path."""
+    is_remote = "://" in source or source.endswith(".git") or _REMOTE_RE.match(source)
+    if is_remote:
+        name = source.rstrip("/").split("/")[-1].removesuffix(".git") or "qa-library"
+        target = (dest or Path.home() / ".seekql" / "libraries" / name).resolve()
+        if (target / ".git").exists():
+            _git(target, "pull", "--ff-only", timeout=120)
+            action = "updated existing clone"
+        else:
+            if target.exists() and any(target.iterdir()):
+                raise FileExistsError(f"{target} exists and is not a clone of the library")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            clone = subprocess.run(  # noqa: S603
+                ["git", "clone", source, str(target)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if clone.returncode != 0:
+                raise RuntimeError(
+                    f"git clone failed: {(clone.stderr or clone.stdout).strip()[:500]}"
+                )
+            action = "cloned"
+    else:
+        target = Path(source).expanduser().resolve()
+        if not target.is_dir():
+            raise FileNotFoundError(f"library path does not exist: {target}")
+        action = "linked existing directory"
+    init_library(target)  # idempotent: scaffold only what is missing
+    set_library_config(workspace.root, target, auto_push)
+    return {
+        "library": str(target),
+        "action": action,
+        "auto_push": auto_push,
+        "next": "agents in this workspace now read and write the shared library",
+    }
+
+
+def push_library(workspace: Workspace, message: str = "seekql: library update") -> dict:
+    """Commit and push the linked library repo. Soft-fails with detail on error."""
+    lib = workspace.config.library_path
+    if lib is None or not (lib / ".git").exists():
+        return {"ok": False, "detail": "no linked git library to push"}
+    _git(lib, "add", "-A")
+    commit = _git(lib, "commit", "-m", message)
+    committed = commit.returncode == 0
+    # -u origin HEAD: works on the first push of a fresh clone and thereafter
+    push = _git(lib, "push", "-u", "origin", "HEAD", timeout=120)
+    return {
+        "ok": push.returncode == 0,
+        "committed": committed,
+        "detail": (push.stdout + push.stderr).strip()[-500:],
+    }
+
+
+def maybe_auto_push(workspace: Workspace, message: str) -> dict | None:
+    """Auto commit+push after a library write, when [library] auto_push is on."""
+    try:
+        if not workspace.config.library_auto_push:
+            return None
+        return push_library(workspace, message)
+    except (OSError, subprocess.SubprocessError) as e:  # never fail the write itself
+        return {"ok": False, "detail": f"auto-push failed: {e}"}
 
 
 def library_status(workspace: Workspace) -> dict:

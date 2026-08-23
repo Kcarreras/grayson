@@ -54,6 +54,16 @@ seekql doctor                    # verify snow CLI + connection
 seekql harness init cursor       # teach your agent the protocol (or claude-code | codex)
 ```
 
+Joining a team with an existing knowledge library? One more command connects you:
+
+```bash
+seekql library link git@github.com:your-org/qa-library.git --auto-push
+```
+
+It clones the library, points the workspace at it, and (with `--auto-push`) commits
+and pushes every knowledge/view change so the team compounds automatically.
+`seekql library push` batches instead when auto-push is off.
+
 No Snowflake yet? Skip `init`/`doctor` and jump to the sandbox below — it is the
 fastest way to see the whole loop work.
 

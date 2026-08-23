@@ -19,7 +19,7 @@ from seekql.core.session import Session, find_recent_duplicate, resolve_session_
 from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request
 from seekql.interventions.types import InterventionError
-from seekql.knowledge import KnowledgeStore
+from seekql.knowledge import KnowledgeStore, completeness
 from seekql.views import ViewRegistry
 from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
@@ -406,10 +406,22 @@ def build_server(workspace: Workspace) -> Any:
 
     # -- knowledge & views --------------------------------------------
 
-    @mcp.tool(description="Read the knowledge library entry for a table.")
+    def _library_sync(out: dict, message: str) -> dict:
+        from seekql.library import maybe_auto_push
+
+        sync = maybe_auto_push(workspace, message)
+        if sync is not None:
+            out["library_sync"] = sync
+        return out
+
+    @mcp.tool(
+        description="Read the knowledge library entry for a table, including its "
+        "base-descriptor completeness report (what is still undescribed)."
+    )
     def knowledge_show(table: str) -> dict:
         try:
-            return KnowledgeStore(workspace.knowledge_dir).read(table)
+            doc = KnowledgeStore(workspace.knowledge_dir).read(table)
+            return {**doc, "completeness": completeness(doc)}
         except ValueError as e:
             return _err(e)
 
@@ -425,9 +437,25 @@ def build_server(workspace: Workspace) -> Any:
         by: str = "agent",
     ) -> dict:
         try:
-            return KnowledgeStore(workspace.knowledge_dir).add_fact(
-                table, fact, status=status, created_by=by, evidence=evidence or []
+            out = dict(
+                KnowledgeStore(workspace.knowledge_dir).add_fact(
+                    table, fact, status=status, created_by=by, evidence=evidence or []
+                )
             )
+            return _library_sync(out, f"seekql knowledge: fact for {table.upper()}")
+        except ValueError as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Set structured base-descriptor fields for a table: grain, columns "
+        "(name/type/description), relationships, freshness, owners, open_questions, "
+        "definition_files. Merged per-field; returns the doc plus completeness."
+    )
+    def knowledge_set(table: str, profile: dict) -> dict:
+        try:
+            doc = KnowledgeStore(workspace.knowledge_dir).set_profile(table, profile)
+            out = {**doc, "completeness": completeness(doc)}
+            return _library_sync(out, f"seekql knowledge: profile {table.upper()}")
         except ValueError as e:
             return _err(e)
 

@@ -21,7 +21,7 @@ from seekql.core.session import STAGES, Session, find_recent_duplicate, resolve_
 from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request, validate_response
 from seekql.interventions.types import InterventionError
-from seekql.knowledge import KnowledgeStore
+from seekql.knowledge import KnowledgeStore, completeness
 from seekql.util import write_json
 from seekql.views import ViewEntry, ViewRegistry
 from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
@@ -1001,14 +1001,62 @@ def proposal_verify(
 # -- knowledge -----------------------------------------------------------
 
 
+def _attach_library_sync(out: dict, ws: Workspace, message: str) -> None:
+    """Auto commit+push the library after a write, when configured."""
+    from seekql.library import maybe_auto_push
+
+    sync = maybe_auto_push(ws, message)
+    if sync is not None:
+        out["library_sync"] = sync
+
+
 @knowledge_app.command("show")
 def knowledge_show(table: str) -> None:
-    """Show the knowledge library entry for a table."""
+    """Show a table's knowledge entry, with a base-descriptor completeness report."""
     ws = _workspace()
     try:
-        emit(KnowledgeStore(ws.knowledge_dir).read(table))
+        doc = KnowledgeStore(ws.knowledge_dir).read(table)
     except ValueError as e:
         fail(str(e))
+        return
+    emit({**doc, "completeness": completeness(doc)})
+
+
+@knowledge_app.command("set")
+def knowledge_set(
+    table: str,
+    json_str: str = typer.Option(None, "--json", help="Inline JSON profile fields."),
+    file: Path = typer.Option(None, "--file", "-f", help="JSON file with profile fields."),
+) -> None:
+    """Set structured base-descriptor fields: grain, columns, relationships,
+    freshness, owners, open_questions (merged per-field)."""
+    if file and json_str:
+        fail("pass --file or --json, not both")
+    if file:
+        if not file.is_file():
+            fail(f"file not found: {file}")
+        raw = file.read_text(encoding="utf-8")
+    elif json_str:
+        raw = json_str
+    elif not sys.stdin.isatty():
+        raw = sys.stdin.read()
+    else:
+        fail("no profile payload: use --file, --json, or stdin")
+        return
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        fail(f"invalid JSON: {e}")
+        return
+    ws = _workspace()
+    try:
+        doc = KnowledgeStore(ws.knowledge_dir).set_profile(table, payload)
+    except ValueError as e:
+        fail(str(e))
+        return
+    out = {**doc, "completeness": completeness(doc)}
+    _attach_library_sync(out, ws, f"seekql knowledge: profile {table.upper()}")
+    emit(out)
 
 
 @knowledge_app.command("add")
@@ -1025,18 +1073,20 @@ def knowledge_add(
     """Add a fact about a table. Agents propose; users confirm."""
     ws = _workspace()
     try:
-        emit(
-            KnowledgeStore(ws.knowledge_dir).add_fact(
-                table,
-                fact,
-                fact_id=fact_id,
-                status=status,
-                created_by=by,
-                evidence=list(evidence),
-            )
+        result = KnowledgeStore(ws.knowledge_dir).add_fact(
+            table,
+            fact,
+            fact_id=fact_id,
+            status=status,
+            created_by=by,
+            evidence=list(evidence),
         )
     except ValueError as e:
         fail(str(e))
+        return
+    out = dict(result)
+    _attach_library_sync(out, ws, f"seekql knowledge: fact for {table.upper()}")
+    emit(out)
 
 
 @knowledge_app.command("confirm")
@@ -1044,9 +1094,13 @@ def knowledge_confirm(table: str, fact_id: str, by: str = typer.Option("user", "
     """Confirm a proposed/inferred fact (a user action)."""
     ws = _workspace()
     try:
-        emit(KnowledgeStore(ws.knowledge_dir).confirm_fact(table, fact_id, by))
+        result = KnowledgeStore(ws.knowledge_dir).confirm_fact(table, fact_id, by)
     except (ValueError, KeyError) as e:
         fail(str(e.args[0] if e.args else e))
+        return
+    out = dict(result)
+    _attach_library_sync(out, ws, f"seekql knowledge: confirm {fact_id} on {table.upper()}")
+    emit(out)
 
 
 @knowledge_app.command("set-files")
@@ -1054,9 +1108,13 @@ def knowledge_set_files(table: str, files: list[str] = typer.Option(..., "--file
     """Point future agents at the work-repo files that define this table."""
     ws = _workspace()
     try:
-        emit(KnowledgeStore(ws.knowledge_dir).set_definition_files(table, list(files)))
+        result = KnowledgeStore(ws.knowledge_dir).set_definition_files(table, list(files))
     except ValueError as e:
         fail(str(e))
+        return
+    out = dict(result)
+    _attach_library_sync(out, ws, f"seekql knowledge: definition files for {table.upper()}")
+    emit(out)
 
 
 @knowledge_app.command("search")
@@ -1110,7 +1168,9 @@ def views_register(
         source_tables=list(source_tables),
         base_files=list(base_files),
     )
-    emit(ViewRegistry(ws.views_dir).register(entry, ddl).model_dump())
+    out = ViewRegistry(ws.views_dir).register(entry, ddl).model_dump()
+    _attach_library_sync(out, ws, f"seekql views: register {name}")
+    emit(out)
 
 
 # -- library -------------------------------------------------------------
@@ -1134,6 +1194,38 @@ def library_init(
             "next": "git init & push this dir, then set [library] path in your seekql.toml",
         }
     )
+
+
+@library_app.command("link")
+def library_link_cmd(
+    source: str = typer.Argument(..., help="Git URL of the team library, or a local path."),
+    dest: Path = typer.Option(
+        None, "--dest", help="Where to clone (default: ~/.seekql/libraries/<repo-name>)."
+    ),
+    auto_push: bool = typer.Option(
+        False,
+        "--auto-push/--no-auto-push",
+        help="Auto commit+push knowledge/view changes to the library remote.",
+    ),
+) -> None:
+    """Connect this workspace to a team library. Clones the repo if given a git URL —
+    the one-command path for a teammate joining an existing knowledge store."""
+    from seekql.library import link_library
+
+    try:
+        emit(link_library(_workspace(), source, dest, auto_push))
+    except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
+        fail(str(e))
+
+
+@library_app.command("push")
+def library_push_cmd(
+    message: str = typer.Option("seekql: library update", "--message", "-m"),
+) -> None:
+    """Commit and push the linked library repo (knowledge, views, workflows)."""
+    from seekql.library import push_library
+
+    emit(push_library(_workspace(), message))
 
 
 @library_app.command("status")

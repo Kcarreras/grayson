@@ -36,6 +36,7 @@ class WorkspaceConfig(BaseModel):
     guard_profiles: dict[str, GuardSettings] = Field(default_factory=dict)
     scopes: ScopeConfig = Field(default_factory=ScopeConfig)
     library_path: Path | None = None
+    library_auto_push: bool = False
 
     @classmethod
     def load(cls, path: Path) -> WorkspaceConfig:
@@ -50,6 +51,7 @@ class WorkspaceConfig(BaseModel):
             guard_profiles=profiles,
             scopes=ScopeConfig(**data.get("scopes", {})),
             library_path=Path(library).expanduser() if library else None,
+            library_auto_push=bool(data.get("library", {}).get("auto_push", False)),
         )
 
     def resolve_profile(self, name: str | None) -> GuardSettings:

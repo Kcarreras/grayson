@@ -38,8 +38,10 @@ required_checks:
   - key: semantics_recorded
     title: Record semantics as knowledge
     description: >
-      Save the confirmed grain, column semantics, relationships, and every
-      unresolved question to the knowledge library with provenance, so the
-      next session starts where this one ended.
+      Save the structured base descriptor (grain, column definitions,
+      relationships, freshness) with `knowledge set`, one-off facts with
+      `knowledge add`, and every unresolved question under open_questions —
+      then check the completeness report in `knowledge show`. The goal state
+      is base_complete, with unknowns recorded rather than guessed.
 open_stages: [analysis]
 findings_schema: standard_v1
