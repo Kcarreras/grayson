@@ -464,6 +464,32 @@ def build_server(workspace: Workspace) -> Any:
         return KnowledgeStore(workspace.knowledge_dir).search(term)
 
     @mcp.tool(
+        description="Search past findings and fix proposals across ALL sessions — "
+        "how similar problems were diagnosed and what fixed them. Returns summaries; "
+        "use records_get for the full record."
+    )
+    def records_search(term: str = "", kind: str | None = None, limit: int = 20) -> list[dict]:
+        from seekql.records import search_records as _search
+
+        try:
+            return _search(workspace, term, kind, limit)
+        except ValueError as e:
+            return [_err(e)]
+
+    @mcp.tool(
+        description="Fetch one past record in full: a finding or proposal from any "
+        "session, including its payload and (for proposals) verification."
+    )
+    def records_get(session_id: str, kind: str, record_id: str) -> dict:
+        from seekql.records import get_record as _get
+
+        try:
+            item = _get(workspace, resolve_session_id(workspace, session_id), kind, record_id)
+        except (ValueError, FileNotFoundError) as e:
+            return _err(e)
+        return item or {"error": f"no {kind} '{record_id}' in session '{session_id}'"}
+
+    @mcp.tool(
         description="View-library coverage for target tables: which views to reuse, "
         "refresh (stale), or build (gaps)."
     )

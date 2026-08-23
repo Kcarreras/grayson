@@ -50,6 +50,7 @@ harness_app = typer.Typer(help="Agent harness integration.", no_args_is_help=Tru
 mcp_app = typer.Typer(help="MCP server.", no_args_is_help=True)
 ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
 sandbox_app = typer.Typer(help="Local demo warehouse (no Snowflake needed).", no_args_is_help=True)
+records_app = typer.Typer(help="Cross-session archive of findings and fixes.", no_args_is_help=True)
 app.add_typer(session_app, name="session")
 app.add_typer(query_app, name="query")
 app.add_typer(cache_app, name="cache")
@@ -67,6 +68,7 @@ app.add_typer(harness_app, name="harness")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(ui_app, name="ui")
 app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(records_app, name="records")
 
 
 def emit(obj: object) -> None:
@@ -1251,6 +1253,46 @@ def library_extract_cmd(
     from seekql.library import extract_library
 
     emit(extract_library(_workspace(), dest))
+
+
+# -- records -------------------------------------------------------------
+
+
+@records_app.command("search")
+def records_search_cmd(
+    term: str = typer.Argument("", help="Search term (empty lists everything)."),
+    kind: str = typer.Option(None, "--kind", "-k", help="finding|proposal"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Search past findings and fix proposals across ALL sessions — how past
+    problems were diagnosed and what fixed them."""
+    from seekql.records import search_records
+
+    try:
+        emit(search_records(_workspace(), term, kind, limit))
+    except ValueError as e:
+        fail(str(e))
+
+
+@records_app.command("show")
+def records_show_cmd(
+    session_id: str,
+    kind: str = typer.Argument(..., help="finding|proposal"),
+    record_id: str = typer.Argument(..., help="e.g. f_001 or p_001"),
+) -> None:
+    """Show one past record in full (payload, and verification for proposals)."""
+    from seekql.records import get_record
+
+    ws = _workspace()
+    try:
+        item = get_record(ws, resolve_session_id(ws, session_id), kind, record_id)
+    except ValueError as e:
+        fail(str(e))
+        return
+    if item is None:
+        fail(f"no {kind} '{record_id}' in session '{session_id}'")
+        return
+    emit(item)
 
 
 # -- harness -------------------------------------------------------------

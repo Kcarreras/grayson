@@ -45,6 +45,8 @@ they are equivalent. Never query Snowflake except through seekql.
    descriptor (grain, column definitions, relationships, freshness) with
    `seekql knowledge set`. If a target has no recorded knowledge at all, settle
    grain/semantics with the user early — or run the `table-onboarding` workflow first.
+   Before diagnosing from scratch, check `seekql records search <term>`: a similar
+   problem may already have a diagnosed cause and a verified fix on record.
 2. Start: `seekql session start --workflow <name> --table DB.SCHEMA.TABLE ...`. Review
    the returned view coverage — reuse existing QA views, ask the user to create/refresh
    any the setup flags. Note the session id; use it in every later command.

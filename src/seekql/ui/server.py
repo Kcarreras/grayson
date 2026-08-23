@@ -15,22 +15,37 @@ from typing import Any
 from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from seekql.core import engine
 from seekql.core.engine import EnforcementError
-from seekql.core.session import Session
+from seekql.core.session import STAGES, Session
 from seekql.interventions import validate_response
 from seekql.interventions.types import InterventionError
+from seekql.knowledge import KnowledgeStore, completeness
+from seekql.records import get_record, search_records
+from seekql.ui.format import GLOSSARY, relationship_graph, split_sections
 from seekql.workspace import Workspace
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 _COOKIE = "seekql_token"
 
 
+def _help_widget(key: str) -> Markup:
+    text = GLOSSARY.get(key, key)
+    return Markup(
+        '<span class="help" tabindex="0"><span class="h-i">i</span>'
+        f'<span class="h-pop">{escape(text)}</span></span>'
+    )
+
+
 def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     app = FastAPI(title="seekql console", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.globals["token"] = token or ""
+    templates.env.globals["help"] = _help_widget
+    templates.env.globals["stages"] = STAGES
+    templates.env.filters["sections"] = split_sections
 
     def _valid(supplied: str | None) -> bool:
         return bool(supplied) and secrets.compare_digest(supplied, token)
@@ -79,17 +94,105 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 {
                     "summary": s.summary(),
                     "open_interventions": len(s.interventions("open")),
+                    "pending_proposals": len(s.proposals("proposed")),
                     "open_checks": len(ready["open_checks"]),
                     "findings": ready["findings_total"],
                 }
             )
         sessions.sort(key=lambda x: x["summary"]["created_at"] or "", reverse=True)
-        response = templates.TemplateResponse(request, "dashboard.html", {"sessions": sessions})
+        active = [r for r in sessions if r["summary"]["stage"] != "closed"]
+        historical = [r for r in sessions if r["summary"]["stage"] == "closed"]
+        response = templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {
+                "nav": "sessions",
+                "active": active,
+                "historical": historical,
+                "needs_input": sum(r["open_interventions"] for r in active),
+                "pending_proposals": sum(r["pending_proposals"] for r in active),
+                "total_findings": sum(r["findings"] for r in sessions),
+            },
+        )
         _set_cookie(response)  # subsequent navigation authenticates via cookie, not URL
         return response
 
+    # -- knowledge --------------------------------------------------------
+
+    @app.get("/knowledge", response_class=HTMLResponse)
+    def knowledge_list(request: Request, q: str = "") -> Any:
+        _check(request)
+        store = KnowledgeStore(workspace.knowledge_dir)
+        all_tables = store.all_tables()
+        fact_hits = [h for h in store.search(q) if h.get("fact_id")] if q else []
+        if q:
+            ql = q.lower()
+            hit_tables = {h["source"] for h in fact_hits}
+            all_tables = [t for t in all_tables if ql in t.lower() or t in hit_tables]
+        rows = []
+        for fqn in all_tables:
+            doc = store.read(fqn)
+            rows.append(
+                {"table": fqn, "grain": doc.get("grain"), "completeness": completeness(doc)}
+            )
+        return templates.TemplateResponse(
+            request,
+            "knowledge.html",
+            {"nav": "knowledge", "tables": rows, "fact_hits": fact_hits, "q": q},
+        )
+
+    @app.get("/knowledge/{fqn}", response_class=HTMLResponse)
+    def knowledge_table(request: Request, fqn: str) -> Any:
+        _check(request)
+        store = KnowledgeStore(workspace.knowledge_dir)
+        try:
+            doc = store.read(fqn)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return templates.TemplateResponse(
+            request,
+            "knowledge_table.html",
+            {
+                "nav": "knowledge",
+                "doc": doc,
+                "comp": completeness(doc),
+                "graph": relationship_graph(doc["table"], doc.get("relationships") or []),
+            },
+        )
+
+    # -- records ----------------------------------------------------------
+
+    @app.get("/records", response_class=HTMLResponse)
+    def records_list(request: Request, q: str = "", kind: str = "") -> Any:
+        _check(request)
+        try:
+            records = search_records(workspace, q, kind or None, limit=200)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return templates.TemplateResponse(
+            request,
+            "records.html",
+            {"nav": "records", "records": records, "q": q, "kind": kind},
+        )
+
+    @app.get("/records/{sid}/{kind}/{rid}", response_class=HTMLResponse)
+    def record_view(request: Request, sid: str, kind: str, rid: str) -> Any:
+        _check(request)
+        try:
+            item = get_record(workspace, sid, kind, rid)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"no {kind} '{rid}' in session '{sid}'")
+        return templates.TemplateResponse(
+            request,
+            "record.html",
+            {"nav": "records", "session_id": sid, "kind": kind, "record": item["record"]},
+        )
+
     def _session_context(s: Session, error: str | None = None) -> dict:
         return {
+            "nav": "sessions",
             "s": s.summary(),
             "readiness": engine.readiness(s, workspace.workflows_dir),
             "checkpoints": s.checkpoints(),
@@ -113,7 +216,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         item = s.intervention(iid)
         if item is None:
             raise HTTPException(status_code=404, detail=f"no intervention '{iid}'")
-        return templates.TemplateResponse(request, "intervention.html", {"sid": sid, "item": item})
+        return templates.TemplateResponse(
+            request, "intervention.html", {"nav": "sessions", "sid": sid, "item": item}
+        )
 
     @app.post("/session/{sid}/intervention/{iid}/respond")
     async def respond(request: Request, sid: str, iid: str) -> Any:
@@ -131,7 +236,12 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             return templates.TemplateResponse(
                 request,
                 "intervention.html",
-                {"sid": sid, "item": item, "error": str(e.args[0] if e.args else e)},
+                {
+                    "nav": "sessions",
+                    "sid": sid,
+                    "item": item,
+                    "error": str(e.args[0] if e.args else e),
+                },
                 status_code=400,
             )
         return _redirect(f"/session/{sid}")
