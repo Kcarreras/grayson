@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from seekql.util import utcnow
+
+if TYPE_CHECKING:
+    from seekql.core.session import Session
 
 _VIEW_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}\Z")
 
@@ -73,7 +77,12 @@ class ViewRegistry:
     def get(self, name: str) -> ViewEntry | None:
         return next((v for v in self._load() if v.name.upper() == name.upper()), None)
 
-    def register(self, entry: ViewEntry, ddl: str | None = None) -> ViewEntry:
+    def register(
+        self,
+        entry: ViewEntry,
+        ddl: str | None = None,
+        source_last_altered: dict[str, str] | None = None,
+    ) -> ViewEntry:
         views = self._load()
         views = [v for v in views if v.name.upper() != entry.name.upper()]
         if ddl is not None:
@@ -82,6 +91,10 @@ class ViewRegistry:
             ddl_file = ddl_dir / f"{entry.name.lower()}.sql"
             ddl_file.write_text(ddl, encoding="utf-8")
             entry.ddl_path = f"ddl/{ddl_file.name}"
+        if source_last_altered:
+            # The staleness baseline: what the sources looked like when this view
+            # was (re)built. coverage_check compares future LAST_ALTERED to this.
+            entry.source_last_altered = {k.upper(): str(v) for k, v in source_last_altered.items()}
         views.append(entry)
         self._save(views)
         return entry
@@ -123,3 +136,19 @@ class ViewRegistry:
             "gaps": gaps,
             "fully_covered": not gaps,
         }
+
+
+def enter_session_scope(registry: ViewRegistry, session: Session, targets: list[str]) -> list[str]:
+    """Put the library views matching `targets` into the session's query scope.
+
+    The whole point of the view library is that agents query these views; without
+    this, a registered view read is an out-of-scope warning (a hard block under
+    strict scope) and evidence citing it would not count as touching the
+    investigation. Names are added as registered, so queries referencing the view
+    the same way — bare or fully qualified — pass the guard and count as evidence.
+    """
+    names = sorted(v.name.upper() for v in registry.matching(targets))
+    if names:
+        session.add_scope(names)
+        session.log_event("system", "views_in_scope", {"views": names})
+    return names

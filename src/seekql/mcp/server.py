@@ -21,7 +21,7 @@ from seekql.history import suggest_guard_profile
 from seekql.interventions import build_request
 from seekql.interventions.types import InterventionError
 from seekql.knowledge import KnowledgeStore, completeness
-from seekql.views import ViewRegistry
+from seekql.views import ViewRegistry, enter_session_scope
 from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
 
@@ -134,11 +134,13 @@ def build_server(workspace: Workspace) -> Any:
         facts = {t: knowledge.read(t)["facts"] for t in tables}
         gaps = sorted(t for t, f in facts.items() if not f)
         external = ChecksStore(workspace.checks_dir).summary(tables or None)
+        registry = ViewRegistry(workspace.views_dir)
         out = {
             "session": s.summary(),
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "findings_schema": tpl.findings_schema,
-            "view_coverage": ViewRegistry(workspace.views_dir).coverage_check(tables, current),
+            "view_coverage": registry.coverage_check(tables, current),
+            "views_in_scope": enter_session_scope(registry, s, tables),
             "knowledge": facts,
             "knowledge_gaps": gaps,
             "external_checks": external,
@@ -509,10 +511,45 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="View-library coverage for target tables: which views to reuse, "
-        "refresh (stale), or build (gaps)."
+        "refresh (stale), or build (gaps). check_freshness fetches current "
+        "LAST_ALTERED so stale views are actually detected."
     )
-    def views_check(tables: list[str]) -> dict:
-        return ViewRegistry(workspace.views_dir).coverage_check(tables)
+    def views_check(tables: list[str], check_freshness: bool = False) -> dict:
+        registry = ViewRegistry(workspace.views_dir)
+        current = None
+        if check_freshness:
+            from seekql.core.run import fetch_last_altered
+
+            sources = sorted(
+                {t.upper() for t in tables}
+                | {s for v in registry.matching(tables) for s in v.normalized_sources()}
+            )
+            current = fetch_last_altered(workspace.config.connection, workspace.root, sources)
+        return registry.coverage_check(tables, current)
+
+    @mcp.tool(
+        description="Bring registered library views into the session's query scope "
+        "mid-session (session start does this automatically for views matching the "
+        "targets). Only views already in the registry qualify."
+    )
+    def views_use(session_id: str, names: list[str]) -> dict:
+        registry = ViewRegistry(workspace.views_dir)
+        resolved = []
+        for name in names:
+            entry = registry.get(name)
+            if entry is None:
+                return {
+                    "error": f"'{name}' is not in the view registry — only registered "
+                    "views can enter scope"
+                }
+            resolved.append(entry.name.upper())
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        s.add_scope(resolved)
+        s.log_event("agent", "views_in_scope", {"views": resolved})
+        return {"views_in_scope": resolved, "scope": sorted(s.scope_tables)}
 
     @mcp.tool(
         description="Build a chart (bar|line|scatter) from a cached artifact; it renders "

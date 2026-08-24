@@ -206,6 +206,39 @@ def _last_altered_snapshot(session: Session) -> dict[str, str]:
     }
 
 
+def fetch_last_altered(
+    connection: str,
+    workspace_root,
+    tables: list[str],
+    executor: Executor | None = None,
+) -> dict[str, str]:
+    """Current LAST_ALTERED per fully-qualified table, best-effort.
+
+    One cheap metadata query; any failure (no auth, no executor, bad tables)
+    returns {} so callers degrade to 'freshness unknown' instead of erroring —
+    staleness detection must never block the operation it decorates.
+    """
+    sql = metadata_query(tables)
+    if sql is None:
+        return {}
+    try:
+        executor = executor or get_executor(connection, workspace_root)
+        result = executor.execute(sql, timeout_seconds=60)
+    except Exception:  # noqa: BLE001 — advisory data; degrade, don't raise
+        return {}
+    if not result.ok:
+        return {}
+    current: dict[str, str] = {}
+    for row in result.rows:
+        upper = {k.upper(): v for k, v in row.items()}
+        fq = ".".join(
+            str(upper.get(k, "")) for k in ("TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME")
+        ).upper()
+        if upper.get("LAST_ALTERED"):
+            current[fq] = str(upper["LAST_ALTERED"])
+    return current
+
+
 def cache_find(
     session: Session,
     tables: list[str] | None = None,
@@ -217,19 +250,9 @@ def cache_find(
     current: dict[str, str] = {}
     if check_freshness and matches:
         source_tables = sorted({t for m in matches for t in m.get("source_tables", [])})
-        sql = metadata_query(source_tables)
-        if sql:
-            executor = executor or get_executor(session.connection, session.workspace.root)
-            result = executor.execute(sql, timeout_seconds=60)
-            if result.ok:
-                for row in result.rows:
-                    upper = {k.upper(): v for k, v in row.items()}
-                    fq = ".".join(
-                        str(upper.get(k, ""))
-                        for k in ("TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME")
-                    ).upper()
-                    if upper.get("LAST_ALTERED"):
-                        current[fq] = str(upper["LAST_ALTERED"])
+        current = fetch_last_altered(
+            session.connection, session.workspace.root, source_tables, executor
+        )
     out = []
     for m in matches:
         entry = dict(m)
