@@ -1,4 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="336" height="84" viewBox="0 0 336 84" role="img" aria-label="grayson">
+<svg xmlns="http://www.w3.org/2000/svg" width="336" height="110" viewBox="0 0 336 110" role="img" aria-label="grayson">
   <title>grayson</title>
-  <text x="8" y="58" font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace" font-size="56" font-weight="600" letter-spacing="-1"><tspan fill="#7d8590">gray</tspan><tspan fill="#e6edf3">son</tspan><tspan fill="#3ed6e0">▍</tspan></text>
+  <text x="168" y="58" text-anchor="middle" font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace" font-size="56" font-weight="600" letter-spacing="-1"><tspan fill="#7d8590">gray</tspan><tspan fill="#e6edf3">son</tspan></text>
+  <g fill="#3ed6e0">
+    <polygon points="84,72 162,90 162,98 92,79"/>
+    <polygon points="252,72 174,90 174,98 244,79"/>
+  </g>
 </svg>
