@@ -73,6 +73,22 @@ def test_run_statement_executes_and_caches(session):
     assert ex.calls[0][1] == 30
 
 
+def test_first_executed_query_auto_advances_setup_to_analysis(session):
+    assert session.stage == "setup"
+    run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor())
+    assert session.stage == "analysis"
+    # only the setup→analysis hop is automatic: later stages stay agent-declared
+    session.set_stage("synthesis")
+    run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor())
+    assert session.stage == "synthesis"
+
+
+def test_rejected_query_does_not_advance_stage(session):
+    assert session.stage == "setup"
+    run_statement(session, "DROP TABLE DB.S.T1", executor=FakeExecutor())
+    assert session.stage == "setup"
+
+
 def test_run_statement_rejected_is_audited(session):
     out = run_statement(session, "DROP TABLE DB.S.T1", executor=FakeExecutor())
     assert out["status"] == "rejected"

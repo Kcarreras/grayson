@@ -5,7 +5,18 @@
 {% block head %}{% if not error %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
 {% block content %}
 <div class="row split">
-  <h1>{{ s.title or s.id }}</h1>
+  <div class="row">
+    <h1>{{ s.title or s.id }}</h1>
+    <details class="inlinefold">
+      <summary title="Rename this session">rename</summary>
+      <form class="inline" method="post" action="/session/{{ s.id }}/title?t={{ token }}"
+        style="display: inline-flex; gap: 6px; margin-left: 6px;">
+        <input type="text" name="title" value="{{ s.title }}" placeholder="Session title"
+          style="width: 280px;" maxlength="120">
+        <button class="btn sm secondary" type="submit">Save</button>
+      </form>
+    </details>
+  </div>
   <span class="badge act">{{ s.workflow }}</span>
 </div>
 <div class="faint mono small">{{ s.id }}</div>
@@ -104,7 +115,7 @@
 <tr>
   <td>{{ c.title }}<div class="faint mono small">{{ c.key }}</div></td>
   <td>{% if c.status == "complete" %}<span class="badge ok">complete</span>
-      {% else %}<span class="badge plain">open</span>{% endif %}</td>
+      {% else %}<span class="badge todo">open</span>{% endif %}</td>
   <td>{% for q in c.evidence %}<span class="chip">{{ q }}</span> {% endfor %}</td>
   <td class="muted small">{{ c.note or "" }}</td>
 </tr>
@@ -218,7 +229,9 @@
 <h2>Query log {{ help("guard") }}</h2>
 <div class="card scroll">
 <table>
-<tr><th>Query</th><th>Status</th><th>Rows</th><th>ms</th><th>Worker</th><th>Purpose</th></tr>
+{% set has_worker = queries | selectattr("worker") | list | length > 0 %}
+{% set has_label = queries | selectattr("label") | list | length > 0 %}
+<tr><th>Query</th><th>Status</th><th>Rows</th><th>ms</th>{% if has_worker %}<th>Worker</th>{% endif %}{% if has_label %}<th>Purpose {{ help("purpose") }}</th>{% endif %}</tr>
 {% for q in queries %}
 <tr>
   <td class="mono">{{ q.qid }}</td>
@@ -228,11 +241,11 @@
       {% if q.guard_rule %}<div class="faint mono small">{{ q.guard_rule }}</div>{% endif %}</td>
   <td class="num">{{ q.row_count if q.row_count is not none else "" }}{% if q.truncated %} <span class="faint">(capped)</span>{% endif %}</td>
   <td class="num muted">{{ q.duration_ms or "" }}</td>
-  <td class="muted mono small">{{ q.worker or "" }}</td>
-  <td class="muted small">{{ q.label or "" }}</td>
+  {% if has_worker %}<td class="muted mono small">{{ q.worker or "—" }}</td>{% endif %}
+  {% if has_label %}<td class="muted small">{{ q.label or "—" }}</td>{% endif %}
 </tr>
 {% endfor %}
-{% if not queries %}<tr><td colspan="6" class="muted">No queries yet.</td></tr>{% endif %}
+{% if not queries %}<tr><td colspan="4" class="muted">No queries yet.</td></tr>{% endif %}
 </table>
 </div>
 

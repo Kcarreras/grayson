@@ -27,6 +27,7 @@ try {
   --attn: #f0b429; --attn-soft: rgba(240,180,41,.10);       /* needs a human */
   --ok: #4ad295; --ok-soft: rgba(74,210,149,.10);           /* complete / verified */
   --bad: #ff7a85; --bad-soft: rgba(255,122,133,.10);        /* failed / rejected */
+  --todo: #b3a5f2; --todo-soft: rgba(179,165,242,.12);      /* open / not yet done */
   --brand-gray: #7d8590; --brand-accent: #3ed6e0;           /* wordmark */
   --radius: 10px; --radius-sm: 7px;
 }
@@ -45,6 +46,7 @@ try {
     --attn: #b57900; --attn-soft: rgba(181,121,0,.09);
     --ok: #178a55; --ok-soft: rgba(23,138,85,.09);
     --bad: #c73545; --bad-soft: rgba(199,53,69,.08);
+    --todo: #6553c9; --todo-soft: rgba(101,83,201,.09);
     --brand-gray: #8b939b; --brand-accent: #0aa5b5;
   }
 }
@@ -59,6 +61,7 @@ try {
   --attn: #b57900; --attn-soft: rgba(181,121,0,.09);
   --ok: #178a55; --ok-soft: rgba(23,138,85,.09);
   --bad: #c73545; --bad-soft: rgba(199,53,69,.08);
+  --todo: #6553c9; --todo-soft: rgba(101,83,201,.09);
   --brand-gray: #8b939b; --brand-accent: #0aa5b5;
 }
 * { box-sizing: border-box; }
@@ -148,6 +151,8 @@ main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
 .badge.ok::before   { background: var(--ok); }
 .badge.bad  { color: var(--bad);  border-color: transparent; background: var(--bad-soft); }
 .badge.bad::before  { background: var(--bad); }
+.badge.todo { color: var(--todo); border-color: transparent; background: var(--todo-soft); }
+.badge.todo::before { background: var(--todo); }
 
 /* ---- buttons --------------------------------------------------------- */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 15px;

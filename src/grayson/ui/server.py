@@ -372,6 +372,16 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         _check(request)
         return templates.TemplateResponse(request, "session.html", _session_context(_session(sid)))
 
+    @app.post("/session/{sid}/title")
+    async def session_rename(request: Request, sid: str) -> Any:
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        title = str(form.get("title", "")).strip()
+        s.set_meta("title", title)
+        s.log_event("user", "title_changed", {"title": title})
+        return _redirect(f"/session/{sid}")
+
     @app.get("/session/{sid}/intervention/{iid}", response_class=HTMLResponse)
     def intervention_detail(request: Request, sid: str, iid: str) -> Any:
         _check(request)

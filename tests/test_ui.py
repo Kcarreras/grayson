@@ -56,6 +56,17 @@ def test_session_detail(client, session):
     assert "sample_for_review" in r.text  # a required check key
 
 
+def test_rename_session_via_ui(client, session):
+    r = client.post(
+        f"/session/{session.id}/title?t={TOKEN}",
+        data={"title": "NULL email regression"},
+        follow_redirects=True,
+    )
+    assert r.status_code == 200
+    assert "NULL email regression" in r.text
+    assert session.get_meta("title") == "NULL email regression"
+
+
 def test_unknown_session_404(client):
     assert client.get(f"/session/nope?t={TOKEN}").status_code == 404
 
