@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}grayson{% endblock %}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='%2323b8c8'%3E%3Cpolygon points='2,8 15,20 15,25 4,13'/%3E%3Cpolygon points='30,8 17,20 17,25 28,13'/%3E%3C/g%3E%3C/svg%3E">
 {% block head %}{% endblock %}
 <script>
 /* Stamp the pinned theme before first paint; "auto" stores nothing. */
@@ -93,7 +94,8 @@ header { border-bottom: 1px solid var(--border); background: var(--panel);
   font-size: 15px; letter-spacing: -.02em; }
 .brand:hover { text-decoration: none; }
 .brand .b-gray { color: var(--brand-gray); }
-.brand .b-cursor { color: var(--brand-accent); }
+.brand .b-wing { fill: var(--brand-accent); margin-left: 5px; flex: none; }
+.brand { display: inline-flex; align-items: center; }
 .tab { padding: 6px 12px; border-radius: 999px; color: var(--muted); font-weight: 550;
   font-size: 13.5px; }
 .tab:hover { color: var(--ink); text-decoration: none; background: var(--panel2); }
@@ -273,7 +275,7 @@ dl.props dd { margin: 0; color: var(--ink-2); }
 <body>
 <header><div class="shell">
   <nav class="nav">
-    <a class="brand" href="/?t={{ token }}"><span class="b-gray">gray</span>son<span class="b-cursor">▍</span></a>
+    <a class="brand" href="/?t={{ token }}"><span class="b-gray">gray</span>son<svg class="b-wing" width="15" height="9" viewBox="2 8 28 17" aria-hidden="true"><polygon points="2,8 15,20 15,25 4,13"/><polygon points="30,8 17,20 17,25 28,13"/></svg></a>
     <a class="tab {{ 'active' if nav == 'sessions' }}" href="/?t={{ token }}">Sessions</a>
     <a class="tab {{ 'active' if nav == 'knowledge' }}" href="/knowledge?t={{ token }}">Knowledge</a>
     <a class="tab {{ 'active' if nav == 'checks' }}" href="/checks?t={{ token }}">Checks</a>
