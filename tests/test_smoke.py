@@ -1,5 +1,5 @@
-import seekql
+import grayson
 
 
 def test_package_imports() -> None:
-    assert seekql.__version__
+    assert grayson.__version__

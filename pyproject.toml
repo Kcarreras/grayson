@@ -1,7 +1,7 @@
 [project]
-name = "seekql"
+name = "grayson-sql"
 version = "0.1.0"
-description = "Agentic, open-ended QA and investigation over SQL tables and data"
+description = "grayson: guarded SQL rails for agentic data investigation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-seekql = "seekql.cli:main"
+grayson = "grayson.cli:main"
 
 [dependency-groups]
 dev = [
@@ -29,6 +29,9 @@ dev = [
 requires = ["uv_build>=0.11.7,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+module-name = "grayson"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -37,10 +40,10 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/seekql/cli.py" = ["B008"]  # typer's option-as-default idiom
+"src/grayson/cli.py" = ["B008"]  # typer's option-as-default idiom
 
 [tool.ruff.lint.isort]
-known-first-party = ["seekql", "conftest"]
+known-first-party = ["grayson", "conftest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

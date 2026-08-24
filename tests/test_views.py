@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from seekql.views import ViewEntry, ViewRegistry
+from grayson.views import ViewEntry, ViewRegistry
 
 
 @pytest.fixture

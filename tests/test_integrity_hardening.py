@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 
 from conftest import FakeExecutor
-from seekql.config import GuardSettings
-from seekql.core import engine, proposals
-from seekql.core.engine import EnforcementError
-from seekql.core.proposals import ProposalError
-from seekql.core.run import run_statement
-from seekql.core.session import Session
-from seekql.knowledge import KnowledgeStore
-from seekql.views import ViewEntry, ViewRegistry
+from grayson.config import GuardSettings
+from grayson.core import engine, proposals
+from grayson.core.engine import EnforcementError
+from grayson.core.proposals import ProposalError
+from grayson.core.run import run_statement
+from grayson.core.session import Session
+from grayson.knowledge import KnowledgeStore
+from grayson.views import ViewEntry, ViewRegistry
 
 
 @pytest.fixture

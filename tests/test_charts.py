@@ -9,12 +9,12 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from conftest import FakeExecutor
-from seekql.charts import ChartError, add_chart, chart_data, get_chart, list_charts, render_svg
-from seekql.cli import app as cli_app
-from seekql.config import GuardSettings
-from seekql.core.run import run_statement
-from seekql.core.session import Session
-from seekql.ui.server import build_app
+from grayson.charts import ChartError, add_chart, chart_data, get_chart, list_charts, render_svg
+from grayson.cli import app as cli_app
+from grayson.config import GuardSettings
+from grayson.core.run import run_statement
+from grayson.core.session import Session
+from grayson.ui.server import build_app
 
 runner = CliRunner()
 TOKEN = "tok"
@@ -140,7 +140,7 @@ def test_cli_chart_flow(workspace, fake_snow_env, tmp_path):
 def test_mcp_chart_tools(workspace, fake_snow_env):
     import asyncio
 
-    from seekql.mcp.server import build_server
+    from grayson.mcp.server import build_server
 
     server = build_server(workspace)
     tools = {t.name for t in asyncio.run(server.list_tools())}
@@ -169,7 +169,7 @@ def test_session_page_shows_charts(workspace):
 
 
 def test_render_text_bar_line_scatter(session, qid):
-    from seekql.charts import render_text
+    from grayson.charts import render_text
 
     line = add_chart(session, qid, "line", "DAY", ["NULL_RATE", "ROW_COUNT"], "two series")
     txt = render_text(line, chart_data(session, line))
@@ -193,7 +193,7 @@ def test_render_text_bar_line_scatter(session, qid):
 
 
 def test_render_text_empty():
-    from seekql.charts import render_text
+    from grayson.charts import render_text
 
     txt = render_text(
         {"kind": "bar", "x": "X", "y": ["Y"], "title": "t", "qid": "q_0001"},
@@ -223,7 +223,7 @@ def test_chart_add_returns_terminal_text(workspace, fake_snow_env):
 def test_mcp_chart_add_returns_text(workspace, fake_snow_env):
     import asyncio
 
-    from seekql.mcp.server import build_server
+    from grayson.mcp.server import build_server
 
     server = build_server(workspace)
 

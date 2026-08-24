@@ -1,19 +1,35 @@
-# seekql
+<div align="center">
 
-Agentic, open-ended QA and investigation over SQL tables and data (Snowflake-first).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/wordmark_dark.svg">
+  <img src="docs/img/wordmark_light.svg" alt="grayson" width="336">
+</picture>
 
-Your agent — in Cursor, Claude Code, Codex, or any harness — supplies the analysis.
-seekql supplies the rails it runs on: guarded read-only warehouse access, sessions
+**The sidekick your warehouse deserves.**
+
+Guarded SQL rails for agentic, open-ended data investigation — Snowflake-first.
+
+[![python](https://img.shields.io/badge/python-3.12+-0aa5b5)](pyproject.toml)
+[![license](https://img.shields.io/badge/license-MIT-8b939b)](LICENSE)
+[![evidence](https://img.shields.io/badge/evidence-or_it_didn%27t_happen-1f2328)](#what-the-rails-enforce)
+
+</div>
+
+---
+
+Your agent — in Cursor, Claude Code, Codex, or any harness — is the detective;
+it supplies the analysis. grayson is the sidekick: it carries the kit and keeps
+the case file — guarded read-only warehouse access, sessions
 that cannot claim work without evidence, cached results with freshness tracking,
 live analysis charts, deterministic-check ingestion, a git-shared team knowledge
 library, and a human-in-the-loop web console.
 
-seekql itself never calls an LLM. Every guarantee below is enforced by code, not by
+grayson itself never calls an LLM. Every guarantee below is enforced by code, not by
 prompting.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/session_dark.png">
-  <img src="docs/img/session_light.png" alt="A bug-hunter session in the seekql console: analysis charts built by the agent, checkpoint progress with evidence, live query log">
+  <img src="docs/img/session_light.png" alt="A bug-hunter session in the grayson console: analysis charts built by the agent, checkpoint progress with evidence, live query log">
 </picture>
 
 *A bug-hunter session, live: the agent's charts (each traceable to an executed
@@ -23,7 +39,7 @@ while agents work.*
 ## The loop
 
 1. **Start** — a session is opened for a workflow (`bug-hunter`, `table-health`, …)
-   over target tables. seekql snapshots metadata, loads the relevant knowledge,
+   over target tables. grayson snapshots metadata, loads the relevant knowledge,
    runs the QA-view coverage check, and reports any failing external checks on
    those tables as pre-vetted leads.
 2. **Analyze** — the agent runs arbitrary read queries inside the guard. Results
@@ -58,43 +74,43 @@ history).
 Requires [uv](https://docs.astral.sh/uv/) (installs Python 3.12+ automatically) and,
 for real warehouses only, the
 [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli)
-(`snow`) with a named connection — seekql delegates all auth to `snow` and never
+(`snow`) with a named connection — grayson delegates all auth to `snow` and never
 handles credentials. The sandbox below needs no Snowflake at all.
 
 ```bash
-uv tool install git+https://github.com/Kcarreras/seekql   # or: git clone && uv sync
+uv tool install git+https://github.com/Kcarreras/grayson   # or: git clone && uv sync
 cd your-data-repo
-seekql init .                    # scaffold a workspace (seekql.toml, libraries, .seekql/)
-seekql doctor                    # verify snow CLI + connection
-seekql harness init cursor       # teach your agent the protocol (or claude-code | codex)
+grayson init .                    # scaffold a workspace (grayson.toml, libraries, .grayson/)
+grayson doctor                    # verify snow CLI + connection
+grayson harness init cursor       # teach your agent the protocol (or claude-code | codex)
 ```
 
-`seekql harness init` writes the protocol file for your harness (a Cursor rule, a
+`grayson harness init` writes the protocol file for your harness (a Cursor rule, a
 `CLAUDE.md` section, or an `AGENTS.md` section). Harnesses that prefer typed tools
-can use the MCP server instead — `seekql mcp serve` (stdio) mirrors the CLI
-one-to-one. `seekql status` tells you where you are and what needs attention;
+can use the MCP server instead — `grayson mcp serve` (stdio) mirrors the CLI
+one-to-one. `grayson status` tells you where you are and what needs attention;
 `latest` works anywhere a session id is expected.
 
 ## Try it without Snowflake (sandbox)
 
-`seekql sandbox init` scaffolds a demo workspace backed by a local mock warehouse
+`grayson sandbox init` scaffolds a demo workspace backed by a local mock warehouse
 (SQLite behind the same guarded executor path), seeded with retail data containing
 planted, workflow-matched problems — a join fan-out bug for `bug-hunter`, an
 email-NULL regression plus duplicate keys for `table-health`, dropped and drifted
 rows for `migration-parity`:
 
 ```bash
-seekql sandbox init my-demo && cd my-demo
-seekql harness init claude-code
+grayson sandbox init my-demo && cd my-demo
+grayson harness init claude-code
 # then ask your agent to run a workflow against the sandbox tables
 ```
 
 `SANDBOX_ANSWER_KEY.md` holds the ground truth and a scoring rubric — keep it away
-from the agent and grade its findings against it. `seekql sandbox reset` re-seeds.
+from the agent and grade its findings against it. `grayson sandbox reset` re-seeds.
 
 ## Analysis charts
 
-Agents chart cached query results as they work — `seekql chart add` (MCP:
+Agents chart cached query results as they work — `grayson chart add` (MCP:
 `chart_add`) validates the column mapping against the artifact's real shape and the
 console renders the chart on its live refresh. Every chart carries the `q_XXXX` id
 of the query behind it and a "plotted data" fold with the exact rows drawn.
@@ -116,14 +132,14 @@ NULL emails by order source  [bar · q_0008]
 
 Kinds: `bar`, `line`, `scatter`; up to three series (the palette is validated
 colorblind-safe at three slots in both console themes — more dimensions means more
-charts, not more colors). `seekql chart render --out chart.svg` exports standalone
+charts, not more colors). `grayson chart render --out chart.svg` exports standalone
 SVGs.
 
 ## External checks as leads
 
-Teams already run deterministic checks outside seekql — Airflow DAGs, dbt tests,
+Teams already run deterministic checks outside grayson — Airflow DAGs, dbt tests,
 data-quality jobs. Drop their results as JSON into the library's `checks/` folder
-(directly from automation, or via `seekql checks ingest`, which validates, dedupes
+(directly from automation, or via `grayson checks ingest`, which validates, dedupes
 per run, and keeps bounded history) and they become agent context:
 
 ```json
@@ -158,14 +174,14 @@ workspace; team mode shares them through an ordinary git repo — no server:
 
 ```bash
 # one-time, per team: create an EMPTY repo on your git host, then
-seekql library link git@github.com:your-org/qa-library.git --auto-push
+grayson library link git@github.com:your-org/qa-library.git --auto-push
 ```
 
-seekql clones the repo, scaffolds the structure (`knowledge/`, `views/`,
+grayson clones the repo, scaffolds the structure (`knowledge/`, `views/`,
 `workflows/`, `checks/`), pushes the first commit, and points the workspace at the
 clone. Teammates run the same command and get the shared library. With
 `--auto-push`, every knowledge/view/check write is committed and pushed
-automatically; otherwise `seekql library push` batches. Facts carry provenance —
+automatically; otherwise `grayson library push` batches. Facts carry provenance —
 `proposed` / `data_inferred` / `user_confirmed` — and agents can never mark a fact
 user-confirmed themselves.
 
@@ -175,15 +191,15 @@ report, facts, and the external checks that cover it.
 
 ## Settings
 
-Workspace configuration lives in `seekql.toml` — committed, reviewable, diffable.
-Two surfaces change it, both human: `seekql config` and the console's Settings
+Workspace configuration lives in `grayson.toml` — committed, reviewable, diffable.
+Two surfaces change it, both human: `grayson config` and the console's Settings
 page. The MCP surface exposes configuration **read-only** by design — an agent
 that can loosen its own guards has no guards.
 
 ```bash
-seekql config show
-seekql config set defaults.guard_profile=strict scopes.strict=true
-seekql config profile overnight --auto-limit 0 --budget-cap 500
+grayson config show
+grayson config set defaults.guard_profile=strict scopes.strict=true
+grayson config profile overnight --auto-limit 0 --budget-cap 500
 ```
 
 <picture>
@@ -215,14 +231,14 @@ workflow.
 ## Typical session (driven by your agent)
 
 ```bash
-seekql session start --workflow bug-hunter --table ANALYTICS.WEB.PAGE_EVENTS
-seekql query run <sid> --sql "SELECT ..."           # guarded; cached as q_0001…
-seekql cache query <sid> -q "SELECT ... FROM q_0001" # re-slice locally, no warehouse trip
-seekql chart add <sid> -a q_0001 -k line -x day -y null_rate --title "..."
-seekql checkpoint complete <sid> replicate_anomaly --evidence q_0003
-seekql finding add <sid> --json '{...}'             # schema + evidence validated
-seekql ui serve                                     # the human console
-seekql session report <sid> --out report.md         # shareable report
+grayson session start --workflow bug-hunter --table ANALYTICS.WEB.PAGE_EVENTS
+grayson query run <sid> --sql "SELECT ..."           # guarded; cached as q_0001…
+grayson cache query <sid> -q "SELECT ... FROM q_0001" # re-slice locally, no warehouse trip
+grayson chart add <sid> -a q_0001 -k line -x day -y null_rate --title "..."
+grayson checkpoint complete <sid> replicate_anomaly --evidence q_0003
+grayson finding add <sid> --json '{...}'             # schema + evidence validated
+grayson ui serve                                     # the human console
+grayson session report <sid> --out report.md         # shareable report
 ```
 
 ## Development
@@ -236,8 +252,8 @@ uv run ruff format . # format
 ## Project layout
 
 ```
-seekql/
-├── src/seekql/
+grayson/
+├── src/grayson/
 │   ├── guard/        # SQL statement guard (the airtight wall)
 │   ├── executor/     # snow CLI execution + auth detection
 │   ├── cache/        # result storage, freshness, guarded local analysis
@@ -254,6 +270,21 @@ seekql/
 │   └── harness/      # per-harness protocol-file generators
 ├── tests/            # pytest suite
 └── docs/             # SPEC.md, SECURITY.md, img/
+```
+
+## Why "grayson"?
+
+Every detective story gives the sidekick the same job: carry the kit, keep the
+case file, and never let a claim into the record without evidence. That is this
+tool. And data quality is made of gray areas — is the NULL spike a bug or a
+backfill? grayson settles them the only way that counts: a query that actually
+ran, cited by id. Gray areas in, evidence out.
+
+```
+ __ _ _ _ __ _ _  _ ___ ___ _ _
+/ _` | '_/ _` | || (_-</ _ \ ' \
+\__, |_| \__,_|\_, /__/\___/_||_|
+|___/          |__/
 ```
 
 ## License

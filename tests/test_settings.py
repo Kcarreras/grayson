@@ -9,11 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from seekql.cli import app as cli_app
-from seekql.config import WorkspaceConfig
-from seekql.config_edit import ConfigError, set_guard_profile, set_values
-from seekql.library import link_library
-from seekql.ui.server import build_app
+from grayson.cli import app as cli_app
+from grayson.config import WorkspaceConfig
+from grayson.config_edit import ConfigError, set_guard_profile, set_values
+from grayson.library import link_library
+from grayson.ui.server import build_app
 
 runner = CliRunner()
 TOKEN = "tok"
@@ -34,7 +34,7 @@ def client(workspace):
 
 
 def test_set_values_surgical_and_validated(workspace):
-    cfg_path = workspace.root / "seekql.toml"
+    cfg_path = workspace.root / "grayson.toml"
     before = cfg_path.read_text(encoding="utf-8")
     out = set_values(
         workspace.root,
@@ -63,7 +63,7 @@ def test_set_values_rejects_unknown_and_invalid(workspace):
 
 def test_scopes_allowed_from_comma_string(workspace):
     set_values(workspace.root, {"scopes.allowed": "ANALYTICS.*, RAW.PUBLIC"})
-    cfg = WorkspaceConfig.load(workspace.root / "seekql.toml")
+    cfg = WorkspaceConfig.load(workspace.root / "grayson.toml")
     assert cfg.scopes.allowed == ["ANALYTICS.*", "RAW.PUBLIC"]
 
 
@@ -72,7 +72,7 @@ def test_guard_profile_partial_edit_and_create(workspace):
     assert out["settings"]["timeout_seconds"] == 300
     assert out["settings"]["auto_limit"] == 10000  # untouched fields keep values
     out2 = set_guard_profile(workspace.root, "overnight", {"auto_limit": 0, "budget_cap": 500})
-    cfg = WorkspaceConfig.load(workspace.root / "seekql.toml")
+    cfg = WorkspaceConfig.load(workspace.root / "grayson.toml")
     assert cfg.guard_profiles["overnight"].budget_cap == 500
     assert out2["profile"] == "overnight"
     with pytest.raises(ConfigError, match="invalid guard settings"):
@@ -101,7 +101,7 @@ def test_cli_config_show_set_profile(workspace):
 def test_mcp_config_show_registered_and_no_mutators(workspace, fake_snow_env):
     import asyncio
 
-    from seekql.mcp.server import build_server
+    from grayson.mcp.server import build_server
 
     server = build_server(workspace)
     names = {t.name for t in asyncio.run(server.list_tools())}
@@ -120,7 +120,7 @@ def test_settings_page_renders_and_saves(client, workspace):
     page = client.get(f"/settings?t={TOKEN}")
     assert page.status_code == 200
     assert "Guard profiles" in page.text and "Team library" in page.text
-    assert "seekql library link" in page.text  # solo mode shows the bootstrap command
+    assert "grayson library link" in page.text  # solo mode shows the bootstrap command
     saved = client.post(
         f"/settings/general?t={TOKEN}",
         data={
@@ -132,7 +132,7 @@ def test_settings_page_renders_and_saves(client, workspace):
         follow_redirects=True,
     )
     assert saved.status_code == 200
-    cfg = WorkspaceConfig.load(workspace.root / "seekql.toml")
+    cfg = WorkspaceConfig.load(workspace.root / "grayson.toml")
     assert cfg.connection == "sandbox"
     assert cfg.default_guard_profile == "strict"
     assert cfg.scopes.allowed == ["SANDBOX.*"]
@@ -150,7 +150,7 @@ def test_settings_profile_post(client, workspace):
         follow_redirects=True,
     )
     assert resp.status_code == 200
-    cfg = WorkspaceConfig.load(workspace.root / "seekql.toml")
+    cfg = WorkspaceConfig.load(workspace.root / "grayson.toml")
     assert cfg.guard_profiles["moderate"].auto_limit == 5000
 
 
@@ -165,7 +165,7 @@ def test_settings_bad_value_shows_error(client):
 
 def test_theme_toggle_present(client):
     page = client.get(f"/?t={TOKEN}").text
-    assert "seekql_theme" in page  # pre-paint stamp + toggle script
+    assert "grayson_theme" in page  # pre-paint stamp + toggle script
     assert 'data-theme="light"' in page  # pinned-theme token block exists
 
 

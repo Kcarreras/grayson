@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from seekql.executor.snow import SNOW_CMD_ENV, ExecutionResult
-from seekql.workspace import Workspace
+from grayson.executor.snow import SNOW_CMD_ENV, ExecutionResult
+from grayson.workspace import Workspace
 
 FAKE_SNOW = Path(__file__).parent / "fake_snow.py"
 

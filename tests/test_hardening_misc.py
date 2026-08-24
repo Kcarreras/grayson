@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from conftest import FakeExecutor
-from seekql.cache.local import LocalQueryError, query_artifacts
-from seekql.cache.store import CacheStore
-from seekql.config import GuardSettings
-from seekql.core.run import run_statement
-from seekql.core.session import Session
-from seekql.executor.snow import ExecutionResult, classify_failure, metadata_query
+from grayson.cache.local import LocalQueryError, query_artifacts
+from grayson.cache.store import CacheStore
+from grayson.config import GuardSettings
+from grayson.core.run import run_statement
+from grayson.core.session import Session
+from grayson.executor.snow import ExecutionResult, classify_failure, metadata_query
 
 # -- finding 7: metadata_query identifier anchor -------------------------
 
@@ -53,7 +53,7 @@ def test_local_query_blocks_load_extension(store):
 
 
 def test_local_query_recursive_cte_times_out(store, monkeypatch):
-    import seekql.cache.local as local
+    import grayson.cache.local as local
 
     monkeypatch.setattr(local, "LOCAL_TIMEOUT_SECONDS", 1)
     with pytest.raises(LocalQueryError, match="time limit"):

@@ -8,7 +8,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from seekql.cli import app
+from grayson.cli import app
 
 runner = CliRunner()
 
@@ -45,7 +45,7 @@ def test_session_report_markdown_file(workspace, fake_snow_env, sid, tmp_path):
     out = invoke("session", "report", sid, "--out", str(dest))
     assert out["written"] == str(dest)
     text = dest.read_text(encoding="utf-8")
-    assert f"# seekql session report — {sid}" in text
+    assert f"# grayson session report — {sid}" in text
     assert "## Checkpoints" in text
     assert "## Findings" in text
     assert run["qid"]  # a query ran and the report generated without error

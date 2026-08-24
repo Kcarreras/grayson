@@ -7,7 +7,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from seekql.cli import app
+from grayson.cli import app
 
 runner = CliRunner()
 

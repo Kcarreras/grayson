@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from seekql.config import GuardSettings
-from seekql.core.session import Session
-from seekql.interventions import build_request, validate_response
-from seekql.interventions.types import InterventionError
+from grayson.config import GuardSettings
+from grayson.core.session import Session
+from grayson.interventions import build_request, validate_response
+from grayson.interventions.types import InterventionError
 
 
 @pytest.fixture

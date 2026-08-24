@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}grayson — records{% endblock %}
+{% block content %}
+<h1>Records</h1>
+<div class="muted small">Every finding and fix across all sessions — the searchable
+  memory of past problems and how they were resolved. Agents search this too
+  (<code>grayson records search</code>).</div>
+
+<form class="searchrow" method="get" action="/records">
+  <input type="hidden" name="t" value="{{ token }}">
+  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search titles, summaries, payloads…">
+  <select name="kind" style="width: auto;">
+    <option value="" {{ "selected" if not kind }}>Findings + proposals</option>
+    <option value="finding" {{ "selected" if kind == "finding" }}>Findings only</option>
+    <option value="proposal" {{ "selected" if kind == "proposal" }}>Proposals only</option>
+  </select>
+  <button class="btn secondary sm" type="submit">Search</button>
+  {% if q or kind %}<a class="btn ghost sm" href="/records?t={{ token }}">Clear</a>{% endif %}
+</form>
+
+{% if not records %}
+<div class="card empty">{% if q %}Nothing matches “{{ q }}”.{% else %}No records yet —
+  findings and proposals appear here as sessions produce them.{% endif %}</div>
+{% endif %}
+
+{% for r in records %}
+<div class="card">
+  <div class="row split">
+    <a href="/records/{{ r.session_id }}/{{ r.kind }}/{{ r.id }}?t={{ token }}">
+      <b>{{ r.title }}</b></a>
+    <span class="row">
+      {% if r.kind == "finding" %}
+        <span class="badge {{ 'bad' if r.severity in ['critical','high'] else 'attn' if r.severity == 'medium' else 'plain' }}">{{ r.severity }}</span>
+        {% if r.accepted %}<span class="badge ok">accepted</span>{% endif %}
+      {% else %}
+        <span class="badge plain">proposal</span>
+        {% if r.verdict == "pass" %}<span class="badge ok">verified</span>
+        {% elif r.verdict == "fail" %}<span class="badge bad">verification failed</span>
+        {% elif r.status %}<span class="badge plain">{{ r.status }}</span>{% endif %}
+      {% endif %}
+    </span>
+  </div>
+  {% if r.summary %}<div class="ink2 small" style="margin: 5px 0;">{{ r.summary[:260] }}{% if r.summary | length > 260 %}…{% endif %}</div>{% endif %}
+  <div class="faint small">
+    <span class="chip">{{ r.id }}</span> · {{ r.workflow }} ·
+    <a class="mono" href="/session/{{ r.session_id }}?t={{ token }}">{{ r.session_id }}</a>
+    · {{ r.ts }}
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

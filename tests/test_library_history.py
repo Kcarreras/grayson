@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from seekql.config import GuardSettings
-from seekql.core.session import Session
-from seekql.history import suggest_guard_profile
-from seekql.knowledge import KnowledgeStore
-from seekql.library import extract_library, init_library, library_status
-from seekql.views import ViewEntry, ViewRegistry
+from grayson.config import GuardSettings
+from grayson.core.session import Session
+from grayson.history import suggest_guard_profile
+from grayson.knowledge import KnowledgeStore
+from grayson.library import extract_library, init_library, library_status
+from grayson.views import ViewEntry, ViewRegistry
 
 # -- last-used guard profile --------------------------------------------
 
@@ -72,25 +72,25 @@ def test_extract_library_skips_symlinks(workspace, tmp_path):
 
 
 def test_workspace_resolves_linked_library(tmp_path, monkeypatch):
-    from seekql.workspace import Workspace
+    from grayson.workspace import Workspace
 
     lib = init_library(tmp_path / "lib")
     ws = Workspace.init(tmp_path / "ws")
-    config = (ws.root / "seekql.toml").read_text()
+    config = (ws.root / "grayson.toml").read_text()
     config += f'\n[library]\npath = "{lib.as_posix()}"\n'
-    (ws.root / "seekql.toml").write_text(config)
+    (ws.root / "grayson.toml").write_text(config)
     ws2 = Workspace(ws.root)
     assert ws2.knowledge_dir == lib / "knowledge"
     assert ws2.views_dir == lib / "views"
 
 
 def test_missing_linked_library_raises(tmp_path):
-    from seekql.workspace import Workspace
+    from grayson.workspace import Workspace
 
     ws = Workspace.init(tmp_path / "ws2")
-    config = (ws.root / "seekql.toml").read_text()
+    config = (ws.root / "grayson.toml").read_text()
     missing = (tmp_path / "does_not_exist").as_posix()
     config += f'\n[library]\npath = "{missing}"\n'
-    (ws.root / "seekql.toml").write_text(config)
+    (ws.root / "grayson.toml").write_text(config)
     with pytest.raises(FileNotFoundError):
         _ = Workspace(ws.root).knowledge_dir

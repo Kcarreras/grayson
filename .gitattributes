@@ -3,7 +3,7 @@
 *.db binary
 *.sqlite binary
 
-# Vendored graph libraries (see src/seekql/ui/static/vendor/README.md): keep them
+# Vendored graph libraries (see src/grayson/ui/static/vendor/README.md): keep them
 # out of GitHub language stats and diffs - they are upstream builds, not our code.
-src/seekql/ui/static/vendor/** linguist-vendored
-src/seekql/ui/static/vendor/*.js -diff
+src/grayson/ui/static/vendor/** linguist-vendored
+src/grayson/ui/static/vendor/*.js -diff

@@ -1,20 +1,20 @@
-# seekql — Specification v1
+# grayson — Specification v1
 
 Agentic, open-ended QA and investigation over SQL tables and data (Snowflake-first).
 
-seekql is **deterministic infrastructure for agent-driven data QA**. It provides guarded
+grayson is **deterministic infrastructure for agent-driven data QA**. It provides guarded
 Snowflake access, session state, evidence enforcement, cached data with freshness tracking,
 a team-shareable knowledge library, and a human-in-the-loop web console. All reasoning is
-done by agents in the user's harness (Cursor, Claude Code, Codex, …); seekql itself never
+done by agents in the user's harness (Cursor, Claude Code, Codex, …); grayson itself never
 calls an LLM.
 
 ---
 
 ## 1. Core principles
 
-1. **Deterministic core.** seekql holds guardrails, state, storage, and UI. Intelligence
-   lives in harness agents steered by thin per-harness skill files that seekql generates.
-2. **Harness-agnostic.** Primary interface is a CLI (`seekql …`) returning structured
+1. **Deterministic core.** grayson holds guardrails, state, storage, and UI. Intelligence
+   lives in harness agents steered by thin per-harness skill files that grayson generates.
+2. **Harness-agnostic.** Primary interface is a CLI (`grayson …`) returning structured
    output; an MCP server exposes the same operations as typed tools. Both are thin
    wrappers over one shared core — behavior is identical.
 3. **Guarded, not hobbled.** Agents get real analytical freedom (arbitrary read queries,
@@ -33,12 +33,12 @@ calls an LLM.
 | Decision | Choice |
 |---|---|
 | Form factor | Python package (uv-managed) + CLI + MCP server + localhost web UI |
-| Intelligence | Purely deterministic; zero LLM calls in seekql |
-| Snowflake access | Via `snow` CLI named connections; SSO/external-browser auth; seekql never stores credentials |
+| Intelligence | Purely deterministic; zero LLM calls in grayson |
+| Snowflake access | Via `snow` CLI named connections; SSO/external-browser auth; grayson never stores credentials |
 | Roles | Must work under user's normal role today (parser is the only wall → airtight); read-only role supported/preferred when available |
 | Writes to warehouse | None by agents. QA views come from a **view library**; missing views are **proposed** by agents and **executed by the user**, front-loaded at session setup |
 | Table definitions | Mixed sources: git-repo SQL files (fix = file diff) and Snowflake-resident logic (fix = standalone DDL snippet) |
-| Fix application | User approves in UI → **harness agent** edits work-repo files with its own tools; seekql never writes outside its workspace |
+| Fix application | User approves in UI → **harness agent** edits work-repo files with its own tools; grayson never writes outside its workspace |
 | Parallelism | Up to ~3 concurrent sessions; optional multi-agent fan-out **within** a session, toggleable per session |
 | Cost guards | Three independent toggles (auto-LIMIT, timeout, query budget) combined into named, user-saveable guard profiles; selected at session start, suggested by workflow type and prior usage |
 | Result caching | Freely cached locally, gitignored, timestamped, freshness-checkable |
@@ -57,17 +57,17 @@ calls an LLM.
 └──────┬───────────┬──────────┘        └───────────┬──────────────┘
        │ CLI       │ MCP (stdio)                    │ http (127.0.0.1)
 ┌──────▼───────────▼────────────────────────────────▼──────────────┐
-│                        seekql core (Python)                       │
+│                        grayson core (Python)                       │
 │  sessions · guard · executor · cache · workflows · checkpoints    │
 │  interventions · findings · proposals · knowledge · views         │
 ├──────────────────────────────────────────────────────────────────┤
-│  workspace files (.seekql/)          │  snow CLI (subprocess)     │
+│  workspace files (.grayson/)          │  snow CLI (subprocess)     │
 │  state: SQLite (WAL) per session     │  → Snowflake               │
 │  artifacts: sqlite/markdown/yaml     │                            │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Components** (all in one package, `src/seekql/`):
+**Components** (all in one package, `src/grayson/`):
 
 - `core/` — session state machine, workspace management, locking
 - `guard/` — SQL validation (sqlglot, Snowflake dialect), guard profiles, audit log
@@ -87,19 +87,19 @@ calls an LLM.
 
 **Dependencies** (pinned via uv.lock): `sqlglot`, `pydantic`, `typer`, `fastapi`,
 `uvicorn`, `mcp`, `jinja2` (UI templates). Result storage and local analysis use
-stdlib `sqlite3` — no native DLLs beyond Python itself, so seekql runs under
+stdlib `sqlite3` — no native DLLs beyond Python itself, so grayson runs under
 locked-down Windows Application Control policies common on work machines (duckdb
 was evaluated and is blocked by such policies).
 Snowflake CLI (`snow`) is an external prerequisite, not a Python dependency.
 
 ## 4. Workspace layout
 
-A seekql **workspace** is a directory (typically its own repo, or a folder inside one)
+A grayson **workspace** is a directory (typically its own repo, or a folder inside one)
 opened in the IDE alongside the user's SQL repos:
 
 ```
 <workspace>/
-├── seekql.toml                 # connection, defaults, scopes, guard profiles, [library] pointer
+├── grayson.toml                 # connection, defaults, scopes, guard profiles, [library] pointer
 ├── knowledge/                  # LIBRARY ASSET — team-shareable knowledge
 │   ├── glossary.md
 │   └── <db>/<schema>/<table>.md
@@ -108,7 +108,7 @@ opened in the IDE alongside the user's SQL repos:
 │   └── ddl/*.sql
 ├── workflows/                  # LIBRARY ASSET — workflow template overrides/custom types
 ├── checks/                     # LIBRARY ASSET — external check results (Airflow, dbt, …)
-└── .seekql/                    # sessions & data
+└── .grayson/                    # sessions & data
     └── sessions/<id>/
         ├── state.db            # SQLite (WAL): state machine, event log, locks
         ├── session.md          # human-readable session brief & status (generated)
@@ -120,13 +120,13 @@ opened in the IDE alongside the user's SQL repos:
         └── proposals/          # fix proposals + approval state
 ```
 
-`.seekql/sessions/*/data/` is gitignored; everything meant to compound over time
+`.grayson/sessions/*/data/` is gitignored; everything meant to compound over time
 (knowledge, views, workflows, checks) is committed and merge-friendly (one file per table/view,
 provenance inline).
 
 **Library assets** live in the workspace by default (**solo mode**). In **team mode**,
-`seekql.toml` declares a `[library]` pointer to a local clone of a shared library repo,
-and seekql resolves `knowledge/`, `views/`, `workflows/`, `checks/`, and shared guard
+`grayson.toml` declares a `[library]` pointer to a local clone of a shared library repo,
+and grayson resolves `knowledge/`, `views/`, `workflows/`, `checks/`, and shared guard
 profiles from
 there instead — see §11a.
 
@@ -137,7 +137,7 @@ setup → analysis → synthesis → review → fixes → verification → close
 ```
 
 1. **setup** — user (or agent relaying user input) declares: workflow type, target
-   tables, guard profile, parallelism (worker count), connection. seekql verifies snow
+   tables, guard profile, parallelism (worker count), connection. grayson verifies snow
    auth, snapshots table metadata (columns, row counts, `last_altered`), loads relevant
    knowledge, runs the **view coverage check** (see §9a): existing library views
    relevant to the target tables **enter the session's query scope automatically**
@@ -150,16 +150,16 @@ setup → analysis → synthesis → review → fixes → verification → close
    Workflow-defined **required checks** must each be completed with evidence; beyond
    those, agents are free.
 3. **synthesis** — findings drafted against the workflow's findings schema; every claim
-   must cite query evidence. seekql validates structure + evidence links.
+   must cite query evidence. grayson validates structure + evidence links.
 4. **review** — evidence gate: all required checkpoints closed, all findings validated,
    all interventions resolved. Presented to user in UI; user accepts findings.
 5. **fixes** — agents write proposals (`file_diff` or `ddl_snippet`, each linked to the
    finding it addresses and payload-validated). User approves/rejects per proposal in
-   UI/CLI. Approved file-diffs are applied by the harness agent in the work repo (seekql
+   UI/CLI. Approved file-diffs are applied by the harness agent in the work repo (grayson
    never writes outside its workspace); the agent marks the proposal `applied`; user
    reruns definitions.
 6. **verification** — the agent re-runs the anomaly/parity query post-fix and records a
-   verification on the proposal citing before and after query ids. seekql computes the
+   verification on the proposal citing before and after query ids. grayson computes the
    before/after comparison deterministically (`compare_artifacts`: row-count delta,
    emptiness, value identity for small sets) and enforces that both ids were actually
    executed; the pass/fail verdict rides on that evidence (`verified` /
@@ -171,7 +171,7 @@ Any stage can loop back (verification failure → fixes/analysis). All transitio
 recorded in the event log with actor (user / agent worker id) and timestamp.
 
 **Parallelism.** Sessions are isolated by directory. Within a session, workers register
-(`seekql worker join`) and get an id; state mutations go through SQLite (WAL +
+(`grayson worker join`) and get an id; state mutations go through SQLite (WAL +
 busy-timeout) so concurrent workers never corrupt state. Queries, observations, and
 findings are tagged by worker. Worker count is declared at setup and changeable by the
 user mid-session.
@@ -198,7 +198,7 @@ The guard sees **every** statement before execution; there is no unguarded path.
   just warned — an unverifiable reference is treated as out-of-scope.
 - **Object scoping**: referenced objects are extracted and checked against the session's
   registered scope (target tables, view-library views, `INFORMATION_SCHEMA`, and
-  scopes whitelisted in `seekql.toml`). Out-of-scope reads produce a *warning* by
+  scopes whitelisted in `grayson.toml`). Out-of-scope reads produce a *warning* by
   default (logged, surfaced in UI) and a hard block only if the session was started
   with `--strict-scope` — this is the "don't get agents in trouble for overly tight
   rules" dial.
@@ -212,18 +212,18 @@ The guard sees **every** statement before execution; there is no unguarded path.
   | `query_budget` | off, warn-at-N, or hard-cap-at-N per session (hard cap user-extendable from the UI) |
 
 - **Guard profiles** are named, saved combinations of those settings, defined in
-  `seekql.toml` (committed, so profiles travel with the workspace). seekql ships
+  `grayson.toml` (committed, so profiles travel with the workspace). grayson ships
   starter profiles (`strict`, `moderate`, `generous`) the user can edit, clone, or
   replace. Selection at session setup is one pick — `--guard-profile <name>` or a
   dropdown in the UI — with per-setting overrides allowed on top
   (`--timeout 300`). **Default selection**: workflow templates suggest a profile, but
-  if the session's target tables/views were used in a previous session, seekql defaults
+  if the session's target tables/views were used in a previous session, grayson defaults
   to the profile used there (last-used wins), shown as "suggested" so the pick is
   one keystroke to accept or change.
 - **Audit log**: every statement — accepted or rejected — is recorded with hash,
   worker id, timestamp, guard verdict, and execution stats.
 - **Defense in depth**: designed to be the only wall (normal role today) but pairs with
-  a read-only Snowflake role when available (`seekql.toml` records which is in play).
+  a read-only Snowflake role when available (`grayson.toml` records which is in play).
 
 ## 7. Execution & auth
 
@@ -234,7 +234,7 @@ The guard sees **every** statement before execution; there is no unguarded path.
   of retrying into MFA fatigue) and as a banner in the UI. The user re-auths via
   Snowflake CLI's browser flow; its token caching keeps SSO pop-ups rare even with
   parallel workers.
-- seekql never reads, stores, or transmits credentials; that surface belongs entirely
+- grayson never reads, stores, or transmits credentials; that surface belongs entirely
   to Snowflake CLI.
 
 ## 8. Result cache & freshness
@@ -245,19 +245,19 @@ Every executed query's results are stored automatically:
   SQLite), plus a JSON sidecar per artifact:
   `{query_hash, sql, executed_at, worker, source_tables, row_count,
   truncated, source_last_altered: {table: ts}}`.
-- **Freshness**: `seekql cache find --tables …` (and the MCP equivalent) returns matching
+- **Freshness**: `grayson cache find --tables …` (and the MCP equivalent) returns matching
   cached artifacts with a computed staleness verdict — current `last_altered` (one cheap
   metadata query) vs. the value captured at execution time → `fresh` / `stale` /
   `unknown`. Agents are instructed (via skills) to check cache before querying; the
   decision to reuse stays with the agent.
-- **Local analysis**: cached artifacts are queryable locally (`seekql cache query`,
+- **Local analysis**: cached artifacts are queryable locally (`grayson cache query`,
   table names = artifact ids), letting agents re-slice already-fetched data without
   warehouse round-trips. Same guard posture: single SELECT only, artifact tables only,
   and the connection is opened read-only (SQLite `mode=ro`) as a second wall.
 
 ## 8a. Analysis charts
 
-Agents make their analytical process *visible* as it happens. `seekql chart add`
+Agents make their analytical process *visible* as it happens. `grayson chart add`
 (MCP: `chart_add`) builds a chart — `bar`, `line`, or `scatter` — from a cached
 artifact: the spec (artifact id, column mapping, title, one-line read) is validated
 against the artifact's real shape (columns exist, measures are numeric) and stored in
@@ -267,11 +267,11 @@ narrative build in near real time — and because the artifact is an executed qu
 every picture is traceable evidence (chart card shows the q_XXXX chip; a "plotted
 data" fold shows the exact rows drawn).
 
-Deterministic by construction: seekql draws exactly what the cited query returned —
+Deterministic by construction: grayson draws exactly what the cited query returned —
 agents shape the data with SQL (`query run` / `cache query`), then chart the result.
 Up to 3 series per chart (the categorical palette validates colorblind-safe at three
 slots in both console themes); more dimensions means more charts, not more colors.
-`seekql chart render --out chart.svg` exports any chart standalone.
+`grayson chart render --out chart.svg` exports any chart standalone.
 
 **Terminal rendering.** Harness chats (Cursor, Claude Code, Codex) display text, not
 images, so `chart add` / `chart_add` responses also carry `text`: a Unicode rendering
@@ -304,8 +304,8 @@ v1 templates: `bug-hunter`, `pipeline-qa`, `table-health`, `semantic-rule-qa`,
 and a findings schema. `migration-parity` doubles as the built-in verification stage for
 every other workflow.
 
-**Checkpoints** close only via `seekql checkpoint complete <name> --evidence q_017,q_023`
-— seekql verifies the cited queries exist, succeeded, and touched relevant objects.
+**Checkpoints** close only via `grayson checkpoint complete <name> --evidence q_017,q_023`
+— grayson verifies the cited queries exist, succeeded, and touched relevant objects.
 **Findings** are pydantic-validated documents: summary, severity, affected objects,
 evidence (query ids), reproduction, proposed remediation, confidence + open questions.
 
@@ -322,7 +322,7 @@ logic lives), the DDL file in `views/ddl/`, created_at, and the source tables'
 1. **Reuse** — library views matching the session's target tables. These enter the
    session's query scope automatically (`views_in_scope`): querying them passes the
    guard — including strict-scope mode — and evidence touching them counts toward
-   checkpoints and findings. Mid-session, `seekql views use <sid> <name>` (MCP:
+   checkpoints and findings. Mid-session, `grayson views use <sid> <name>` (MCP:
    `views_use`) scopes in additional *registered* views; arbitrary unregistered
    names are refused, so scope only ever widens to user-curated surfaces.
 2. **Refresh** — stale views: a source table's `last_altered` has moved past the
@@ -335,7 +335,7 @@ logic lives), the DDL file in `views/ddl/`, created_at, and the source tables'
    agents exactly which work-repo files to read when deriving new view logic.
    Proposals are queued for user execution.
 
-`seekql views list|show|check|register|use` (and the MCP `views_check`/`views_use`)
+`grayson views list|show|check|register|use` (and the MCP `views_check`/`views_use`)
 expose the same operations mid-session. **Registration closes the loop
 automatically**: a `ddl_snippet` proposal that declares `view_name` (plus
 `source_tables`, `base_files`, `purpose`) is registered into the library — DDL,
@@ -352,7 +352,7 @@ Structured tasks replacing the CSV round-trip:
   the answer.
 - UI renders it as an interactive task (tabular labeling with keyboard flow, option
   pickers, text). Responses are stored as structured JSON the agent reads back.
-- CLI/MCP: `seekql intervention await` (poll/block) so agents in any harness can wait on
+- CLI/MCP: `grayson intervention await` (poll/block) so agents in any harness can wait on
   human input; parallel workers continue on other angles meanwhile.
 
 ## 11. Knowledge library
@@ -374,21 +374,21 @@ mattered facts with **provenance**:
 
 - Agents **must** load relevant knowledge at setup and **propose** new facts when they
   infer or are told something durable. `data_inferred` facts carry evidence links;
-  promotion to `user_confirmed` happens via the UI or `seekql knowledge confirm`.
+  promotion to `user_confirmed` happens via the UI or `grayson knowledge confirm`.
 - Agents are instructed to ask (via interventions) when semantics can't be derived from
   data — answers become knowledge, so every session makes the next one faster.
-- Search: `seekql knowledge search <term>` (and MCP tool) over facts + glossary.
+- Search: `grayson knowledge search <term>` (and MCP tool) over facts + glossary.
 
 ## 11a. Team library & distribution model
 
 Collaboration needs no server; it rides on git. Three kinds of repo, kept separate:
 
-1. **The seekql tool** (this repo) — installed per user, e.g.
-   `uv tool install seekql` or `uvx --from git+https://github.com/Kcarreras/seekql seekql`.
+1. **The grayson tool** (this repo) — installed per user, e.g.
+   `uv tool install grayson-sql` or `uvx --from git+https://github.com/Kcarreras/grayson grayson`.
    Never cloned into a workspace; it's software, not data.
 2. **A team library repo** — one per team, holding the compounding assets:
    `knowledge/`, `views/`, `workflows/`, `checks/`, and shared guard profiles.
-   `seekql library init` scaffolds a fresh one ready to push to the team's git host.
+   `grayson library init` scaffolds a fresh one ready to push to the team's git host.
    Another team starting out scaffolds their own — or forks an existing team's library
    to seed from their knowledge.
 3. **Personal workspaces** — one per user (sessions, cached data, local config), each
@@ -400,21 +400,21 @@ Collaboration needs no server; it rides on git. Three kinds of repo, kept separa
    ```
 
 **Bootstrap**: the team repo starts as an *empty* repo on the git host.
-`seekql library link <git-url>` clones it, scaffolds the asset structure, commits,
-and pushes that first commit automatically (only for clones seekql itself made —
+`grayson library link <git-url>` clones it, scaffolds the asset structure, commits,
+and pushes that first commit automatically (only for clones grayson itself made —
 linking an existing local directory never auto-commits). Teammates then run the
 same command and receive the structure.
 
-**Resolution**: with `[library]` set, seekql reads/writes knowledge, views, workflows,
+**Resolution**: with `[library]` set, grayson reads/writes knowledge, views, workflows,
 checks,
 and shared profiles in the library clone; session state and cached data stay in the
 personal workspace. Solo mode (no `[library]`) keeps everything in the workspace, and
-`seekql library extract` can later split the assets out into a new library repo when a
+`grayson library extract` can later split the assets out into a new library repo when a
 team forms.
 
-**Freshness**: at session setup seekql checks the library clone against its remote and
+**Freshness**: at session setup grayson checks the library clone against its remote and
 warns if it is behind ("library is 12 commits behind origin — pull before starting?")
-or has uncommitted local changes. `seekql library status|pull` wrap the corresponding
+or has uncommitted local changes. `grayson library status|pull` wrap the corresponding
 git operations; commits/PRs to the library go through normal git tooling — a PR is the
 team-scale version of the fact-confirmation flow, giving proposed knowledge a review
 step for free.
@@ -428,11 +428,11 @@ the same file formats without reworking this architecture.
 
 ## 11b. External checks library
 
-Teams already run scheduled deterministic checks outside seekql — Airflow DAGs, dbt
+Teams already run scheduled deterministic checks outside grayson — Airflow DAGs, dbt
 tests, data-quality jobs. The `checks/` library asset makes those results agent
 context with zero coupling: automation dumps JSON files anywhere under `checks/`
 (single result, list, or `{"results": [...]}`; format documented in the scaffolded
-`checks/README.md`), and seekql reads, validates, and reports them. seekql never
+`checks/README.md`), and grayson reads, validates, and reports them. grayson never
 runs the checks; malformed entries are reported per-file without hiding the rest.
 
 - **Session-start surfacing** — `session start` returns `external_checks` for the
@@ -445,12 +445,12 @@ runs the checks; malformed entries are reported per-file without hiding the rest
   a latest run older than that is flagged overdue, so silently-stopped automation
   is itself surfaced.
 - **Ingestion** — automation can write files directly, or pipe through
-  `seekql checks ingest <file|dir> [--source airflow]`, which validates, fills in
+  `grayson checks ingest <file|dir> [--source airflow]`, which validates, fills in
   the source, folds results into `checks/ingested/<check_id>.json` (idempotent per
   (check, run_at), history bounded), and auto-pushes when the library is configured
   for it. With a linked team library, one teammate's check drops brief everyone's
   agents at pull cadence.
-- **Surface** — `seekql checks status|list|show|ingest`, MCP `checks_status` /
+- **Surface** — `grayson checks status|list|show|ingest`, MCP `checks_status` /
   `checks_show`, a Checks tab in the console, and per-table checks on each
   knowledge page.
 
@@ -474,22 +474,22 @@ per-launch session token in the URL. v1 views:
 6. **Knowledge** — browse/search; confirm or edit proposed facts.
 7. **Checks** — latest external check results (§11b): failures first with details
    and check SQL, overdue automation flagged, per-table checks on knowledge pages.
-8. **Settings** — edit the workspace rails (`seekql.toml`): connection, default
+8. **Settings** — edit the workspace rails (`grayson.toml`): connection, default
    guard profile, strict scope, allowed scopes, per-profile guard controls, and
    team-library controls (auto-push, pull/push, sync state). Settings mutation is
-   a *human* surface: this page and the `seekql config` CLI are the only writers;
+   a *human* surface: this page and the `grayson config` CLI are the only writers;
    the MCP tool surface exposes configuration read-only (`config_show`) so agents
    cannot loosen the guards they run inside. Light/dark theme is per-browser (a
    nav toggle backed by localStorage), not workspace state.
 
 ## 13. Harness integration
 
-- `seekql harness init cursor|claude-code|codex` generates the skill/instruction files
+- `grayson harness init cursor|claude-code|codex` generates the skill/instruction files
   (e.g. `.cursor/rules/`, `CLAUDE.md` section, or skills) that teach that harness the
   session protocol: check knowledge → setup → cache-before-query → evidence discipline →
   interventions → findings → proposals. The protocol lives in one canonical template so
   all harnesses stay in sync.
-- MCP server (`seekql mcp serve`, stdio) for harnesses that prefer typed tools; tool set
+- MCP server (`grayson mcp serve`, stdio) for harnesses that prefer typed tools; tool set
   mirrors the CLI 1:1.
 - Everything an agent can do via MCP it can do via CLI — harnesses without MCP support
   lose nothing.
@@ -502,10 +502,10 @@ per-launch session token in the URL. v1 views:
 - UI binds to loopback only; token-gated; no remote assets (works offline). Its
   one asset bundle - Cytoscape.js + ELK for the relationship canvas - is vendored
   under `ui/static/vendor` and served from loopback; no CDN, no build step.
-- Workspace writes are confined to the workspace; seekql never edits files outside it.
+- Workspace writes are confined to the workspace; grayson never edits files outside it.
 - All file reads/writes validate paths against the workspace root (no traversal).
 - Dependencies pinned via `uv.lock`; small, well-known set.
-- Cached warehouse data is gitignored by generated `.gitignore`; a `seekql session
+- Cached warehouse data is gitignored by generated `.gitignore`; a `grayson session
   scrub` command deletes a session's cached data on demand.
 
 ## 15. Build phases

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from seekql.config import GuardSettings
-from seekql.guard.rules import GuardContext, validate_statement
+from grayson.config import GuardSettings
+from grayson.guard.rules import GuardContext, validate_statement
 
 OPEN = GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from seekql.findings.schemas import validate_finding
+from grayson.findings.schemas import validate_finding
 
 
 def base(**over):
