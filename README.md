@@ -1,19 +1,19 @@
-<div align="center">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/wordmark-dark.svg">
+    <img src="docs/img/wordmark-light.svg" alt="grayson" width="336">
+  </picture>
+</p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/wordmark_dark.svg">
-  <img src="docs/img/wordmark_light.svg" alt="grayson" width="336">
-</picture>
+<p align="center"><b>Guarded SQL rails for agentic data investigation.</b></p>
 
-**Guarded SQL rails for agentic data investigation.**
+<p align="center">Read-only by parser · claims gated on executed queries · humans at every boundary.</p>
 
-Read-only by parser · claims gated on executed queries · humans at every boundary.
-
-[![python](https://img.shields.io/badge/python-3.12+-0aa5b5)](pyproject.toml)
-[![license](https://img.shields.io/badge/license-MIT-8b939b)](LICENSE)
-[![evidence](https://img.shields.io/badge/evidence-or_it_didn%27t_happen-1f2328)](#what-the-rails-enforce)
-
-</div>
+<p align="center">
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12+-0aa5b5" alt="python 3.12+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8b939b" alt="license MIT"></a>
+  <a href="#what-the-rails-enforce"><img src="https://img.shields.io/badge/evidence-or_it_didn%27t_happen-1f2328" alt="evidence or it didn't happen"></a>
+</p>
 
 ---
 
