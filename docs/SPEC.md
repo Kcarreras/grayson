@@ -273,6 +273,13 @@ Up to 3 series per chart (the categorical palette validates colorblind-safe at t
 slots in both console themes); more dimensions means more charts, not more colors.
 `seekql chart render --out chart.svg` exports any chart standalone.
 
+**Terminal rendering.** Harness chats (Cursor, Claude Code, Codex) display text, not
+images, so `chart add` / `chart_add` responses also carry `text`: a Unicode rendering
+of the same points — labeled block bars, per-series sparklines with min/max/last, a
+dot grid for scatter — and the protocol tells agents to paste it into their chat reply
+in a code block. The user sees the shape in the conversation immediately; the console
+shows the full chart on its live refresh; both cite the same artifact.
+
 ## 9. Workflows & checkpoints
 
 Workflow templates are data (YAML), not code — shipped defaults, overridable/extendable

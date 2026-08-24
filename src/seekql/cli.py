@@ -688,14 +688,25 @@ def chart_add(
     """Build a chart from a cached artifact — it appears live in the console.
 
     Aggregate/order the data with SQL first (query run or cache query), then
-    chart the resulting artifact. Every chart is traceable to its query id."""
-    from seekql.charts import ChartError, add_chart
+    chart the resulting artifact. Every chart is traceable to its query id.
+    The response includes `text`, a terminal rendering — paste it into your
+    chat reply so the user sees the shape without leaving the conversation."""
+    from seekql.charts import ChartError, add_chart, chart_data, render_text
 
     s = _session(session_id)
     try:
-        emit(add_chart(s, artifact, kind, x, list(y), title, note, worker))
+        spec = add_chart(s, artifact, kind, x, list(y), title, note, worker)
     except ChartError as e:
         fail(str(e))
+        return
+    emit(
+        {
+            **spec,
+            "text": render_text(spec, chart_data(s, spec)),
+            "hint": "paste `text` into your chat reply (inside a code block) so the "
+            "user sees the shape now; the full chart is live in the console",
+        }
+    )
 
 
 @chart_app.command("list")
@@ -707,15 +718,16 @@ def chart_list(session_id: str) -> None:
 
 @chart_app.command("show")
 def chart_show(session_id: str, chart_id: str) -> None:
-    """A chart's spec plus the exact points it plots."""
-    from seekql.charts import chart_data, get_chart
+    """A chart's spec, the exact points it plots, and its terminal rendering."""
+    from seekql.charts import chart_data, get_chart, render_text
 
     s = _session(session_id)
     spec = get_chart(s, chart_id)
     if spec is None:
         fail(f"no chart '{chart_id}' in this session")
         return
-    emit({**spec, "data": chart_data(s, spec)})
+    data = chart_data(s, spec)
+    emit({**spec, "data": data, "text": render_text(spec, data)})
 
 
 @chart_app.command("render")

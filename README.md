@@ -29,7 +29,9 @@ rails:
   replicate first.
 - **Live analysis charts** — agents build bar/line/scatter charts from cached query
   results (`seekql chart add`); the console renders them live, each traceable to the
-  executed query behind it — a real-time visual of the investigation.
+  executed query behind it — a real-time visual of the investigation. Each chart also
+  comes back as a Unicode terminal rendering the agent pastes straight into its chat
+  reply, so the shape shows up in the conversation too.
 - **Human-in-the-loop console** — a localhost web UI for labeling samples, answering
   agent questions, reviewing findings, and approving fixes.
 - **Team libraries** — knowledge (table semantics with provenance) and QA views live in a

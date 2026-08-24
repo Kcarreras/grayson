@@ -518,7 +518,9 @@ def build_server(workspace: Workspace) -> Any:
         description="Build a chart (bar|line|scatter) from a cached artifact; it renders "
         "live in the user's console, traceable to the executed query. Aggregate/order "
         "with SQL first, then chart the artifact. Up to 3 y columns (line/scatter); "
-        "bar takes one. Use charts to narrate the investigation visually."
+        "bar takes one. Use charts to narrate the investigation visually. The response's "
+        "`text` field is a terminal rendering — paste it into your chat reply (in a code "
+        "block) so the user sees the shape without leaving the conversation."
     )
     def chart_add(
         session_id: str,
@@ -530,10 +532,12 @@ def build_server(workspace: Workspace) -> Any:
         note: str = "",
         worker: str | None = None,
     ) -> dict:
-        from seekql.charts import ChartError, add_chart
+        from seekql.charts import ChartError, add_chart, chart_data, render_text
 
         try:
-            return add_chart(_session(session_id), qid, kind, x, y, title, note, worker)
+            s = _session(session_id)
+            spec = add_chart(s, qid, kind, x, y, title, note, worker)
+            return {**spec, "text": render_text(spec, chart_data(s, spec))}
         except (ChartError, FileNotFoundError, ValueError) as e:
             return _err(e)
 

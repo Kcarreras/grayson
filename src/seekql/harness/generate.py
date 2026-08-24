@@ -62,7 +62,9 @@ they are equivalent. Never query Snowflake except through seekql.
    (`seekql chart add <sid> --artifact q_0007 --kind line -x day -y null_rate
    --title "..." --note "what this shows"`). Charts appear live in the user's
    console and are traceable to the executed query — narrate the investigation
-   visually, especially for root-cause work.
+   visually, especially for root-cause work. The response's `text` field is a
+   terminal rendering of the same chart: paste it into your chat reply, inside a
+   code block, so the user sees the shape right in the conversation.
 4. Human input when needed: `seekql intervention request <sid> --kind label_sample ...`,
    then `seekql intervention await <sid> <iid> --timeout 600`. The user answers in the
    web console (`seekql ui serve`). When an answer settles a durable fact about a table

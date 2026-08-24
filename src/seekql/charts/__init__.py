@@ -9,6 +9,7 @@ from seekql.charts.spec import (
     get_chart,
     list_charts,
 )
+from seekql.charts.text import render_text
 
 __all__ = [
     "MAX_POINTS",
@@ -21,4 +22,5 @@ __all__ = [
     "get_chart",
     "list_charts",
     "render_svg",
+    "render_text",
 ]
