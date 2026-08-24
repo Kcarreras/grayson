@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "_relgraph.html" import relgraph %}
+{% block head %}{% if graph %}{% include "_graph_assets.html" %}{% endif %}{% endblock %}
 {% block title %}seekql — knowledge{% endblock %}
 {% block content %}
 <h1>Knowledge Library {{ help("knowledge") }}</h1>
@@ -23,6 +25,13 @@
   </div>
 {% endfor %}
 </div>
+{% endif %}
+
+{% if graph %}
+<h2>Schema map</h2>
+<p class="muted small" style="margin: -4px 0 10px;">Every relationship the library
+  knows about, laid out so nothing overlaps. Click a table to open its record.</p>
+{{ relgraph(graph, token, "relgraph-library", 520) }}
 {% endif %}
 
 <h2>Tables</h2>

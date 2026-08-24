@@ -174,6 +174,30 @@ details.inlinefold > summary::-webkit-details-marker { display: none; }
 .step + .step::before { content: ""; width: 22px; height: 1px; background: var(--border);
   margin: 0 8px; }
 
+/* ---- relationship canvas --------------------------------------------- */
+.relgraph { border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden; }
+.relgraph-bar { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft); background: var(--panel2); }
+.relgraph-stage { position: relative; height: var(--rg-h, 420px); }
+.relgraph-canvas { position: absolute; inset: 0; }
+/* The note sits under the canvas: it reads "Loading diagram" until the canvas
+   is up, then either disappears or carries the failure reason. */
+.relgraph-note { position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--muted); font-size: 12.5px;
+  pointer-events: none; padding: 0 20px; text-align: center; }
+.relgraph.ready .relgraph-note { display: none; }
+.relgraph.failed .relgraph-note { color: var(--attn); }
+.relgraph-tip { position: absolute; z-index: 4; max-width: 320px;
+  background: var(--panel3); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 7px 10px; font-size: 12px;
+  line-height: 1.5; color: var(--ink-2); pointer-events: none;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.relgraph-tip b { font-family: ui-monospace, Consolas, monospace; color: var(--ink); }
+.relgraph-legend { padding: 8px 12px; border-top: 1px solid var(--border-soft); }
+.attn-text { color: var(--attn); }
+
 /* ---- misc ------------------------------------------------------------ */
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .row.split { justify-content: space-between; }

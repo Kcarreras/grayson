@@ -1,0 +1,50 @@
+{# Relationship canvas + its no-JavaScript fallback.
+
+   The canvas is Cytoscape.js laid out by ELK (static/vendor). The table below
+   it is not a consolation prize: it is the accessible, copyable, searchable
+   form of the same data, and it is what remains if the canvas cannot render. #}
+{% macro relgraph(graph, token, dom_id="relgraph", height=420) %}
+<div class="relgraph" data-model="{{ dom_id }}-model"
+     data-href="/knowledge/__FQN__{% if token %}?t={{ token }}{% endif %}"
+     style="--rg-h: {{ height }}px;">
+  <div class="relgraph-bar">
+    <span class="faint small">{{ graph.nodes | length }} tables ·
+      {{ graph.edges | length }} relationships{% if graph.truncated %} ·
+      <span class="attn-text">{{ graph.truncated }} least-connected hidden</span>{% endif %}</span>
+    <span class="row" style="gap: 6px;">
+      <button type="button" class="btn ghost sm rg-labels" aria-pressed="{{ 'true' if graph.edge_labels else 'false' }}">{{ "Hide join keys" if graph.edge_labels else "Show join keys" }}</button>
+      <button type="button" class="btn ghost sm rg-flip">Left to right</button>
+      <button type="button" class="btn ghost sm rg-fit">Fit</button>
+    </span>
+  </div>
+  <div class="relgraph-stage">
+    <div class="relgraph-canvas"></div>
+    <div class="relgraph-tip" hidden></div>
+    <div class="relgraph-note">Laying out diagram…</div>
+  </div>
+  <div class="faint small relgraph-legend">
+    Drag to pan, scroll to zoom, click a table to open it. Dashed outline: not
+    described in the library yet. Dashed line: only one side declares it.
+  </div>
+  <script type="application/json" id="{{ dom_id }}-model">{{ graph | tojson }}</script>
+</div>
+
+<details class="fold" style="margin-top: 10px;">
+  <summary>Relationships as a table ({{ graph.edges | length }})</summary>
+  <div class="fold-body scroll">
+    <table>
+      <tr><th>From</th><th>To</th><th>On</th><th>Cardinality</th><th>Note</th></tr>
+      {% for e in graph.edges %}
+      <tr>
+        <td class="mono">{{ e.source }}</td>
+        <td class="mono">{{ e.target }}</td>
+        <td class="mono">{{ e.on or "—" }}</td>
+        <td class="muted small">{{ e.cardinality or "—" }}</td>
+        <td class="muted small">{{ e.note }}{% if not e.mutual %}<span class="faint">
+          declared by one side only</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</details>
+{% endmacro %}

@@ -1,0 +1,8 @@
+{# Vendored graph libraries. Included only by pages that draw a relationship
+   canvas - together they are ~2 MB, and most of the console never needs them.
+   Deferred so they never block first paint; ELK is a GWT-compiled bundle and
+   by far the heaviest, so it loads after Cytoscape. #}
+<script src="/static/vendor/cytoscape.min.js?v={{ asset_version }}" defer></script>
+<script src="/static/vendor/elk.bundled.js?v={{ asset_version }}" defer></script>
+<script src="/static/vendor/cytoscape-elk.js?v={{ asset_version }}" defer></script>
+<script src="/static/graph.js?v={{ asset_version }}" defer></script>

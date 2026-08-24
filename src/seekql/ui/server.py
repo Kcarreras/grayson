@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
+from seekql import __version__
 from seekql.core import engine
 from seekql.core.engine import EnforcementError
 from seekql.core.session import STAGES, Session
@@ -28,6 +29,7 @@ from seekql.ui.format import GLOSSARY, relationship_graph, split_sections
 from seekql.workspace import Workspace
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 _COOKIE = "seekql_token"
 
 
@@ -45,17 +47,21 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     templates.env.globals["token"] = token or ""
     templates.env.globals["help"] = _help_widget
     templates.env.globals["stages"] = STAGES
+    templates.env.globals["asset_version"] = __version__
     templates.env.filters["sections"] = split_sections
 
     def _valid(supplied: str | None) -> bool:
         return bool(supplied) and secrets.compare_digest(supplied, token)
 
-    def _check(request: Request) -> None:
+    def _host_check(request: Request) -> None:
         # Host allowlist defeats DNS-rebinding (a malicious hostname resolving to
         # 127.0.0.1): the browser sends that hostname in Host, which we reject.
         host = (request.headers.get("host") or "").split(":")[0]
         if host and host not in {"127.0.0.1", "localhost", "::1", ""}:
             raise HTTPException(status_code=403, detail="unexpected Host header")
+
+    def _check(request: Request) -> None:
+        _host_check(request)
         # Accept the token from a cookie (set on first authenticated load) or the
         # query string, constant-time compared. The cookie keeps the secret out of
         # subsequent URLs (history/referrer). Loopback-bound; see docs/SECURITY.md.
@@ -79,6 +85,23 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         sep = "&" if "?" in path else "?"
         target = f"{path}{sep}t={token}" if token else path
         return RedirectResponse(url=target, status_code=303)
+
+    # Vendored JS/CSS. Deliberately not token-gated: these are public library
+    # files carrying no workspace data, and a <script src> issued before the
+    # session cookie exists would otherwise 403 and break the page. The Host
+    # allowlist still applies. Paths are resolved and confined to STATIC_DIR.
+    @app.get("/static/{path:path}")
+    def static_asset(request: Request, path: str) -> Any:
+        _host_check(request)
+        target = (STATIC_DIR / path).resolve()
+        if not target.is_relative_to(STATIC_DIR.resolve()) or not target.is_file():
+            raise HTTPException(status_code=404, detail="no such asset")
+        # Cached hard, but only ever fetched through a ?v=<version> URL, so an
+        # upgraded seekql asks for a different URL instead of being served a
+        # stale bundle until the cache expires.
+        immutable = request.query_params.get("v") == __version__
+        cache = "public, max-age=31536000, immutable" if immutable else "no-cache"
+        return FileResponse(target, headers={"Cache-Control": cache})
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request) -> Any:
@@ -117,6 +140,22 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         _set_cookie(response)  # subsequent navigation authenticates via cookie, not URL
         return response
 
+    def _library_docs(store: KnowledgeStore) -> dict[str, dict]:
+        """Every table doc, keyed by FQN.
+
+        The relationship canvas needs the whole library, not just the table being
+        viewed: a relationship only the *other* side declared is invisible from
+        here otherwise, and those one-sided declarations are exactly the gaps
+        worth showing.
+        """
+        docs: dict[str, dict] = {}
+        for fqn in store.all_tables():
+            try:
+                docs[fqn] = store.read(fqn)
+            except (OSError, ValueError):
+                continue
+        return docs
+
     # -- knowledge --------------------------------------------------------
 
     @app.get("/knowledge", response_class=HTMLResponse)
@@ -135,10 +174,19 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             rows.append(
                 {"table": fqn, "grain": doc.get("grain"), "completeness": completeness(doc)}
             )
+        # The map always shows the whole library, not the filtered subset: a
+        # search narrows the list you are reading, not the schema you are in.
+        graph = relationship_graph(_library_docs(store))
         return templates.TemplateResponse(
             request,
             "knowledge.html",
-            {"nav": "knowledge", "tables": rows, "fact_hits": fact_hits, "q": q},
+            {
+                "nav": "knowledge",
+                "tables": rows,
+                "fact_hits": fact_hits,
+                "q": q,
+                "graph": graph,
+            },
         )
 
     @app.get("/knowledge/{fqn}", response_class=HTMLResponse)
@@ -156,7 +204,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "nav": "knowledge",
                 "doc": doc,
                 "comp": completeness(doc),
-                "graph": relationship_graph(doc["table"], doc.get("relationships") or []),
+                "graph": relationship_graph(
+                    {**_library_docs(store), doc["table"]: doc}, focus=doc["table"]
+                ),
             },
         )
 

@@ -9,13 +9,14 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from conftest import FakeExecutor
+from seekql import __version__
 from seekql.cli import app as cli_app
 from seekql.config import GuardSettings
 from seekql.core import engine, proposals
 from seekql.core.run import run_statement
 from seekql.core.session import Session
 from seekql.knowledge import KnowledgeStore
-from seekql.ui.format import split_sections
+from seekql.ui.format import relationship_graph, split_sections
 from seekql.ui.server import build_app
 
 runner = CliRunner()
@@ -129,8 +130,9 @@ def test_knowledge_tab_lists_and_searches(client, workspace):
     miss = client.get(f"/knowledge?t={TOKEN}&q=zzzznope")
     assert "Nothing matches" in miss.text
     detail = client.get(f"/knowledge/DB.S.T1?t={TOKEN}")
-    assert "<svg" in detail.text  # relationship diagram
-    assert "T2" in detail.text
+    assert "relgraph" in detail.text  # relationship canvas
+    assert "cytoscape.min.js" in detail.text and "elk.bundled.js" in detail.text
+    assert "DB.S.T2" in detail.text  # and in the table fallback below it
 
 
 def test_records_tab_and_viewer(client, rich_session):
@@ -165,3 +167,102 @@ def test_records_mcp_tools_registered(workspace, fake_snow_env):
     server = build_server(workspace)
     names = {getattr(t, "name", None) for t in asyncio.run(server.list_tools())}
     assert {"records_search", "records_get"} <= names
+
+
+# -- relationship canvas -------------------------------------------------
+
+
+def test_relationship_graph_merges_both_sides_and_marks_gaps():
+    docs = {
+        "DB.S.ORDERS": {
+            "relationships": [
+                {"to": "DB.S.CUSTOMERS", "on": "CUSTOMER_ID", "cardinality": "many-to-one"},
+                {"to": "DB.S.SHIPMENTS", "on": "ORDER_ID"},
+            ]
+        },
+        # Declares the same relationship from the other side, with whitespace
+        # and case that must not defeat the merge.
+        "DB.S.CUSTOMERS": {
+            "relationships": [
+                {"to": "DB.S.ORDERS", "on": " customer_id ", "cardinality": "one-to-many"}
+            ]
+        },
+    }
+    g = relationship_graph(docs)
+    assert len(g["edges"]) == 2  # not 3: the reciprocal pair is one relationship
+    by_target = {e["target"]: e for e in g["edges"]}
+    assert by_target["DB.S.CUSTOMERS"]["mutual"] is True
+    assert by_target["DB.S.SHIPMENTS"]["mutual"] is False  # only one side declared it
+    known = {n["id"]: n["known"] for n in g["nodes"]}
+    assert known["DB.S.ORDERS"] is True
+    assert known["DB.S.SHIPMENTS"] is False  # referenced but never described
+
+
+def test_relationship_graph_focus_is_a_neighbourhood():
+    docs = {
+        "DB.S.A": {"relationships": [{"to": "DB.S.B", "on": "K"}]},
+        "DB.S.B": {"relationships": [{"to": "DB.S.C", "on": "K2"}]},
+        "DB.S.C": {"relationships": [{"to": "DB.S.D", "on": "K3"}]},
+    }
+    g = relationship_graph(docs, focus="DB.S.B")
+    ids = {n["id"] for n in g["nodes"]}
+    assert ids == {"DB.S.A", "DB.S.B", "DB.S.C"}  # D is two hops out
+    assert next(n for n in g["nodes"] if n["id"] == "DB.S.B")["focus"] is True
+    assert relationship_graph(docs, focus="DB.S.NOTHING") is None
+    assert relationship_graph({"DB.S.A": {"relationships": []}}) is None
+
+
+def test_relationship_graph_truncates_least_connected_first():
+    docs = {"DB.S.HUB": {"relationships": [{"to": f"DB.S.T{i}", "on": "K"} for i in range(10)]}}
+    g = relationship_graph(docs, max_nodes=4)
+    assert g["truncated"] == 7  # 11 nodes down to 4
+    assert "DB.S.HUB" in {n["id"] for n in g["nodes"]}  # the hub survives
+    assert all(e["source"] in {n["id"] for n in g["nodes"]} for e in g["edges"])
+
+
+def test_graph_assets_are_vendored_and_served(client):
+    for asset in (
+        "vendor/cytoscape.min.js",
+        "vendor/elk.bundled.js",
+        "vendor/cytoscape-elk.js",
+        "graph.js",
+    ):
+        r = client.get(f"/static/{asset}")
+        assert r.status_code == 200 and len(r.content) > 100
+    # Public library files, so no token needed - but no traversal either.
+    assert client.get("/static/../server.py").status_code in (404, 400)
+    assert client.get("/static/nope.js").status_code == 404
+
+
+def test_assets_only_cached_hard_when_version_stamped(client):
+    # A year-long cache is only safe on the URL the current build asks for;
+    # otherwise an upgraded seekql would keep serving the old bundle.
+    stamped = client.get(f"/static/graph.js?v={__version__}")
+    assert "immutable" in stamped.headers["cache-control"]
+    assert client.get("/static/graph.js").headers["cache-control"] == "no-cache"
+    assert client.get("/static/graph.js?v=0.0.0").headers["cache-control"] == "no-cache"
+
+
+def test_hostile_library_content_cannot_inject_script(client, workspace):
+    # Relationship fields are written by agents; the canvas payload and the
+    # fallback table both render them, and neither may emit live markup.
+    store = KnowledgeStore(workspace.knowledge_dir)
+    store.set_profile(
+        "DB.S.EVIL",
+        {"relationships": [{"to": "DB.S.T2", "on": "<img src=x onerror=alert(1)>"}]},
+    )
+    page = client.get(f"/knowledge/DB.S.EVIL?t={TOKEN}").text
+    assert "<img src=x" not in page  # nowhere in the document as live markup
+    payload = page.split('id="relgraph-table-model">')[1].split("</script>")[0]
+    assert "<" not in payload  # so it cannot break out of the script element
+    # ...while still carrying the real value through to the canvas.
+    edge = json.loads(payload)["edges"][0]
+    assert edge["on"] == "<img src=x onerror=alert(1)>"
+    assert "&lt;img src=x" in page  # fallback table, escaped by autoescape
+
+
+def test_library_map_on_the_knowledge_tab(client, workspace):
+    store = KnowledgeStore(workspace.knowledge_dir)
+    store.set_profile("DB.S.T1", {"relationships": [{"to": "DB.S.T2", "on": "ID"}]})
+    page = client.get(f"/knowledge?t={TOKEN}")
+    assert "Schema map" in page.text and "relgraph-library" in page.text

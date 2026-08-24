@@ -419,7 +419,9 @@ per-launch session token in the URL. v1 views:
 - No credential storage or handling (delegated to Snowflake CLI).
 - Subprocess calls use argument vectors; no shell interpolation of agent input.
 - Guard is default-deny by statement type; audit log is append-only.
-- UI binds to loopback only; token-gated; no external assets (works offline).
+- UI binds to loopback only; token-gated; no remote assets (works offline). Its
+  one asset bundle - Cytoscape.js + ELK for the relationship canvas - is vendored
+  under `ui/static/vendor` and served from loopback; no CDN, no build step.
 - Workspace writes are confined to the workspace; seekql never edits files outside it.
 - All file reads/writes validate paths against the workspace root (no traversal).
 - Dependencies pinned via `uv.lock`; small, well-known set.
