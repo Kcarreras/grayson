@@ -67,6 +67,33 @@ def test_rename_session_via_ui(client, session):
     assert session.get_meta("title") == "NULL email regression"
 
 
+def test_query_detail_page_highlights_sql(client, session):
+    from grayson.core.run import run_statement
+
+    run_statement(session, "SELECT a FROM DB.S.T1 WHERE b = 'x' -- why", executor=FakeExecutor())
+    r = client.get(f"/session/{session.id}/query/q_0001?t={TOKEN}")
+    assert r.status_code == 200
+    assert '<span class="sql-k">SELECT</span>' in r.text
+    assert '<span class="sql-c">-- why</span>' in r.text
+    # the session page links the qid chip and carries the SQL as hover text
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert f"/session/{session.id}/query/q_0001" in page
+    assert client.get(f"/session/{session.id}/query/q_9999?t={TOKEN}").status_code == 404
+
+
+def test_query_detail_escapes_hostile_sql(client, session):
+    from grayson.core.run import run_statement
+
+    run_statement(
+        session,
+        "SELECT '<script>alert(1)</script>' FROM DB.S.T1",
+        executor=FakeExecutor(),
+    )
+    r = client.get(f"/session/{session.id}/query/q_0001?t={TOKEN}")
+    assert "<script>alert(1)" not in r.text
+    assert "&lt;script&gt;" in r.text
+
+
 def test_unknown_session_404(client):
     assert client.get(f"/session/nope?t={TOKEN}").status_code == 404
 

@@ -4,6 +4,11 @@
    intervention form page deliberately has no refresh (it would clear input). #}
 {% block head %}{% if not error %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
 {% block content %}
+{# query chip: links to the query page; hover shows the SQL (first 300 chars) #}
+{% macro qc(qid) -%}
+<a class="chip" href="/session/{{ s.id }}/query/{{ qid }}?t={{ token }}"
+  title="{{ qsql.get(qid, '') }}">{{ qid }}</a>
+{%- endmacro %}
 <div class="row split">
   <div class="row">
     <h1>{{ s.title or s.id }}</h1>
@@ -71,7 +76,7 @@
     <b>{{ c.spec.title }}</b>
     <span class="row">
       <span class="badge plain">{{ c.spec.kind }}</span>
-      <span class="chip">{{ c.spec.qid }}</span>
+      {{ qc(c.spec.qid) }}
     </span>
   </div>
   {% if c.spec.y | length > 1 %}
@@ -116,7 +121,7 @@
   <td>{{ c.title }}<div class="faint mono small">{{ c.key }}</div></td>
   <td>{% if c.status == "complete" %}<span class="badge ok">complete</span>
       {% else %}<span class="badge todo">open</span>{% endif %}</td>
-  <td>{% for q in c.evidence %}<span class="chip">{{ q }}</span> {% endfor %}</td>
+  <td>{% for q in c.evidence %}{{ qc(q) }} {% endfor %}</td>
   <td class="muted small">{{ c.note or "" }}</td>
 </tr>
 {% endfor %}
@@ -145,7 +150,7 @@
   {% endif %}
   <div class="row" style="margin-top: 4px;">
     <span class="overline">Evidence</span>
-    {% for q in f.payload.evidence %}<span class="chip">{{ q }}</span>{% endfor %}
+    {% for q in f.payload.evidence %}{{ qc(q) }}{% endfor %}
   </div>
   {% if f.payload.proposed_remediation %}
   <details class="inlinefold" style="margin-top: 8px;">
@@ -210,8 +215,8 @@
       <span class="badge {{ 'ok' if p.verification.verdict == 'pass' else 'bad' }}">{{ p.verification.verdict }}</span>
       <span class="muted small">rows {{ p.verification.comparison.before.row_count }}
         → {{ p.verification.comparison.after.row_count }}
-        (<span class="chip">{{ p.verification.before_qid or p.verification.comparison.before.qid }}</span>
-        → <span class="chip">{{ p.verification.after_qid or p.verification.comparison.after.qid }}</span>)</span>
+        ({{ qc(p.verification.before_qid or p.verification.comparison.before.qid) }}
+        → {{ qc(p.verification.after_qid or p.verification.comparison.after.qid) }})</span>
     </div>
   {% endif %}
   {% if p.status == "proposed" %}
@@ -234,7 +239,7 @@
 <tr><th>Query</th><th>Status</th><th>Rows</th><th>ms</th>{% if has_worker %}<th>Worker</th>{% endif %}{% if has_label %}<th>Purpose {{ help("purpose") }}</th>{% endif %}</tr>
 {% for q in queries %}
 <tr>
-  <td class="mono">{{ q.qid }}</td>
+  <td class="mono">{{ qc(q.qid) }}</td>
   <td>{% if q.status == "executed" %}<span class="badge ok">executed</span>
       {% elif q.status == "rejected" %}<span class="badge bad">rejected</span>
       {% else %}<span class="badge attn">{{ q.status }}</span>{% endif %}
