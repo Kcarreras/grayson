@@ -5,9 +5,9 @@
   <img src="docs/img/wordmark_light.svg" alt="grayson" width="336">
 </picture>
 
-**The sidekick your warehouse deserves.**
+**Guarded SQL rails for agentic data investigation.**
 
-Guarded SQL rails for agentic, open-ended data investigation — Snowflake-first.
+Read-only by parser · claims gated on executed queries · humans at every boundary.
 
 [![python](https://img.shields.io/badge/python-3.12+-0aa5b5)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-8b939b)](LICENSE)
@@ -17,9 +17,9 @@ Guarded SQL rails for agentic, open-ended data investigation — Snowflake-first
 
 ---
 
-Your agent — in Cursor, Claude Code, Codex, or any harness — is the detective;
-it supplies the analysis. grayson is the sidekick: it carries the kit and keeps
-the case file — guarded read-only warehouse access, sessions
+Your agent — in Cursor, Claude Code, Codex, or any harness — supplies the
+analysis. grayson supplies the rails it runs on (Snowflake-first): guarded
+read-only warehouse access, sessions
 that cannot claim work without evidence, cached results with freshness tracking,
 live analysis charts, deterministic-check ingestion, a git-shared team knowledge
 library, and a human-in-the-loop web console.
@@ -274,11 +274,9 @@ grayson/
 
 ## Why "grayson"?
 
-Every detective story gives the sidekick the same job: carry the kit, keep the
-case file, and never let a claim into the record without evidence. That is this
-tool. And data quality is made of gray areas — is the NULL spike a bug or a
-backfill? grayson settles them the only way that counts: a query that actually
-ran, cited by id. Gray areas in, evidence out.
+Data quality is made of gray areas — is the NULL spike a bug or a backfill?
+grayson settles them the only way that counts: a query that actually ran,
+cited by id. Gray areas in, evidence out.
 
 ```
  __ _ _ _ __ _ _  _ ___ ___ _ _
