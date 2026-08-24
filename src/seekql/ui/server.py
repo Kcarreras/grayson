@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
 from seekql import __version__
+from seekql.checks import ChecksStore
 from seekql.core import engine
 from seekql.core.engine import EnforcementError
 from seekql.core.session import STAGES, Session
@@ -207,8 +208,105 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "graph": relationship_graph(
                     {**_library_docs(store), doc["table"]: doc}, focus=doc["table"]
                 ),
+                "table_checks": ChecksStore(workspace.checks_dir).summary([doc["table"]]),
             },
         )
+
+    # -- checks -----------------------------------------------------------
+
+    @app.get("/checks", response_class=HTMLResponse)
+    def checks_page(request: Request) -> Any:
+        _check(request)
+        return templates.TemplateResponse(
+            request,
+            "checks.html",
+            {"nav": "checks", "summary": ChecksStore(workspace.checks_dir).summary()},
+        )
+
+    # -- settings ---------------------------------------------------------
+
+    def _settings_context(error: str | None = None) -> dict:
+        from seekql.config_edit import config_summary
+        from seekql.library import library_status
+
+        workspace.reload_config()
+        return {
+            "nav": "settings",
+            "cfg": config_summary(workspace.root),
+            "lib": library_status(workspace),
+            "error": error,
+        }
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request) -> Any:
+        _check(request)
+        return templates.TemplateResponse(request, "settings.html", _settings_context())
+
+    @app.post("/settings/general")
+    async def settings_general(request: Request) -> Any:
+        _check(request)
+        from seekql.config_edit import ConfigError, set_values
+
+        form = await request.form()
+        # Checkbox semantics: an unchecked box submits nothing, so each form
+        # names what it owns ('only') and absent checkboxes in scope mean false.
+        only = form.get("only")
+        changes: dict[str, object] = {}
+        if only == "auto_push":
+            changes["library.auto_push"] = form.get("auto_push") == "true"
+        else:
+            changes["connection.name"] = form.get("connection", "")
+            changes["defaults.guard_profile"] = form.get("guard_profile", "")
+            changes["scopes.strict"] = form.get("strict") == "true"
+            changes["scopes.allowed"] = form.get("allowed", "")
+        try:
+            set_values(workspace.root, changes)
+        except ConfigError as e:
+            return templates.TemplateResponse(
+                request, "settings.html", _settings_context(error=str(e)), status_code=400
+            )
+        return _redirect("/settings")
+
+    @app.post("/settings/profile/{name}")
+    async def settings_profile(request: Request, name: str) -> Any:
+        _check(request)
+        from seekql.config_edit import ConfigError, set_guard_profile
+
+        form = await request.form()
+        try:
+            updates = {
+                key: int(form.get(key))
+                for key in ("auto_limit", "timeout_seconds", "budget_warn", "budget_cap")
+                if form.get(key) not in (None, "")
+            }
+            set_guard_profile(workspace.root, name, updates)
+        except (ConfigError, ValueError) as e:
+            return templates.TemplateResponse(
+                request, "settings.html", _settings_context(error=str(e)), status_code=400
+            )
+        return _redirect("/settings")
+
+    @app.post("/settings/library/{action}")
+    def settings_library(request: Request, action: str) -> Any:
+        _check(request)
+        from seekql.library import library_pull, push_library
+
+        if action == "pull":
+            result = library_pull(workspace)
+        elif action == "push":
+            result = push_library(workspace, "seekql: library update (console)")
+        else:
+            raise HTTPException(status_code=400, detail="action must be pull or push")
+        if not result.get("ok"):
+            return templates.TemplateResponse(
+                request,
+                "settings.html",
+                _settings_context(
+                    error=f"library {action} failed: {result.get('detail') or result.get('output')}"
+                ),
+                status_code=400,
+            )
+        return _redirect("/settings")
 
     # -- records ----------------------------------------------------------
 
@@ -240,6 +338,20 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             {"nav": "records", "session_id": sid, "kind": kind, "record": item["record"]},
         )
 
+    def _charts_context(s: Session, limit: int = 24) -> list[dict]:
+        """Rendered charts, newest first — the visual trail of the analysis."""
+        from seekql.charts import chart_data, list_charts, render_svg
+
+        out = []
+        for spec in reversed(list_charts(s)[-limit:]):
+            try:
+                data = chart_data(s, spec)
+                svg = render_svg(spec, data)
+            except (OSError, ValueError, KeyError):
+                continue
+            out.append({"spec": spec, "data": data, "svg": Markup(svg)})
+        return out
+
     def _session_context(s: Session, error: str | None = None) -> dict:
         return {
             "nav": "sessions",
@@ -251,6 +363,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "proposals": s.proposals(),
             "queries": s.query_log(100),
             "events": s.events(40),
+            "charts": _charts_context(s),
             "error": error,
         }
 

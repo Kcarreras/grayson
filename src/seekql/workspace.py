@@ -40,6 +40,9 @@ class Workspace:
         (path / "knowledge").mkdir(exist_ok=True)
         (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
         (path / "workflows").mkdir(exist_ok=True)
+        from seekql.checks import scaffold_checks_dir
+
+        scaffold_checks_dir(path / "checks")
         registry = path / "views" / "registry.yaml"
         if not registry.exists():
             registry.write_text(REGISTRY_TEMPLATE, encoding="utf-8")
@@ -59,6 +62,11 @@ class Workspace:
         if self._config is None:
             self._config = WorkspaceConfig.load(self.root / CONFIG_FILENAME)
         return self._config
+
+    def reload_config(self) -> WorkspaceConfig:
+        """Drop the cached config after an on-disk edit (Settings page, CLI)."""
+        self._config = None
+        return self.config
 
     @property
     def sessions_dir(self) -> Path:
@@ -94,3 +102,7 @@ class Workspace:
     @property
     def workflows_dir(self) -> Path:
         return self._library_root() / "workflows"
+
+    @property
+    def checks_dir(self) -> Path:
+        return self._library_root() / "checks"

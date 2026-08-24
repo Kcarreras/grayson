@@ -46,7 +46,10 @@ they are equivalent. Never query Snowflake except through seekql.
    `seekql knowledge set`. If a target has no recorded knowledge at all, settle
    grain/semantics with the user early — or run the `table-onboarding` workflow first.
    Before diagnosing from scratch, check `seekql records search <term>`: a similar
-   problem may already have a diagnosed cause and a verified fix on record.
+   problem may already have a diagnosed cause and a verified fix on record. Also
+   check external deterministic checks (`seekql checks status --table ...`, echoed
+   at session start): a failing Airflow/dbt check on a target table is a pre-vetted
+   lead — replicate it with a guarded query first, then widen the investigation.
 2. Start: `seekql session start --workflow <name> --table DB.SCHEMA.TABLE ...`. Review
    the returned view coverage — reuse existing QA views, ask the user to create/refresh
    any the setup flags. Note the session id; use it in every later command.
@@ -54,6 +57,14 @@ they are equivalent. Never query Snowflake except through seekql.
    check the cache (`seekql cache find <sid> --table ... --check-freshness`). Complete
    each required checkpoint with evidence:
    `seekql checkpoint complete <sid> <key> --evidence q_0003,q_0007 --note "..."`.
+   Make your reasoning visible as you go: whenever a cached result shows a trend,
+   distribution, or comparison worth seeing, build a chart from it
+   (`seekql chart add <sid> --artifact q_0007 --kind line -x day -y null_rate
+   --title "..." --note "what this shows"`). Charts appear live in the user's
+   console and are traceable to the executed query — narrate the investigation
+   visually, especially for root-cause work. The response's `text` field is a
+   terminal rendering of the same chart: paste it into your chat reply, inside a
+   code block, so the user sees the shape right in the conversation.
 4. Human input when needed: `seekql intervention request <sid> --kind label_sample ...`,
    then `seekql intervention await <sid> <iid> --timeout 600`. The user answers in the
    web console (`seekql ui serve`). When an answer settles a durable fact about a table

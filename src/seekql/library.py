@@ -15,7 +15,7 @@ from pathlib import Path
 from seekql.config import CONFIG_FILENAME
 from seekql.workspace import Workspace
 
-LIBRARY_ASSETS = ("knowledge", "views", "workflows")
+LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks")
 
 _REMOTE_RE = re.compile(r"^[\w.-]+@[\w.-]+:")  # scp-style git remote (git@host:org/repo)
 
@@ -27,6 +27,9 @@ def init_library(path: Path) -> Path:
     (path / "knowledge").mkdir(exist_ok=True)
     (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
     (path / "workflows").mkdir(exist_ok=True)
+    from seekql.checks import scaffold_checks_dir
+
+    scaffold_checks_dir(path / "checks")
     registry = path / "views" / "registry.yaml"
     if not registry.exists():
         registry.write_text("views: []\n", encoding="utf-8")
@@ -37,7 +40,8 @@ def init_library(path: Path) -> Path:
     if not readme.exists():
         readme.write_text(
             "# seekql team library\n\n"
-            "Shared knowledge, QA views, and workflow templates for seekql.\n"
+            "Shared knowledge, QA views, workflow templates, and external check "
+            "results for seekql.\n"
             "Link a workspace to a local clone of this repo via `[library] path` "
             "in its `seekql.toml`.\n",
             encoding="utf-8",
@@ -111,12 +115,30 @@ def link_library(
         action = "linked existing directory"
     init_library(target)  # idempotent: scaffold only what is missing
     set_library_config(workspace.root, target, auto_push)
-    return {
+    result = {
         "library": str(target),
         "action": action,
         "auto_push": auto_push,
         "next": "agents in this workspace now read and write the shared library",
     }
+    # A freshly created (empty) team repo: the scaffold we just wrote is the
+    # library's first commit — push it so teammates who link next get structure,
+    # not an empty clone. Only for clones seekql made (is_remote): a linked local
+    # path may carry unrelated uncommitted work that is not ours to commit.
+    if (
+        is_remote
+        and (target / ".git").exists()
+        and _git(target, "status", "--porcelain").stdout.strip()
+    ):
+        _git(target, "add", "-A")
+        commit = _git(target, "commit", "-m", "seekql: scaffold library structure")
+        push = _git(target, "push", "-u", "origin", "HEAD", timeout=120)
+        result["bootstrapped"] = {
+            "committed": commit.returncode == 0,
+            "pushed": push.returncode == 0,
+            "detail": (push.stdout + push.stderr).strip()[-300:],
+        }
+    return result
 
 
 def push_library(workspace: Workspace, message: str = "seekql: library update") -> dict:

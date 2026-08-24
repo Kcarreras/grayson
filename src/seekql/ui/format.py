@@ -103,6 +103,16 @@ GLOSSARY: dict[str, str] = {
         "from queries), user_confirmed (a human blessed it — agents can never "
         "set this themselves)."
     ),
+    "external_checks": (
+        "Deterministic checks your automation (Airflow, dbt, ...) runs on a "
+        "schedule, dropped into the library as JSON. Agents see failing checks "
+        "on their target tables at session start as pre-vetted leads."
+    ),
+    "charts": (
+        "Visuals the agent builds from cached query results as it works — each "
+        "chart is tied to an executed query id, so every picture is traceable "
+        "evidence, refreshed live as the analysis progresses."
+    ),
 }
 
 STAGES_ORDER = ["setup", "analysis", "synthesis", "review", "fixes", "verification", "closed"]
