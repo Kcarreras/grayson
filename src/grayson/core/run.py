@@ -103,6 +103,13 @@ def run_statement(
             )
         return out
 
+    # The first executed statement is analysis by definition — move the stage
+    # marker off "setup" here so the console tracks reality by code, not by
+    # hoping the agent remembers to advance. Later stages stay agent-declared
+    # (and review/fixes stay evidence-gated in advance_stage).
+    if session.stage == "setup":
+        session.set_stage("analysis", actor="system")
+
     snapshot = _last_altered_snapshot(session)
     captured = {t: snapshot[t] for t in verdict.tables if t in snapshot}
     # The warehouse statement has already run. If caching the result fails

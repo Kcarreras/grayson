@@ -8,6 +8,7 @@ only ever mutates state through the same core APIs the CLI uses.
 
 from __future__ import annotations
 
+import json
 import secrets
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from grayson.interventions.types import InterventionError
 from grayson.knowledge import KnowledgeStore, completeness
 from grayson.records import get_record, search_records
 from grayson.ui.format import GLOSSARY, relationship_graph, split_sections
+from grayson.ui.sqlhl import highlight_sql
 from grayson.workspace import Workspace
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -353,6 +355,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         return out
 
     def _session_context(s: Session, error: str | None = None) -> dict:
+        queries = s.query_log(100)
         return {
             "nav": "sessions",
             "s": s.summary(),
@@ -361,7 +364,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "findings": s.findings(),
             "interventions": s.interventions(),
             "proposals": s.proposals(),
-            "queries": s.query_log(100),
+            "queries": queries,
+            "qsql": {q["qid"]: q.get("sql_raw") or "" for q in queries},
             "events": s.events(40),
             "charts": _charts_context(s),
             "error": error,
@@ -371,6 +375,42 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     def session_detail(request: Request, sid: str) -> Any:
         _check(request)
         return templates.TemplateResponse(request, "session.html", _session_context(_session(sid)))
+
+    @app.get("/session/{sid}/query/{qid}", response_class=HTMLResponse)
+    def query_detail(request: Request, sid: str, qid: str) -> Any:
+        _check(request)
+        s = _session(sid)
+        row = s.query_row(qid)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no query '{qid}'")
+        executed = row.get("sql_executed")
+        return templates.TemplateResponse(
+            request,
+            "query.html",
+            {
+                "nav": "sessions",
+                "s": s.summary(),
+                "q": row,
+                "sql_html": highlight_sql(row.get("sql_raw") or ""),
+                # show the guard's rewrite (e.g. an injected LIMIT) only when
+                # it differs from what the agent submitted
+                "sql_exec_html": (
+                    highlight_sql(executed) if executed and executed != row.get("sql_raw") else None
+                ),
+                "q_tables": json.loads(row["tables_json"]) if row.get("tables_json") else [],
+                "q_warnings": json.loads(row["warnings"]) if row.get("warnings") else [],
+            },
+        )
+
+    @app.post("/session/{sid}/title")
+    async def session_rename(request: Request, sid: str) -> Any:
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        title = str(form.get("title", "")).strip()
+        s.set_meta("title", title)
+        s.log_event("user", "title_changed", {"title": title})
+        return _redirect(f"/session/{sid}")
 
     @app.get("/session/{sid}/intervention/{iid}", response_class=HTMLResponse)
     def intervention_detail(request: Request, sid: str, iid: str) -> Any:

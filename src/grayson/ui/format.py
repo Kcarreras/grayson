@@ -85,8 +85,15 @@ GLOSSARY: dict[str, str] = {
     ),
     "stage": (
         "Where the session is in its lifecycle: setup, analysis, synthesis, "
-        "review, fixes, verification, closed. Gates block review until "
-        "checkpoints are complete, and fixes until a finding is accepted."
+        "review, fixes, verification, closed. The first executed query moves "
+        "setup to analysis automatically; later stages are declared by the "
+        "agent as it works. Gates enforce the boundaries that matter: review "
+        "is blocked until required checkpoints are complete, and fixes until "
+        "you accept a finding — agents cannot force past either."
+    ),
+    "purpose": (
+        "The label the agent attached when running the query — its stated "
+        "reason, kept in the audit log. Columns with no values are hidden."
     ),
     "knowledge": (
         "The durable, team-shareable record of what tables mean: grain, column "

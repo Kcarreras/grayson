@@ -351,7 +351,8 @@ class Session:
             con.row_factory = sqlite3.Row
             rows = con.execute(
                 "SELECT qid, worker, ts, status, guard_rule, reason, duration_ms, "
-                "row_count, truncated, label, tables_json FROM queries "
+                "row_count, truncated, label, tables_json, "
+                "substr(sql_raw, 1, 300) AS sql_raw FROM queries "
                 "ORDER BY rowid DESC LIMIT ?",
                 (limit,),
             ).fetchall()

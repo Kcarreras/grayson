@@ -170,6 +170,13 @@ setup → analysis → synthesis → review → fixes → verification → close
 Any stage can loop back (verification failure → fixes/analysis). All transitions are
 recorded in the event log with actor (user / agent worker id) and timestamp.
 
+**Who moves the marker.** `setup → analysis` happens automatically when the first
+statement executes (actor `system`) — the stage strip tracks reality without relying
+on the agent. Every later transition is declared via `session advance`; the gates in
+§enforcement (checkpoints before review, an accepted finding before fixes) are checked
+on the *target* index, so declaring a late stage cannot skip them and agents cannot
+`--force` past them.
+
 **Parallelism.** Sessions are isolated by directory. Within a session, workers register
 (`grayson worker join`) and get an id; state mutations go through SQLite (WAL +
 busy-timeout) so concurrent workers never corrupt state. Queries, observations, and

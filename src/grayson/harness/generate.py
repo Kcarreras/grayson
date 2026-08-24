@@ -56,7 +56,9 @@ they are equivalent. Never query Snowflake except through grayson.
    refresh any the setup flags. Need another registered view later?
    `grayson views use <sid> <name>` brings it into scope. Note the session id; use it
    in every later command.
-3. Analyze: run guarded queries (`grayson query run <sid> --sql "..."`). Before querying,
+3. Analyze: run guarded queries (`grayson query run <sid> --sql "..." --label "why"`).
+   Always pass `--label`: a short purpose note ("replicate: dup order ids") that shows
+   up in the console's query log and the audit trail. Before querying,
    check the cache (`grayson cache find <sid> --table ... --check-freshness`). Complete
    each required checkpoint with evidence:
    `grayson checkpoint complete <sid> <key> --evidence q_0003,q_0007 --note "..."`.
@@ -86,8 +88,10 @@ they are equivalent. Never query Snowflake except through grayson.
    automatically — no separate registration step.
 7. Verify: re-run the anomaly/parity query and record before/after evidence:
    `grayson proposal verify <sid> <pid> --before q_0003 --after q_0050 --verdict pass`.
-8. Advance stages as you go (`grayson session advance <sid> --to review`); gates enforce
-   that evidence exists before review/fixes.
+8. Advance stages as you go (`grayson session advance <sid> --to review`) so the
+   console's stage strip tracks your progress. Your first executed query moves
+   setup to analysis automatically; every later transition is yours to declare,
+   and gates enforce that evidence exists before review/fixes.
 
 Run `grayson --help` (and `grayson <group> --help`) for the full command surface.
 """

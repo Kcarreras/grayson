@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}grayson — {{ q.qid }}{% endblock %}
+{% block content %}
+<div class="row split">
+  <h1 class="mono">{{ q.qid }}</h1>
+  <div>
+    {% if q.status == "executed" %}<span class="badge ok">executed</span>
+    {% elif q.status == "rejected" %}<span class="badge bad">rejected</span>
+    {% else %}<span class="badge attn">{{ q.status }}</span>{% endif %}
+  </div>
+</div>
+<div class="faint small"><a href="/session/{{ s.id }}?t={{ token }}">← {{ s.title or s.id }}</a></div>
+
+<div class="kv" style="margin-top: 14px;">
+  {% if q.label %}<div class="item"><b>Purpose</b> {{ q.label }}</div>{% endif %}
+  <div class="item"><b>Run at</b> <span class="mono">{{ q.ts }}</span></div>
+  {% if q.status == "executed" %}
+  <div class="item"><b>Rows</b> {{ q.row_count }}{% if q.truncated %} (capped){% endif %}</div>
+  <div class="item"><b>Warehouse time</b> {{ q.duration_ms }} ms</div>
+  {% endif %}
+  {% if q.worker %}<div class="item"><b>Worker</b> <span class="mono">{{ q.worker }}</span></div>{% endif %}
+  {% if q_tables %}<div class="item"><b>Tables</b> {{ q_tables | join(", ") }}</div>{% endif %}
+</div>
+
+{% if q.status == "rejected" %}
+<div class="banner" style="margin-top: 14px;">
+  Rejected by the guard{% if q.guard_rule %} — <span class="mono">{{ q.guard_rule }}</span>{% endif %}{% if q.reason %}: {{ q.reason }}{% endif %}
+</div>
+{% endif %}
+{% for w in q_warnings %}<div class="card attn small" style="margin-top: 10px;">{{ w }}</div>{% endfor %}
+
+<h2>Statement {% if q.status == "rejected" %}(as submitted — never executed){% endif %}</h2>
+<pre class="sql">{{ sql_html }}</pre>
+
+{% if sql_exec_html %}
+<h2>As executed (after guard rewrites)</h2>
+<pre class="sql">{{ sql_exec_html }}</pre>
+{% endif %}
+{% endblock %}
