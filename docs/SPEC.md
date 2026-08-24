@@ -76,6 +76,8 @@ calls an LLM.
 - `workflows/` — workflow templates, checkpoint definitions, findings schemas
 - `knowledge/` — knowledge library read/propose/confirm, provenance
 - `views/` — QA view library registry, coverage check, view proposals
+- `checks/` — external check results: validation, latest/summary, ingestion (§11b)
+- `charts/` — chart specs over cached artifacts + stdlib SVG rendering (§8a)
 - `interventions/` — structured human-input tasks (replaces CSV round-trips)
 - `proposals/` — fix proposals (file diffs and DDL snippets), approval state
 - `cli/` — Typer CLI (agent- and human-facing)
@@ -105,24 +107,27 @@ opened in the IDE alongside the user's SQL repos:
 │   ├── registry.yaml           # view name → purpose, source tables, base files, DDL path, created_at
 │   └── ddl/*.sql
 ├── workflows/                  # LIBRARY ASSET — workflow template overrides/custom types
+├── checks/                     # LIBRARY ASSET — external check results (Airflow, dbt, …)
 └── .seekql/                    # sessions & data
     └── sessions/<id>/
         ├── state.db            # SQLite (WAL): state machine, event log, locks
         ├── session.md          # human-readable session brief & status (generated)
         ├── queries/            # every executed statement: sql + result metadata
         ├── data/               # cached results (results.db + sidecars)  [gitignored]
+        ├── charts/             # chart specs built from cached artifacts (§8a)
         ├── interventions/      # tasks + structured responses
         ├── findings/           # findings docs (schema-validated)
         └── proposals/          # fix proposals + approval state
 ```
 
 `.seekql/sessions/*/data/` is gitignored; everything meant to compound over time
-(knowledge, views, workflows) is committed and merge-friendly (one file per table/view,
+(knowledge, views, workflows, checks) is committed and merge-friendly (one file per table/view,
 provenance inline).
 
 **Library assets** live in the workspace by default (**solo mode**). In **team mode**,
 `seekql.toml` declares a `[library]` pointer to a local clone of a shared library repo,
-and seekql resolves `knowledge/`, `views/`, `workflows/`, and shared guard profiles from
+and seekql resolves `knowledge/`, `views/`, `workflows/`, `checks/`, and shared guard
+profiles from
 there instead — see §11a.
 
 ## 5. Session lifecycle (state machine)
@@ -250,6 +255,24 @@ Every executed query's results are stored automatically:
   warehouse round-trips. Same guard posture: single SELECT only, artifact tables only,
   and the connection is opened read-only (SQLite `mode=ro`) as a second wall.
 
+## 8a. Analysis charts
+
+Agents make their analytical process *visible* as it happens. `seekql chart add`
+(MCP: `chart_add`) builds a chart — `bar`, `line`, or `scatter` — from a cached
+artifact: the spec (artifact id, column mapping, title, one-line read) is validated
+against the artifact's real shape (columns exist, measures are numeric) and stored in
+the session. The console renders charts server-side as dependency-free SVG on its
+live-refreshing session page, so the user watches the investigation's visual
+narrative build in near real time — and because the artifact is an executed query,
+every picture is traceable evidence (chart card shows the q_XXXX chip; a "plotted
+data" fold shows the exact rows drawn).
+
+Deterministic by construction: seekql draws exactly what the cited query returned —
+agents shape the data with SQL (`query run` / `cache query`), then chart the result.
+Up to 3 series per chart (the categorical palette validates colorblind-safe at three
+slots in both console themes); more dimensions means more charts, not more colors.
+`seekql chart render --out chart.svg` exports any chart standalone.
+
 ## 9. Workflows & checkpoints
 
 Workflow templates are data (YAML), not code — shipped defaults, overridable/extendable
@@ -352,7 +375,7 @@ Collaboration needs no server; it rides on git. Three kinds of repo, kept separa
    `uv tool install seekql` or `uvx --from git+https://github.com/Kcarreras/seekql seekql`.
    Never cloned into a workspace; it's software, not data.
 2. **A team library repo** — one per team, holding the compounding assets:
-   `knowledge/`, `views/`, `workflows/`, and shared guard profiles.
+   `knowledge/`, `views/`, `workflows/`, `checks/`, and shared guard profiles.
    `seekql library init` scaffolds a fresh one ready to push to the team's git host.
    Another team starting out scaffolds their own — or forks an existing team's library
    to seed from their knowledge.
@@ -365,6 +388,7 @@ Collaboration needs no server; it rides on git. Three kinds of repo, kept separa
    ```
 
 **Resolution**: with `[library]` set, seekql reads/writes knowledge, views, workflows,
+checks,
 and shared profiles in the library clone; session state and cached data stay in the
 personal workspace. Solo mode (no `[library]`) keeps everything in the workspace, and
 `seekql library extract` can later split the assets out into a new library repo when a
@@ -384,6 +408,34 @@ a team wants shared history); simultaneous view registration by two users reconc
 at merge time. If those ever become must-haves, a central service can be added behind
 the same file formats without reworking this architecture.
 
+## 11b. External checks library
+
+Teams already run scheduled deterministic checks outside seekql — Airflow DAGs, dbt
+tests, data-quality jobs. The `checks/` library asset makes those results agent
+context with zero coupling: automation dumps JSON files anywhere under `checks/`
+(single result, list, or `{"results": [...]}`; format documented in the scaffolded
+`checks/README.md`), and seekql reads, validates, and reports them. seekql never
+runs the checks; malformed entries are reported per-file without hiding the rest.
+
+- **Session-start surfacing** — `session start` returns `external_checks` for the
+  target tables: latest result per check, with failing checks carried in full
+  (details, metrics, and the check's own SQL) plus a hint telling the agent to
+  *replicate the failing checks first* — deterministic findings become pre-vetted
+  leads for the open-ended investigation (e.g. a bug-hunter session starts from
+  what the Airflow suite already caught).
+- **Overdue detection** — a result may declare `ttl_hours` (its expected cadence);
+  a latest run older than that is flagged overdue, so silently-stopped automation
+  is itself surfaced.
+- **Ingestion** — automation can write files directly, or pipe through
+  `seekql checks ingest <file|dir> [--source airflow]`, which validates, fills in
+  the source, folds results into `checks/ingested/<check_id>.json` (idempotent per
+  (check, run_at), history bounded), and auto-pushes when the library is configured
+  for it. With a linked team library, one teammate's check drops brief everyone's
+  agents at pull cadence.
+- **Surface** — `seekql checks status|list|show|ingest`, MCP `checks_status` /
+  `checks_show`, a Checks tab in the console, and per-table checks on each
+  knowledge page.
+
 ## 12. Web console (UI)
 
 FastAPI + server-rendered pages (Jinja2; no Node build chain), `127.0.0.1` only, with a
@@ -395,12 +447,15 @@ per-launch session token in the URL. v1 views:
    per-setting overrides), view pick-list with refresh flags, pending DDL to execute,
    base-file pointers.
 2. **Session detail** — checkpoints w/ evidence, live query log (statement, verdict,
-   rows, duration, worker), cached artifacts, event timeline.
+   rows, duration, worker), cached artifacts, event timeline, and the analysis-chart
+   gallery (§8a) refreshed on the page's live cycle.
 3. **Interventions inbox** — pending tasks; interactive labeling/confirmation forms.
 4. **Findings review** — rendered findings with evidence drill-down; accept per finding.
 5. **Proposals** — diffs/DDL rendered side-by-side with the finding they fix;
    approve/reject; verification results after rerun.
 6. **Knowledge** — browse/search; confirm or edit proposed facts.
+7. **Checks** — latest external check results (§11b): failures first with details
+   and check SQL, overdue automation flagged, per-table checks on knowledge pages.
 
 ## 13. Harness integration
 

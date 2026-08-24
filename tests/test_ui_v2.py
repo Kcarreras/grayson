@@ -266,3 +266,42 @@ def test_library_map_on_the_knowledge_tab(client, workspace):
     store.set_profile("DB.S.T1", {"relationships": [{"to": "DB.S.T2", "on": "ID"}]})
     page = client.get(f"/knowledge?t={TOKEN}")
     assert "Schema map" in page.text and "relgraph-library" in page.text
+
+
+def test_checks_tab_lists_and_flags(client, workspace):
+    (workspace.checks_dir / "airflow.json").write_text(
+        json.dumps(
+            [
+                {
+                    "check_id": "orders_null_email",
+                    "name": "orders: email not NULL",
+                    "status": "fail",
+                    "tables": ["DB.S.T1"],
+                    "run_at": "2026-08-24T06:00:00Z",
+                    "source": "airflow",
+                    "details": "812 rows with NULL email",
+                    "sql": "SELECT COUNT(*) FROM DB.S.T1 WHERE EMAIL IS NULL",
+                },
+                {
+                    "check_id": "orders_rowcount",
+                    "status": "pass",
+                    "tables": ["DB.S.T1"],
+                    "run_at": "2026-08-24T06:00:00Z",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    page = client.get(f"/checks?t={TOKEN}").text
+    assert "Failing now" in page
+    assert "orders: email not NULL" in page and "812 rows with NULL email" in page
+    assert "orders_rowcount" in page
+    # the table's knowledge page shows its checks too
+    table_page = client.get(f"/knowledge/DB.S.T1?t={TOKEN}").text
+    assert "External checks on this table" in table_page
+    assert "orders_null_email" in table_page
+
+
+def test_checks_tab_empty_state(client):
+    page = client.get(f"/checks?t={TOKEN}").text
+    assert "No external check results on file yet" in page

@@ -32,6 +32,29 @@
 <div class="card empty">No relationships mapped yet.</div>
 {% endif %}
 
+{% if table_checks and table_checks.checks %}
+<h2>External checks on this table {{ help("external_checks") }}</h2>
+<div class="card scroll">
+<table>
+<tr><th>Check</th><th>Status</th><th>Source</th><th>Last run</th></tr>
+{% for c in table_checks.checks %}
+<tr>
+  <td>{{ c.name }}<div class="faint mono small">{{ c.check_id }}</div></td>
+  <td>
+    {% if c.status == "pass" %}<span class="badge ok">pass</span>
+    {% elif c.status in ["fail", "error"] %}<span class="badge bad">{{ c.status }}</span>
+    {% elif c.status == "warn" %}<span class="badge attn">warn</span>
+    {% else %}<span class="badge plain">{{ c.status }}</span>{% endif %}
+    {% if c.overdue %}<span class="badge attn">overdue</span>{% endif %}
+  </td>
+  <td class="muted small">{{ c.source }}</td>
+  <td class="muted small mono">{{ c.run_at }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+
 {% if doc.columns %}
 <h2>Columns ({{ comp.columns_described }}/{{ comp.columns_total }} described)</h2>
 <div class="card scroll">

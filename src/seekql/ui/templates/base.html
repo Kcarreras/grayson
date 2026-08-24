@@ -11,6 +11,8 @@
   --bg: #0d1017; --panel: #131824; --panel2: #1a2130; --panel3: #202940;
   --border: #262e40; --border-soft: #1e2536;
   --ink: #e8ecf4; --ink-2: #b9c2d0; --muted: #8b94a6; --faint: #626c7e;
+  /* chart series: validated categorical slots, stepped for the dark surface */
+  --viz-s1: #3987e5; --viz-s2: #d95926; --viz-s3: #199e70;
   --act: #6ea8ff; --act-soft: rgba(110,168,255,.12);        /* interactive */
   --attn: #f0b429; --attn-soft: rgba(240,180,41,.10);       /* needs a human */
   --ok: #4ad295; --ok-soft: rgba(74,210,149,.10);           /* complete / verified */
@@ -22,6 +24,7 @@
     --bg: #f4f6f9; --panel: #ffffff; --panel2: #f1f3f7; --panel3: #e8ecf3;
     --border: #d7dce5; --border-soft: #e5e9f0;
     --ink: #1a1f29; --ink-2: #3d4554; --muted: #5d6675; --faint: #8a93a3;
+    --viz-s1: #2a78d6; --viz-s2: #eb6834; --viz-s3: #1baf7a;
     --act: #2563eb; --act-soft: rgba(37,99,235,.09);
     --attn: #b57900; --attn-soft: rgba(181,121,0,.09);
     --ok: #178a55; --ok-soft: rgba(23,138,85,.09);
@@ -73,6 +76,15 @@ main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .banner { padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 14px;
   border: 1px solid var(--bad); color: var(--bad); background: var(--bad-soft); }
+
+/* ---- charts ---------------------------------------------------------- */
+.chartgrid { display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); }
+.chartcard { margin-bottom: 0; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; display: inline-block; }
+.swatch.s1 { background: var(--viz-s1); }
+.swatch.s2 { background: var(--viz-s2); }
+.swatch.s3 { background: var(--viz-s3); }
 
 /* ---- stat tiles ------------------------------------------------------ */
 .tiles { display: grid; gap: 10px; margin: 14px 0 4px;
@@ -229,6 +241,7 @@ dl.props dd { margin: 0; color: var(--ink-2); }
     <a class="brand" href="/?t={{ token }}">seekql</a>
     <a class="tab {{ 'active' if nav == 'sessions' }}" href="/?t={{ token }}">Sessions</a>
     <a class="tab {{ 'active' if nav == 'knowledge' }}" href="/knowledge?t={{ token }}">Knowledge</a>
+    <a class="tab {{ 'active' if nav == 'checks' }}" href="/checks?t={{ token }}">Checks</a>
     <a class="tab {{ 'active' if nav == 'records' }}" href="/records?t={{ token }}">Records</a>
   </nav>
 </div></header>

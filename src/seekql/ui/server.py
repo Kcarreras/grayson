@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
 from seekql import __version__
+from seekql.checks import ChecksStore
 from seekql.core import engine
 from seekql.core.engine import EnforcementError
 from seekql.core.session import STAGES, Session
@@ -207,7 +208,19 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "graph": relationship_graph(
                     {**_library_docs(store), doc["table"]: doc}, focus=doc["table"]
                 ),
+                "table_checks": ChecksStore(workspace.checks_dir).summary([doc["table"]]),
             },
+        )
+
+    # -- checks -----------------------------------------------------------
+
+    @app.get("/checks", response_class=HTMLResponse)
+    def checks_page(request: Request) -> Any:
+        _check(request)
+        return templates.TemplateResponse(
+            request,
+            "checks.html",
+            {"nav": "checks", "summary": ChecksStore(workspace.checks_dir).summary()},
         )
 
     # -- records ----------------------------------------------------------
@@ -240,6 +253,20 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             {"nav": "records", "session_id": sid, "kind": kind, "record": item["record"]},
         )
 
+    def _charts_context(s: Session, limit: int = 24) -> list[dict]:
+        """Rendered charts, newest first — the visual trail of the analysis."""
+        from seekql.charts import chart_data, list_charts, render_svg
+
+        out = []
+        for spec in reversed(list_charts(s)[-limit:]):
+            try:
+                data = chart_data(s, spec)
+                svg = render_svg(spec, data)
+            except (OSError, ValueError, KeyError):
+                continue
+            out.append({"spec": spec, "data": data, "svg": Markup(svg)})
+        return out
+
     def _session_context(s: Session, error: str | None = None) -> dict:
         return {
             "nav": "sessions",
@@ -251,6 +278,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "proposals": s.proposals(),
             "queries": s.query_log(100),
             "events": s.events(40),
+            "charts": _charts_context(s),
             "error": error,
         }
 

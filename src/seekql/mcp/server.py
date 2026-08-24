@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from seekql.cache.local import LocalQueryError, query_artifacts
+from seekql.checks import ChecksStore
 from seekql.core import engine
 from seekql.core import proposals as proposals_engine
 from seekql.core.engine import EnforcementError
@@ -31,6 +32,10 @@ run guarded queries (only SELECT/SHOW/DESCRIBE/EXPLAIN survive), close each requ
 checkpoint citing executed query ids as evidence, record findings against the schema,
 request human interventions when judgment is needed, then propose fixes and verify them
 with before/after evidence. seekql enforces the rails; you supply the analysis.
+Failing external checks returned at session start (external_checks) are pre-vetted
+leads — replicate them first. Narrate the investigation visually: chart_add builds
+bar/line/scatter charts from cached artifacts that render live in the user's console,
+each traceable to its executed query.
 If a target table has no recorded knowledge, settle grain/semantics with the user early
 (or run the table-onboarding workflow), and persist durable intervention answers with
 knowledge_add so future sessions start briefed.
@@ -128,6 +133,7 @@ def build_server(workspace: Workspace) -> Any:
         knowledge = KnowledgeStore(workspace.knowledge_dir)
         facts = {t: knowledge.read(t)["facts"] for t in tables}
         gaps = sorted(t for t, f in facts.items() if not f)
+        external = ChecksStore(workspace.checks_dir).summary(tables or None)
         out = {
             "session": s.summary(),
             "required_checks": [c.model_dump() for c in tpl.required_checks],
@@ -135,13 +141,25 @@ def build_server(workspace: Workspace) -> Any:
             "view_coverage": ViewRegistry(workspace.views_dir).coverage_check(tables, current),
             "knowledge": facts,
             "knowledge_gaps": gaps,
+            "external_checks": external,
         }
+        hints = []
+        if external["failing"]:
+            ids = ", ".join(f["check_id"] for f in external["failing"])
+            hints.append(
+                f"{len(external['failing'])} external deterministic check(s) are FAILING "
+                f"on the target tables ({ids}) — pre-vetted leads: replicate each with a "
+                "guarded query first (their sql/details are in external_checks.failing), "
+                "then widen the investigation"
+            )
         if gaps:
-            out["hint"] = (
+            hints.append(
                 f"no recorded knowledge for {', '.join(gaps)} — confirm grain/semantics "
                 "with the user early (intervention), record durable answers with "
                 "knowledge_add, or run the table-onboarding workflow first"
             )
+        if hints:
+            out["hint"] = "; ".join(hints)
         return out
 
     @mcp.tool(description="List sessions in this workspace.")
@@ -495,6 +513,50 @@ def build_server(workspace: Workspace) -> Any:
     )
     def views_check(tables: list[str]) -> dict:
         return ViewRegistry(workspace.views_dir).coverage_check(tables)
+
+    @mcp.tool(
+        description="Build a chart (bar|line|scatter) from a cached artifact; it renders "
+        "live in the user's console, traceable to the executed query. Aggregate/order "
+        "with SQL first, then chart the artifact. Up to 3 y columns (line/scatter); "
+        "bar takes one. Use charts to narrate the investigation visually."
+    )
+    def chart_add(
+        session_id: str,
+        qid: str,
+        kind: str,
+        x: str,
+        y: list[str],
+        title: str,
+        note: str = "",
+        worker: str | None = None,
+    ) -> dict:
+        from seekql.charts import ChartError, add_chart
+
+        try:
+            return add_chart(_session(session_id), qid, kind, x, y, title, note, worker)
+        except (ChartError, FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(description="List the charts built in a session.")
+    def chart_list(session_id: str) -> list[dict]:
+        from seekql.charts import list_charts
+
+        try:
+            return list_charts(_session(session_id))
+        except (FileNotFoundError, ValueError) as e:
+            return [_err(e)]
+
+    @mcp.tool(
+        description="External deterministic checks (Airflow, dbt, ...) on file in the "
+        "library: latest result per check, failures and overdue runs called out. "
+        "Failing checks on target tables are pre-vetted leads — replicate them first."
+    )
+    def checks_status(tables: list[str] | None = None) -> dict:
+        return ChecksStore(workspace.checks_dir).summary(tables)
+
+    @mcp.tool(description="One external check's run history, newest first.")
+    def checks_show(check_id: str) -> list[dict]:
+        return [r.model_dump() for r in ChecksStore(workspace.checks_dir).history(check_id)]
 
     return mcp
 

@@ -44,6 +44,14 @@ finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_arg
 intervention_app = typer.Typer(help="Human-in-the-loop tasks.", no_args_is_help=True)
 proposal_app = typer.Typer(help="Fix proposals and verification.", no_args_is_help=True)
 knowledge_app = typer.Typer(help="Team knowledge library.", no_args_is_help=True)
+checks_app = typer.Typer(
+    help="External deterministic checks (Airflow, dbt, ...) dropped into the library.",
+    no_args_is_help=True,
+)
+chart_app = typer.Typer(
+    help="Charts built from cached artifacts, rendered live in the console.",
+    no_args_is_help=True,
+)
 views_app = typer.Typer(help="QA view library.", no_args_is_help=True)
 library_app = typer.Typer(help="Team library repo linking.", no_args_is_help=True)
 harness_app = typer.Typer(help="Agent harness integration.", no_args_is_help=True)
@@ -62,6 +70,8 @@ app.add_typer(finding_app, name="finding")
 app.add_typer(intervention_app, name="intervention")
 app.add_typer(proposal_app, name="proposal")
 app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(checks_app, name="checks")
+app.add_typer(chart_app, name="chart")
 app.add_typer(views_app, name="views")
 app.add_typer(library_app, name="library")
 app.add_typer(harness_app, name="harness")
@@ -376,6 +386,9 @@ def session_start(
     knowledge = KnowledgeStore(ws.knowledge_dir)
     result["knowledge"] = {t: knowledge.read(t)["facts"] for t in tables}
     result["knowledge_gaps"] = sorted(t for t, facts in result["knowledge"].items() if not facts)
+    from seekql.checks import ChecksStore
+
+    result["external_checks"] = ChecksStore(ws.checks_dir).summary(tables or None)
     result["hints"] = [
         "human console (interventions, reviews, approvals): seekql ui serve",
         f'run a guarded query: seekql query run {session.id} -q "SELECT ..."',
@@ -387,6 +400,16 @@ def session_start(
             f"no recorded knowledge for {', '.join(result['knowledge_gaps'])} — confirm "
             "grain/semantics with the user early (intervention), record durable answers "
             "with `seekql knowledge add`, or run the table-onboarding workflow first",
+        )
+    failing = result["external_checks"]["failing"]
+    if failing:
+        ids = ", ".join(f["check_id"] for f in failing)
+        result["hints"].insert(
+            0,
+            f"{len(failing)} external deterministic check(s) are FAILING on the target "
+            f"tables ({ids}) — these are pre-vetted leads: replicate each with a guarded "
+            "query first (their `sql`/`details` are in external_checks.failing), then "
+            "widen the investigation",
         )
     emit(result)
 
@@ -646,6 +669,72 @@ def cache_query(
             "rows": [dict(zip(columns, r, strict=True)) for r in data],
         }
     )
+
+
+# -- charts --------------------------------------------------------------
+
+
+@chart_app.command("add")
+def chart_add(
+    session_id: str,
+    artifact: str = typer.Option(..., "--artifact", "-a", help="Cached artifact id (q_XXXX)."),
+    kind: str = typer.Option(..., "--kind", "-k", help="bar | line | scatter"),
+    x: str = typer.Option(..., "--x", "-x", help="Column for the x axis."),
+    y: list[str] = typer.Option(..., "--y", "-y", help="Measure column(s); up to 3."),
+    title: str = typer.Option(..., "--title", help="What the chart shows."),
+    note: str = typer.Option("", "--note", help="One-line read: what should the viewer see?"),
+    worker: str = typer.Option(None, "--worker"),
+) -> None:
+    """Build a chart from a cached artifact — it appears live in the console.
+
+    Aggregate/order the data with SQL first (query run or cache query), then
+    chart the resulting artifact. Every chart is traceable to its query id."""
+    from seekql.charts import ChartError, add_chart
+
+    s = _session(session_id)
+    try:
+        emit(add_chart(s, artifact, kind, x, list(y), title, note, worker))
+    except ChartError as e:
+        fail(str(e))
+
+
+@chart_app.command("list")
+def chart_list(session_id: str) -> None:
+    from seekql.charts import list_charts
+
+    emit(list_charts(_session(session_id)))
+
+
+@chart_app.command("show")
+def chart_show(session_id: str, chart_id: str) -> None:
+    """A chart's spec plus the exact points it plots."""
+    from seekql.charts import chart_data, get_chart
+
+    s = _session(session_id)
+    spec = get_chart(s, chart_id)
+    if spec is None:
+        fail(f"no chart '{chart_id}' in this session")
+        return
+    emit({**spec, "data": chart_data(s, spec)})
+
+
+@chart_app.command("render")
+def chart_render(
+    session_id: str,
+    chart_id: str,
+    out: Path = typer.Option(..., "--out", "-o", help="Destination .svg file."),
+) -> None:
+    """Export a chart as a standalone SVG file."""
+    from seekql.charts import chart_data, get_chart, render_svg
+
+    s = _session(session_id)
+    spec = get_chart(s, chart_id)
+    if spec is None:
+        fail(f"no chart '{chart_id}' in this session")
+        return
+    data = chart_data(s, spec)
+    out.write_text(render_svg(spec, data), encoding="utf-8")
+    emit({"written": str(out), "chart_id": chart_id, "points": len(data["points"])})
 
 
 # -- workflow ------------------------------------------------------------
@@ -1122,6 +1211,67 @@ def knowledge_set_files(table: str, files: list[str] = typer.Option(..., "--file
 @knowledge_app.command("search")
 def knowledge_search(term: str) -> None:
     emit(KnowledgeStore(_workspace().knowledge_dir).search(term))
+
+
+# -- checks --------------------------------------------------------------
+
+
+@checks_app.command("status")
+def checks_status(
+    tables: list[str] = typer.Option(
+        [], "--table", "-t", help="Only checks touching these tables."
+    ),
+) -> None:
+    """Latest result per external check, failures and overdue runs called out."""
+    from seekql.checks import ChecksStore
+
+    emit(ChecksStore(_workspace().checks_dir).summary(list(tables) or None))
+
+
+@checks_app.command("list")
+def checks_list(
+    tables: list[str] = typer.Option(
+        [], "--table", "-t", help="Only checks touching these tables."
+    ),
+) -> None:
+    """Latest run of every external check (full result payloads)."""
+    from seekql.checks import ChecksStore
+
+    emit(
+        [r.model_dump() for r in ChecksStore(_workspace().checks_dir).latest(list(tables) or None)]
+    )
+
+
+@checks_app.command("show")
+def checks_show(check_id: str) -> None:
+    """One check's run history, newest first."""
+    from seekql.checks import ChecksStore
+
+    runs = ChecksStore(_workspace().checks_dir).history(check_id)
+    if not runs:
+        fail(f"no runs on file for check '{check_id}'")
+        return
+    emit([r.model_dump() for r in runs])
+
+
+@checks_app.command("ingest")
+def checks_ingest(
+    path: Path = typer.Argument(..., help="A results JSON file, or a directory of them."),
+    source: str = typer.Option(None, "--source", help="Fill in 'source' where results omit it."),
+) -> None:
+    """Validate external check results and fold them into the library
+    (checks/ingested/, bounded history per check). Idempotent per (check, run_at)."""
+    from seekql.checks import ChecksStore, scaffold_checks_dir
+
+    ws = _workspace()
+    if not path.exists():
+        fail(f"path not found: {path}")
+        return
+    scaffold_checks_dir(ws.checks_dir)
+    out = ChecksStore(ws.checks_dir).ingest(path, source)
+    if out["ingested"]:
+        _attach_library_sync(out, ws, f"seekql checks: ingest {out['ingested']} result(s)")
+    emit(out)
 
 
 # -- views ---------------------------------------------------------------

@@ -23,6 +23,13 @@ rails:
   Migration/Parity, each with required checks and a findings schema.
 - **Result cache with freshness** — results are stored locally with source `LAST_ALTERED`
   captured, so agents know when to re-query.
+- **External checks as leads** — automation (Airflow, dbt tests, …) drops JSON check
+  results into the library's `checks/` folder; at session start agents see the failing
+  checks on their target tables as pre-vetted leads, with the check's own SQL to
+  replicate first.
+- **Live analysis charts** — agents build bar/line/scatter charts from cached query
+  results (`seekql chart add`); the console renders them live, each traceable to the
+  executed query behind it — a real-time visual of the investigation.
 - **Human-in-the-loop console** — a localhost web UI for labeling samples, answering
   agent questions, reviewing findings, and approving fixes.
 - **Team libraries** — knowledge (table semantics with provenance) and QA views live in a

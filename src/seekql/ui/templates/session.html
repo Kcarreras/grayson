@@ -51,6 +51,51 @@
 {% endfor %}
 {% endif %}
 
+{% if charts %}
+<h2>Analysis charts {{ help("charts") }}</h2>
+<div class="chartgrid">
+{% for c in charts %}
+<div class="card chartcard">
+  <div class="row split">
+    <b>{{ c.spec.title }}</b>
+    <span class="row">
+      <span class="badge plain">{{ c.spec.kind }}</span>
+      <span class="chip">{{ c.spec.qid }}</span>
+    </span>
+  </div>
+  {% if c.spec.y | length > 1 %}
+  <div class="row small" style="gap: 14px; margin: 4px 0 2px;">
+    {% for name in c.spec.y %}
+    <span class="row" style="gap: 5px;"><span class="swatch s{{ loop.index }}"></span>
+      <span class="ink2">{{ name }}</span></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div style="margin: 6px 0 2px;">{{ c.svg }}</div>
+  {% if c.spec.note %}<div class="muted small" style="margin-top: 4px;">{{ c.spec.note }}</div>{% endif %}
+  <div class="faint small" style="margin-top: 4px;">
+    {{ c.spec.x }} × {{ c.spec.y | join(", ") }}
+    {% if c.data.truncated %} · first {{ c.data.cap }} rows plotted{% endif %}
+    {% if c.spec.worker %} · {{ c.spec.worker }}{% endif %}
+    · {{ c.spec.created_at }}
+  </div>
+  <details class="inlinefold" style="margin-top: 6px;">
+    <summary>Plotted data ({{ c.data.points | length }} rows)</summary>
+    <div class="scroll" style="max-height: 260px;">
+    <table>
+    <tr><th>{{ c.spec.x }}</th>{% for name in c.spec.y %}<th class="num">{{ name }}</th>{% endfor %}</tr>
+    {% for p in c.data.points %}
+    <tr><td class="small">{{ p.x }}</td>
+      {% for v in p.y %}<td class="num small">{{ v if v is not none else "—" }}</td>{% endfor %}</tr>
+    {% endfor %}
+    </table>
+    </div>
+  </details>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
 <h2>Checkpoints {{ help("checkpoints") }}</h2>
 <div class="card scroll">
 <table>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -149,3 +150,28 @@ def test_evidence_enforced_via_mcp(server, workspace):
         {"session_id": sid, "key": "replicate_anomaly", "evidence": ["q_9999"]},
     )
     assert "error" in out
+
+
+def test_checks_via_mcp(server, workspace):
+    (workspace.checks_dir / "airflow.json").write_text(
+        json.dumps(
+            {
+                "check_id": "t1_dupes",
+                "status": "fail",
+                "tables": ["DB.S.T1"],
+                "run_at": "2026-08-24T06:00:00Z",
+                "sql": "SELECT 1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    names = _list_tools(server)
+    assert {"checks_status", "checks_show"} <= names
+    status = _call(server, "checks_status", {"tables": ["DB.S.T1"]})
+    assert [f["check_id"] for f in status["failing"]] == ["t1_dupes"]
+    history = _call(server, "checks_show", {"check_id": "t1_dupes"})
+    assert history[0]["sql"] == "SELECT 1"
+    # session start surfaces the failing check as a lead
+    started = _call(server, "session_start", {"workflow": "bug-hunter", "tables": ["DB.S.T1"]})
+    assert started["external_checks"]["failing"][0]["check_id"] == "t1_dupes"
+    assert "t1_dupes" in started.get("hint", "")
