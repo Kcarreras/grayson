@@ -94,5 +94,10 @@ def render_markdown(report: dict) -> str:
         "",
         f"Open checks remaining: {', '.join(ready['open_checks']) or 'none'}",
         "",
+        "---",
+        "",
+        "*grayson — guarded SQL rails for agentic data investigation. "
+        "Every figure above cites an executed query id from this session's audit log.*",
+        "",
     ]
     return "\n".join(lines)

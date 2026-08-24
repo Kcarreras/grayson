@@ -10,6 +10,7 @@ surfaces); text and grid always wear text/border tokens, never series color.
 from __future__ import annotations
 
 import math
+import re
 from xml.sax.saxutils import escape
 
 W, H = 640, 308
@@ -272,3 +273,32 @@ def render_svg(spec: dict, data: dict) -> str:
     else:
         _scatter(plot, points, y_names)
     return plot.svg()
+
+
+def brand_export(svg: str) -> str:
+    """Stamp the grayson wordmark onto a standalone export.
+
+    Console-embedded charts stay clean; only files that leave the console
+    (`chart render --out`) carry the mark. The canvas grows by a footer strip
+    so the mark never overlaps plotted data.
+    """
+    m = re.search(r'viewBox="0 0 (\d+) (\d+)"', svg)
+    if m is None:
+        return svg
+    w, h = int(m.group(1)), int(m.group(2))
+    grown = h + 24
+    svg = svg.replace(m.group(0), f'viewBox="0 0 {w} {grown}"', 1)
+    baseline = grown - 8
+    wing_x, wing_y = w - 16 - 46 - 22, baseline - 12
+    mark = (
+        f'<g transform="translate({wing_x},{wing_y}) scale(0.5)" '
+        'fill="var(--brand-accent, #23b8c8)">'
+        '<polygon points="2,8 15,20 15,25 4,13"/>'
+        '<polygon points="30,8 17,20 17,25 28,13"/></g>'
+        f'<text x="{w - 16}" y="{baseline}" text-anchor="end" '
+        'font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" '
+        'font-weight="600">'
+        '<tspan fill="var(--muted, #8b939b)">gray</tspan>'
+        '<tspan fill="var(--ink, #57606a)">son</tspan></text>'
+    )
+    return svg.replace("</svg>", mark + "</svg>")

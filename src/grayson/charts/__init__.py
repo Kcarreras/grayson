@@ -1,4 +1,4 @@
-from grayson.charts.render import SERIES_COLORS, render_svg
+from grayson.charts.render import SERIES_COLORS, brand_export, render_svg
 from grayson.charts.spec import (
     MAX_POINTS,
     MAX_SERIES,
@@ -22,5 +22,6 @@ __all__ = [
     "get_chart",
     "list_charts",
     "render_svg",
+    "brand_export",
     "render_text",
 ]
