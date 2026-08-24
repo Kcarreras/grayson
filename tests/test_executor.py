@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from seekql.executor.snow import classify_failure, metadata_query, parse_snow_json
+from grayson.executor.snow import classify_failure, metadata_query, parse_snow_json
 
 
 def test_parse_flat_rows():

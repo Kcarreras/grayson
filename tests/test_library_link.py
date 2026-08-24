@@ -7,8 +7,8 @@ import subprocess
 
 from typer.testing import CliRunner
 
-from seekql.cli import app
-from seekql.workspace import Workspace
+from grayson.cli import app
+from grayson.workspace import Workspace
 
 runner = CliRunner()
 
@@ -55,7 +55,7 @@ def test_link_clone_and_auto_push(workspace, tmp_path):
     added = invoke("knowledge", "add", "DB.S.T1", "--fact", "amounts are gross, not net")
     assert added["library_sync"]["ok"] is True
     log = _git("log", "--oneline", cwd=origin)
-    assert "seekql knowledge" in log.stdout
+    assert "grayson knowledge" in log.stdout
 
 
 def test_knowledge_set_profile_and_completeness(workspace):

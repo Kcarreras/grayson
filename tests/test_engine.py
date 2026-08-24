@@ -3,11 +3,11 @@ from __future__ import annotations
 import pytest
 
 from conftest import FakeExecutor
-from seekql.config import GuardSettings
-from seekql.core import engine
-from seekql.core.engine import EnforcementError
-from seekql.core.run import run_statement
-from seekql.core.session import Session
+from grayson.config import GuardSettings
+from grayson.core import engine
+from grayson.core.engine import EnforcementError
+from grayson.core.run import run_statement
+from grayson.core.session import Session
 
 
 @pytest.fixture

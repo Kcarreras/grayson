@@ -8,13 +8,13 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import FakeExecutor
-from seekql.cli import app as cli_app
-from seekql.core import engine
-from seekql.core import proposals as proposals_engine
-from seekql.core.proposals import ProposalError
-from seekql.core.run import run_statement
-from seekql.core.session import Session
-from seekql.views import ViewEntry, ViewRegistry
+from grayson.cli import app as cli_app
+from grayson.core import engine
+from grayson.core import proposals as proposals_engine
+from grayson.core.proposals import ProposalError
+from grayson.core.run import run_statement
+from grayson.core.session import Session
+from grayson.views import ViewEntry, ViewRegistry
 
 runner = CliRunner()
 
@@ -92,7 +92,7 @@ def test_session_start_scopes_matching_views_strict_mode(workspace, fake_snow_en
 
 
 def test_evidence_via_view_counts_for_checkpoints(workspace, registry):
-    from seekql.config import GuardSettings
+    from grayson.config import GuardSettings
 
     s = Session.create(
         workspace,
@@ -102,7 +102,7 @@ def test_evidence_via_view_counts_for_checkpoints(workspace, registry):
         guard_profile="moderate",
     )
     engine.seed_from_workflow(s)
-    from seekql.views import enter_session_scope
+    from grayson.views import enter_session_scope
 
     enter_session_scope(registry, s, ["DB.S.T1"])
     qid = run_statement(s, "SELECT * FROM V_T1_DAILY", executor=FakeExecutor())["qid"]
@@ -143,7 +143,7 @@ def _view_proposal_payload():
 
 
 def test_applied_view_proposal_autoregisters_and_scopes(workspace, fake_snow_env):
-    from seekql.config import GuardSettings
+    from grayson.config import GuardSettings
 
     s = Session.create(
         workspace,
@@ -172,7 +172,7 @@ def test_applied_view_proposal_autoregisters_and_scopes(workspace, fake_snow_env
 
 
 def test_unapproved_view_proposal_cannot_register(workspace):
-    from seekql.config import GuardSettings
+    from grayson.config import GuardSettings
 
     s = Session.create(
         workspace,
@@ -190,7 +190,7 @@ def test_unapproved_view_proposal_cannot_register(workspace):
 
 
 def test_bad_view_name_rejected_at_proposal_time(workspace):
-    from seekql.config import GuardSettings
+    from grayson.config import GuardSettings
 
     s = Session.create(
         workspace,
@@ -207,7 +207,7 @@ def test_bad_view_name_rejected_at_proposal_time(workspace):
 def test_mcp_views_use_and_freshness_param(workspace, fake_snow_env, registry):
     import asyncio
 
-    from seekql.mcp.server import build_server
+    from grayson.mcp.server import build_server
 
     server = build_server(workspace)
 

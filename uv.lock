@@ -228,6 +228,47 @@ wheels = [
 ]
 
 [[package]]
+name = "grayson-sql"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastapi" },
+    { name = "jinja2" },
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "sqlglot" },
+    { name = "typer" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.141.1" },
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "mcp", specifier = ">=2.0.0" },
+    { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "sqlglot", specifier = ">=30.17.0" },
+    { name = "typer", specifier = ">=0.27.1" },
+    { name = "uvicorn", specifier = ">=0.52.4" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -870,47 +911,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/aa/28/0c6dd865859c6d17bc8ccc34cb72b0e02d6c7eb25e8a1e22b5bea681e2c0/ruff-0.16.4-py3-none-win32.whl", hash = "sha256:312769988007aaeb8e189b443ccdd03c0e6374489e053467be6d96518ebff76e", size = 10021687, upload-time = "2026-08-20T17:43:52.281Z" },
     { url = "https://files.pythonhosted.org/packages/a3/03/e724450f621698117f9aa6dd241c94d0274ae96781378dc86745ae29f0e7/ruff-0.16.4-py3-none-win_amd64.whl", hash = "sha256:05d9d27a18c4bcbefada602480ec9e01e0bc949d432e0ced5df77edac195919c", size = 10567657, upload-time = "2026-08-20T17:43:54.78Z" },
     { url = "https://files.pythonhosted.org/packages/0e/fe/da8b9e1347696bb22120b77280ec5ce25d500ca5cb39d5ad6e5c18de19c1/ruff-0.16.4-py3-none-win_arm64.whl", hash = "sha256:a3a61621c9b6f6a89573e938a080e648f1695baa3f58570a3a707bc51ff65a21", size = 10451579, upload-time = "2026-08-20T17:43:57.135Z" },
-]
-
-[[package]]
-name = "seekql"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastapi" },
-    { name = "jinja2" },
-    { name = "mcp" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "sqlglot" },
-    { name = "typer" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.141.1" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "mcp", specifier = ">=2.0.0" },
-    { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "sqlglot", specifier = ">=30.17.0" },
-    { name = "typer", specifier = ">=0.27.1" },
-    { name = "uvicorn", specifier = ">=0.52.4" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]

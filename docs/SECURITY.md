@@ -1,6 +1,6 @@
 # Security posture & review log
 
-seekql runs agent-authored SQL against a production warehouse under the user's own
+grayson runs agent-authored SQL against a production warehouse under the user's own
 Snowflake role. The query guard is designed to be the airtight wall even when no
 read-only role is available. This document records the threat model and the adversarial
 reviews the code has passed.
@@ -8,11 +8,11 @@ reviews the code has passed.
 ## Threat model
 
 - **Adversary**: an agent (or prompt-injected content steering one) that submits SQL
-  through seekql, trying to write, run DDL, cause side effects, read outside the declared
+  through grayson, trying to write, run DDL, cause side effects, read outside the declared
   scope, exfiltrate data, or exhaust host resources.
 - **Trust boundary**: only the user, via chat, issues authoritative instructions. All SQL
   and all tool-observed content is data, never commands.
-- **seekql never handles credentials** — authentication is entirely Snowflake CLI's
+- **grayson never handles credentials** — authentication is entirely Snowflake CLI's
   responsibility (SSO/external-browser, key-pair, etc.).
 
 ## Layered defenses
@@ -54,7 +54,7 @@ were fixed in the same phase (regression tests in `tests/test_guard_hardening.py
 | 9 | low | `load_extension` not blocked in guard (only SQLite default) | Explicit denylist + `trusted_schema=OFF` |
 | 10 | low | Budget cap racy under concurrent workers (TOCTOU) | In-flight `pending` rows count toward budget |
 
-Two candidate findings were verified as **false positives** (the `SEEKQL_SNOW_CMD` env
+Two candidate findings were verified as **false positives** (the `GRAYSON_SNOW_CMD` env
 override is a documented test hook reading only from the environment; `ensure_within`
 path containment is sound) and one as a non-issue (guard depends on sqlglot/SQLite
 parsing, but the read-only connection and artifact allowlist make divergence
@@ -64,7 +64,7 @@ non-exploitable).
 
 A second multi-agent review targeted the state-mutating surfaces added after Phase 1:
 the evidence engine, proposals/verification, interventions, the web console, and the MCP
-server. Because seekql's whole value is keeping a *semi-trusted agent* honest, integrity
+server. Because grayson's whole value is keeping a *semi-trusted agent* honest, integrity
 gaps in the gates are treated as first-class security issues. 17 findings were confirmed
 and fixed (regressions in `tests/test_integrity_hardening.py` and additions to
 `tests/test_cache.py`, `tests/test_engine.py`, `tests/test_ui.py`):

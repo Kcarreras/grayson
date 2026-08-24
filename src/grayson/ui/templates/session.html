@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}grayson — {{ s.title or s.id }}{% endblock %}
+{# live view: refresh so agent activity appears without manual reloads. The
+   intervention form page deliberately has no refresh (it would clear input). #}
+{% block head %}{% if not error %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block content %}
+<div class="row split">
+  <h1>{{ s.title or s.id }}</h1>
+  <span class="badge act">{{ s.workflow }}</span>
+</div>
+<div class="faint mono small">{{ s.id }}</div>
+
+<div class="steps">
+  {% set reached = stages.index(s.stage) %}
+  {% for st in stages %}
+  <span class="step {{ 'now' if loop.index0 == reached else 'done' if loop.index0 < reached }}">
+    <span class="dot"></span>{{ st }}</span>
+  {% endfor %}
+  {{ help("stage") }}
+</div>
+
+<div class="tiles">
+  <div class="tile"><div class="num">{{ s.queries_executed }}</div><div class="lbl">Queries run</div></div>
+  <div class="tile">
+    <div class="num {{ 'ok' if readiness.checks_complete }}">{{ checkpoints | selectattr("status","equalto","complete") | list | length }}/{{ checkpoints | length }}</div>
+    <div class="lbl">Checkpoints</div></div>
+  <div class="tile"><div class="num">{{ findings | length }}</div>
+    <div class="lbl">Findings ({{ findings | selectattr("accepted") | list | length }} accepted)</div></div>
+  {% set open_iv = interventions | selectattr("status","equalto","open") | list %}
+  <div class="tile"><div class="num {{ 'attn' if open_iv }}">{{ open_iv | length }}</div>
+    <div class="lbl">Awaiting your input</div></div>
+</div>
+
+<div class="kv" style="margin: 12px 0;">
+  <div class="item"><b>Target tables</b> {{ s.targets | join(", ") or "—" }} {{ help("target_tables") }}</div>
+  <div class="item"><b>Guard profile</b> {{ s.guard_profile }} {{ help("guard_profile") }}</div>
+  <div class="item"><b>Strict scope</b> {{ "on" if s.strict_scope else "off" }} {{ help("strict_scope") }}</div>
+  <div class="item"><b>Created</b> <span class="mono">{{ s.created_at }}</span></div>
+</div>
+
+{% if open_iv %}
+<h2>Needs your input {{ help("interventions") }}</h2>
+{% for iv in open_iv %}
+<div class="card attn">
+  <div class="row split">
+    <b>{{ iv.title }}</b><span class="badge attn">{{ iv.kind }}</span>
+  </div>
+  {% if iv.prompt %}<div class="ink2 small" style="margin: 6px 0;">{{ iv.prompt }}</div>{% endif %}
+  <a class="btn" style="margin-top: 6px;" href="/session/{{ s.id }}/intervention/{{ iv.iid }}?t={{ token }}">Respond →</a>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if charts %}
+<h2>Analysis charts {{ help("charts") }}</h2>
+<div class="chartgrid">
+{% for c in charts %}
+<div class="card chartcard">
+  <div class="row split">
+    <b>{{ c.spec.title }}</b>
+    <span class="row">
+      <span class="badge plain">{{ c.spec.kind }}</span>
+      <span class="chip">{{ c.spec.qid }}</span>
+    </span>
+  </div>
+  {% if c.spec.y | length > 1 %}
+  <div class="row small" style="gap: 14px; margin: 4px 0 2px;">
+    {% for name in c.spec.y %}
+    <span class="row" style="gap: 5px;"><span class="swatch s{{ loop.index }}"></span>
+      <span class="ink2">{{ name }}</span></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div style="margin: 6px 0 2px;">{{ c.svg }}</div>
+  {% if c.spec.note %}<div class="muted small" style="margin-top: 4px;">{{ c.spec.note }}</div>{% endif %}
+  <div class="faint small" style="margin-top: 4px;">
+    {{ c.spec.x }} × {{ c.spec.y | join(", ") }}
+    {% if c.data.truncated %} · first {{ c.data.cap }} rows plotted{% endif %}
+    {% if c.spec.worker %} · {{ c.spec.worker }}{% endif %}
+    · {{ c.spec.created_at }}
+  </div>
+  <details class="inlinefold" style="margin-top: 6px;">
+    <summary>Plotted data ({{ c.data.points | length }} rows)</summary>
+    <div class="scroll" style="max-height: 260px;">
+    <table>
+    <tr><th>{{ c.spec.x }}</th>{% for name in c.spec.y %}<th class="num">{{ name }}</th>{% endfor %}</tr>
+    {% for p in c.data.points %}
+    <tr><td class="small">{{ p.x }}</td>
+      {% for v in p.y %}<td class="num small">{{ v if v is not none else "—" }}</td>{% endfor %}</tr>
+    {% endfor %}
+    </table>
+    </div>
+  </details>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+<h2>Checkpoints {{ help("checkpoints") }}</h2>
+<div class="card scroll">
+<table>
+<tr><th>Check</th><th>Status</th><th>Evidence {{ help("evidence") }}</th><th>Note</th></tr>
+{% for c in checkpoints %}
+<tr>
+  <td>{{ c.title }}<div class="faint mono small">{{ c.key }}</div></td>
+  <td>{% if c.status == "complete" %}<span class="badge ok">complete</span>
+      {% else %}<span class="badge plain">open</span>{% endif %}</td>
+  <td>{% for q in c.evidence %}<span class="chip">{{ q }}</span> {% endfor %}</td>
+  <td class="muted small">{{ c.note or "" }}</td>
+</tr>
+{% endfor %}
+{% if not checkpoints %}<tr><td colspan="4" class="muted">No checkpoints.</td></tr>{% endif %}
+</table>
+</div>
+
+<h2>Findings {{ help("findings") }}</h2>
+{% for f in findings %}
+<div class="card">
+  <div class="row split">
+    <b>{{ f.fid }} · {{ f.title }}</b>
+    <span class="row">
+      <span class="badge {{ 'bad' if f.severity in ['critical','high'] else 'attn' if f.severity == 'medium' else 'plain' }}">{{ f.severity }}</span>
+      <span class="badge plain">confidence: {{ f.confidence }}</span>
+      {% if f.accepted %}<span class="badge ok">accepted</span>{% endif %}
+    </span>
+  </div>
+  <div class="sections" style="margin: 6px 0;">{% for sec in f.payload.summary | sections %}
+    <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
+      <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
+  {% if f.payload.extra %}
+  <dl class="props">
+    {% for k, v in f.payload.extra.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}
+  </dl>
+  {% endif %}
+  <div class="row" style="margin-top: 4px;">
+    <span class="overline">Evidence</span>
+    {% for q in f.payload.evidence %}<span class="chip">{{ q }}</span>{% endfor %}
+  </div>
+  {% if f.payload.proposed_remediation %}
+  <details class="inlinefold" style="margin-top: 8px;">
+    <summary>Suggested remediation</summary>
+    <div class="sections">{% for sec in f.payload.proposed_remediation | sections %}
+      <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
+        <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
+  </details>
+  {% endif %}
+  {% if not f.accepted %}
+  <form class="inline" method="post" action="/session/{{ s.id }}/finding/{{ f.fid }}/accept?t={{ token }}">
+    <button class="btn secondary sm" style="margin-top: 10px;" type="submit">Accept finding</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+{% if not findings %}<div class="card empty">No findings recorded yet.</div>{% endif %}
+
+{% if proposals %}
+<h2>Fix proposals {{ help("proposals") }}</h2>
+{% for p in proposals %}
+<div class="card {{ 'attn' if p.status == 'proposed' }}">
+  <div class="row split">
+    <b>{{ p.pid }} · {{ p.title }}</b>
+    <span class="row">
+      <span class="badge plain">{{ "file diff" if p.kind == "file_diff" else "DDL for you to run" }}</span>
+      {% if p.status == "proposed" %}<span class="badge attn">awaiting decision</span>
+      {% elif p.status == "approved" %}<span class="badge act">approved</span>
+      {% elif p.status == "applied" %}<span class="badge act">applied</span>
+      {% elif p.status == "verified" %}<span class="badge ok">verified</span>
+      {% elif p.status == "verification_failed" %}<span class="badge bad">verification failed</span>
+      {% elif p.status == "rejected" %}<span class="badge bad">rejected</span>
+      {% else %}<span class="badge plain">{{ p.status }}</span>{% endif %}
+    </span>
+  </div>
+  {% if p.finding_fid %}<div class="faint small">addresses finding <span class="chip">{{ p.finding_fid }}</span></div>{% endif %}
+  {% if p.payload.rationale %}
+  <div class="sections">{% for sec in p.payload.rationale | sections %}
+    <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
+      <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
+  {% endif %}
+  {% if p.kind == "file_diff" %}
+    <div class="muted small mono">target file: {{ p.payload.target_file }}</div>
+    {% if p.payload.diff %}
+    <details class="inlinefold" style="margin-top: 6px;"><summary>Show diff</summary>
+      <pre>{{ p.payload.diff }}</pre></details>
+    {% endif %}
+    {% if p.payload.new_content %}
+    <details class="inlinefold" style="margin-top: 6px;">
+      <summary>Show full replacement content (this is what gets applied — review it, not just the diff)</summary>
+      <pre>{{ p.payload.new_content }}</pre></details>
+    {% endif %}
+  {% else %}
+    <details class="inlinefold" style="margin-top: 6px;"
+      {{ "open" if p.status == "proposed" }}>
+      <summary>Show DDL ({{ p.payload.ddl.splitlines() | length }} lines)</summary>
+      <pre>{{ p.payload.ddl }}</pre></details>
+  {% endif %}
+  {% if p.verification %}
+    <div class="row" style="margin-top: 8px;">
+      <span class="overline">Verification {{ help("verification") }}</span>
+      <span class="badge {{ 'ok' if p.verification.verdict == 'pass' else 'bad' }}">{{ p.verification.verdict }}</span>
+      <span class="muted small">rows {{ p.verification.comparison.before.row_count }}
+        → {{ p.verification.comparison.after.row_count }}
+        (<span class="chip">{{ p.verification.before_qid or p.verification.comparison.before.qid }}</span>
+        → <span class="chip">{{ p.verification.after_qid or p.verification.comparison.after.qid }}</span>)</span>
+    </div>
+  {% endif %}
+  {% if p.status == "proposed" %}
+  <div class="row" style="margin-top: 12px;">
+    <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}">
+      <button class="btn" type="submit">Approve</button></form>
+    <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/reject?t={{ token }}">
+      <button class="btn danger" type="submit">Reject</button></form>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+<h2>Query log {{ help("guard") }}</h2>
+<div class="card scroll">
+<table>
+<tr><th>Query</th><th>Status</th><th>Rows</th><th>ms</th><th>Worker</th><th>Purpose</th></tr>
+{% for q in queries %}
+<tr>
+  <td class="mono">{{ q.qid }}</td>
+  <td>{% if q.status == "executed" %}<span class="badge ok">executed</span>
+      {% elif q.status == "rejected" %}<span class="badge bad">rejected</span>
+      {% else %}<span class="badge attn">{{ q.status }}</span>{% endif %}
+      {% if q.guard_rule %}<div class="faint mono small">{{ q.guard_rule }}</div>{% endif %}</td>
+  <td class="num">{{ q.row_count if q.row_count is not none else "" }}{% if q.truncated %} <span class="faint">(capped)</span>{% endif %}</td>
+  <td class="num muted">{{ q.duration_ms or "" }}</td>
+  <td class="muted mono small">{{ q.worker or "" }}</td>
+  <td class="muted small">{{ q.label or "" }}</td>
+</tr>
+{% endfor %}
+{% if not queries %}<tr><td colspan="6" class="muted">No queries yet.</td></tr>{% endif %}
+</table>
+</div>
+
+<details class="fold">
+  <summary>Event log ({{ events | length }} recent)</summary>
+  <div class="fold-body scroll">
+  <table>
+  <tr><th>Time</th><th>Actor</th><th>Event</th></tr>
+  {% for e in events %}
+  <tr><td class="muted mono small">{{ e.ts }}</td><td class="mono small">{{ e.actor }}</td>
+      <td class="small">{{ e.type | replace("_", " ") }}</td></tr>
+  {% endfor %}
+  </table>
+  </div>
+</details>
+
+<details class="fold">
+  <summary>Set stage manually</summary>
+  <div class="fold-body">
+    <div class="muted small" style="margin: 8px 0 10px;">
+      Your control, not the agent's — it moves this session's stage directly and does not
+      instruct or prompt the agent. Gates apply: <i>review</i> needs all checkpoints
+      complete, <i>fixes</i> needs an accepted finding. <b>force</b> overrides the gates
+      (audited). Normally the agent advances stages itself as evidence accumulates.
+    </div>
+    <form class="row" method="post" action="/session/{{ s.id }}/advance?t={{ token }}">
+      <select name="to" style="width: auto;">
+        {% for st in stages[1:] %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
+      </select>
+      <label class="muted small" style="white-space: nowrap;">
+        <input type="checkbox" name="force" value="true"> force past gates</label>
+      <button class="btn secondary sm" type="submit">Set stage</button>
+    </form>
+  </div>
+</details>
+{% endblock %}

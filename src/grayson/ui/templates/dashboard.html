@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}grayson — sessions{% endblock %}
+{# live view: agents file interventions/findings while this page is open #}
+{% block head %}<meta http-equiv="refresh" content="10">{% endblock %}
+{% block content %}
+<h1>Sessions</h1>
+<div class="muted small">Supervise active investigations; review closed ones.</div>
+
+<div class="tiles">
+  <div class="tile"><div class="num">{{ active | length }}</div><div class="lbl">Active sessions</div></div>
+  <div class="tile"><div class="num {{ 'attn' if needs_input }}">{{ needs_input }}</div>
+    <div class="lbl">Awaiting your input</div></div>
+  <div class="tile"><div class="num">{{ total_findings }}</div><div class="lbl">Findings</div></div>
+  <div class="tile"><div class="num {{ 'attn' if pending_proposals }}">{{ pending_proposals }}</div>
+    <div class="lbl">Proposals to decide</div></div>
+</div>
+
+<h2>Active {{ help("stage") }}</h2>
+{% if not active %}
+<div class="card empty">No active sessions. Your agent starts one with
+  <code>grayson session start --workflow &lt;name&gt; --table DB.SCHEMA.TABLE</code>.</div>
+{% endif %}
+<div class="grid">
+{% for row in active %}
+{% set s = row.summary %}
+<div class="card {{ 'attn' if row.open_interventions or row.pending_proposals }}">
+  <div class="row split">
+    <a href="/session/{{ s.id }}?t={{ token }}"><b>{{ s.title or s.id }}</b></a>
+    <span class="badge act">{{ s.stage }}</span>
+  </div>
+  <div class="faint mono small" style="margin: 2px 0 10px;">{{ s.id }}</div>
+  <div class="row">
+    <span class="badge plain">{{ s.workflow }}</span>
+    {% if row.open_interventions %}
+      <span class="badge attn">{{ row.open_interventions }} question{{ "s" if row.open_interventions != 1 }} for you</span>{% endif %}
+    {% if row.pending_proposals %}
+      <span class="badge attn">{{ row.pending_proposals }} proposal{{ "s" if row.pending_proposals != 1 }} to decide</span>{% endif %}
+    {% if row.open_checks %}
+      <span class="badge plain">{{ row.open_checks }} checkpoint{{ "s" if row.open_checks != 1 }} open</span>
+    {% else %}<span class="badge ok">checks complete</span>{% endif %}
+    {% if row.findings %}<span class="badge plain">{{ row.findings }} finding{{ "s" if row.findings != 1 }}</span>{% endif %}
+  </div>
+  <div class="muted small" style="margin-top: 10px;">
+    {{ s.targets | join(", ") or "no target tables" }}</div>
+</div>
+{% endfor %}
+</div>
+
+{% if historical %}
+<details class="fold" style="margin-top: 26px;">
+  <summary>Closed sessions ({{ historical | length }})</summary>
+  <div class="fold-body scroll">
+  <table>
+    <tr><th>Session</th><th>Workflow</th><th>Target tables</th><th>Findings</th><th>Created</th></tr>
+    {% for row in historical %}
+    {% set s = row.summary %}
+    <tr>
+      <td><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a>
+        <div class="faint mono small">{{ s.id }}</div></td>
+      <td>{{ s.workflow }}</td>
+      <td class="muted small">{{ s.targets | join(", ") }}</td>
+      <td class="num">{{ row.findings }}</td>
+      <td class="muted mono small">{{ s.created_at }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+</details>
+{% endif %}
+{% endblock %}

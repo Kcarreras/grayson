@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% from "_relgraph.html" import relgraph %}
+{% block head %}{% include "_graph_assets.html" %}{% endblock %}
+{% block title %}grayson — {{ doc.table }}{% endblock %}
+{% block content %}
+<p class="small"><a href="/knowledge?t={{ token }}">← Knowledge Library</a></p>
+<div class="row split">
+  <h1 class="mono">{{ doc.table }}</h1>
+  {% if comp.base_complete %}<span class="badge ok">base complete</span>
+  {% else %}<span class="badge plain">{{ comp.missing | length }} gaps</span>{% endif %}
+  {{ help("base_descriptor") }}
+</div>
+{% if not comp.base_complete %}
+<div class="muted small">Still undescribed: {{ comp.missing | join(", ") | replace("_", " ") }}</div>
+{% endif %}
+
+<div class="kv" style="margin: 12px 0;">
+  {% if doc.grain %}<div class="item"><b>Grain</b> {{ doc.grain }}</div>{% endif %}
+  {% if doc.freshness %}<div class="item"><b>Freshness</b> {{ doc.freshness }}</div>{% endif %}
+  {% if doc.owners %}<div class="item"><b>Owners</b> {{ doc.owners | join(", ") }}</div>{% endif %}
+  {% if doc.definition_files %}
+    <div class="item"><b>Defined in</b> <span class="mono">{{ doc.definition_files | join(", ") }}</span></div>{% endif %}
+</div>
+
+{% if graph %}
+<h2>Relationships</h2>
+<p class="muted small" style="margin: -4px 0 10px;">This table and everything
+  directly related to it, including how those neighbours relate to each other.</p>
+{{ relgraph(graph, token, "relgraph-table", 440) }}
+{% else %}
+<h2>Relationships</h2>
+<div class="card empty">No relationships mapped yet.</div>
+{% endif %}
+
+{% if table_checks and table_checks.checks %}
+<h2>External checks on this table {{ help("external_checks") }}</h2>
+<div class="card scroll">
+<table>
+<tr><th>Check</th><th>Status</th><th>Source</th><th>Last run</th></tr>
+{% for c in table_checks.checks %}
+<tr>
+  <td>{{ c.name }}<div class="faint mono small">{{ c.check_id }}</div></td>
+  <td>
+    {% if c.status == "pass" %}<span class="badge ok">pass</span>
+    {% elif c.status in ["fail", "error"] %}<span class="badge bad">{{ c.status }}</span>
+    {% elif c.status == "warn" %}<span class="badge attn">warn</span>
+    {% else %}<span class="badge plain">{{ c.status }}</span>{% endif %}
+    {% if c.overdue %}<span class="badge attn">overdue</span>{% endif %}
+  </td>
+  <td class="muted small">{{ c.source }}</td>
+  <td class="muted small mono">{{ c.run_at }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if doc.columns %}
+<h2>Columns ({{ comp.columns_described }}/{{ comp.columns_total }} described)</h2>
+<div class="card scroll">
+<table>
+<tr><th>Column</th><th>Type</th><th>Description</th></tr>
+{% for c in doc.columns %}
+<tr>
+  <td class="mono">{{ c.name }}</td>
+  <td class="muted mono small">{{ c.type or "" }}</td>
+  <td class="{{ '' if c.description else 'faint' }}">{{ c.description or "not described yet" }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+
+<h2>Facts {{ help("fact_status") }}</h2>
+{% if not doc.facts %}<div class="card empty">No facts recorded yet.</div>{% endif %}
+{% for f in doc.facts %}
+<div class="card">
+  <div class="row split">
+    <span>{{ f.fact }}</span>
+    <span class="badge {{ 'ok' if f.status == 'user_confirmed' else 'act' if f.status == 'data_inferred' else 'plain' }}">{{ f.status | replace("_", " ") }}</span>
+  </div>
+  <div class="faint small" style="margin-top: 4px;">
+    {{ f.created_by }} · {{ f.created_at }}
+    {% if f.evidence %} · evidence: {% for q in f.evidence %}<span class="chip">{{ q }}</span> {% endfor %}{% endif %}
+    {% if f.confirmed_by %} · confirmed by {{ f.confirmed_by }}{% endif %}
+  </div>
+</div>
+{% endfor %}
+
+{% if doc.open_questions %}
+<h2>Open questions</h2>
+<div class="card">
+{% for oq in doc.open_questions %}
+  <div class="row" style="margin: 4px 0;"><span class="badge attn plain">?</span>
+    <span class="ink2">{{ oq }}</span></div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% if doc.notes %}
+<h2>Notes</h2>
+<div class="card ink2">{{ doc.notes }}</div>
+{% endif %}
+{% endblock %}

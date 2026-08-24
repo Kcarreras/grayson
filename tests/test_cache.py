@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from seekql.cache.local import LocalQueryError, query_artifacts
-from seekql.cache.store import CacheStore, compare_artifacts, staleness
+from grayson.cache.local import LocalQueryError, query_artifacts
+from grayson.cache.store import CacheStore, compare_artifacts, staleness
 
 ROWS = [{"ID": 1, "VAL": "a"}, {"ID": 2, "VAL": "b"}, {"ID": 3, "VAL": None}]
 

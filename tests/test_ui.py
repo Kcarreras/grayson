@@ -6,12 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import FakeExecutor
-from seekql.config import GuardSettings
-from seekql.core import engine
-from seekql.core.run import run_statement
-from seekql.core.session import Session
-from seekql.interventions import build_request
-from seekql.ui.server import build_app
+from grayson.config import GuardSettings
+from grayson.core import engine
+from grayson.core.run import run_statement
+from grayson.core.session import Session
+from grayson.interventions import build_request
+from grayson.ui.server import build_app
 
 TOKEN = "test-token"
 
@@ -124,7 +124,7 @@ def test_advance_gate_blocks_in_ui(client, session):
 
 
 def test_proposal_approve_via_ui(client, session):
-    from seekql.core import proposals
+    from grayson.core import proposals
 
     qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
     fid = engine.record_finding(

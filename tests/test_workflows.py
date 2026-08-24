@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
+from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
 
 EXPECTED = {
     "bug-hunter",

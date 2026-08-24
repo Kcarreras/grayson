@@ -9,10 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
-# seekql session state and cached warehouse data
-.seekql/
+# grayson session state and cached warehouse data
+.grayson/
 
-# a seekql workspace must not be initialized in the tool repo itself
-/seekql.toml
+# a grayson workspace must not be initialized in the tool repo itself
+/grayson.toml
 /knowledge/
 /views/

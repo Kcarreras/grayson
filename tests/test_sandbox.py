@@ -7,17 +7,17 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from seekql.cli import app
-from seekql.sandbox.executor import SandboxExecutor, sandbox_db_path
-from seekql.sandbox.seed import seed_sandbox
+from grayson.cli import app
+from grayson.sandbox.executor import SandboxExecutor, sandbox_db_path
+from grayson.sandbox.seed import seed_sandbox
 
 runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
 def _isolated_warehouse_store(tmp_path, monkeypatch):
-    # keep test warehouses out of the real ~/.seekql/sandboxes store
-    monkeypatch.setenv("SEEKQL_SANDBOX_DIR", str(tmp_path / "wh-store"))
+    # keep test warehouses out of the real ~/.grayson/sandboxes store
+    monkeypatch.setenv("GRAYSON_SANDBOX_DIR", str(tmp_path / "wh-store"))
 
 
 def invoke(*args):
@@ -35,7 +35,7 @@ def sandbox_ws(tmp_path, monkeypatch):
 
 def test_init_scaffolds_workspace_and_answer_key(sandbox_ws, tmp_path):
     root = tmp_path / "demo"
-    assert (root / "seekql.toml").is_file()
+    assert (root / "grayson.toml").is_file()
     assert (root / "SANDBOX_ANSWER_KEY.md").is_file()
     assert sandbox_db_path(root).is_file()
     # the warehouse must live OUTSIDE the workspace so agents cannot read it
@@ -186,10 +186,10 @@ def test_nested_workspace_init_refused(sandbox_ws, tmp_path):
 
 
 def test_legacy_warehouse_migrates_to_store(sandbox_ws, tmp_path):
-    # simulate a workspace seeded by a pre-relocation version: warehouse inside .seekql
+    # simulate a workspace seeded by a pre-relocation version: warehouse inside .grayson
     root = tmp_path / "demo"
     store_db = sandbox_db_path(root)
-    legacy = root / ".seekql" / "sandbox_warehouse.db"
+    legacy = root / ".grayson" / "sandbox_warehouse.db"
     store_db.replace(legacy)
     assert not store_db.is_file()
     out = invoke("doctor")

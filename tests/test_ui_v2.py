@@ -9,15 +9,15 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from conftest import FakeExecutor
-from seekql import __version__
-from seekql.cli import app as cli_app
-from seekql.config import GuardSettings
-from seekql.core import engine, proposals
-from seekql.core.run import run_statement
-from seekql.core.session import Session
-from seekql.knowledge import KnowledgeStore
-from seekql.ui.format import relationship_graph, split_sections
-from seekql.ui.server import build_app
+from grayson import __version__
+from grayson.cli import app as cli_app
+from grayson.config import GuardSettings
+from grayson.core import engine, proposals
+from grayson.core.run import run_statement
+from grayson.core.session import Session
+from grayson.knowledge import KnowledgeStore
+from grayson.ui.format import relationship_graph, split_sections
+from grayson.ui.server import build_app
 
 runner = CliRunner()
 TOKEN = "tok"
@@ -162,7 +162,7 @@ def test_records_cli_search_and_show(workspace, rich_session, monkeypatch):
 def test_records_mcp_tools_registered(workspace, fake_snow_env):
     import asyncio
 
-    from seekql.mcp.server import build_server
+    from grayson.mcp.server import build_server
 
     server = build_server(workspace)
     names = {getattr(t, "name", None) for t in asyncio.run(server.list_tools())}
@@ -236,7 +236,7 @@ def test_graph_assets_are_vendored_and_served(client):
 
 def test_assets_only_cached_hard_when_version_stamped(client):
     # A year-long cache is only safe on the URL the current build asks for;
-    # otherwise an upgraded seekql would keep serving the old bundle.
+    # otherwise an upgraded grayson would keep serving the old bundle.
     stamped = client.get(f"/static/graph.js?v={__version__}")
     assert "immutable" in stamped.headers["cache-control"]
     assert client.get("/static/graph.js").headers["cache-control"] == "no-cache"

@@ -8,9 +8,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from typer.testing import CliRunner
 
-from seekql.checks import ChecksStore
-from seekql.checks.store import MAX_INGESTED_RUNS
-from seekql.cli import app
+from grayson.checks import ChecksStore
+from grayson.checks.store import MAX_INGESTED_RUNS
+from grayson.cli import app
 
 runner = CliRunner()
 

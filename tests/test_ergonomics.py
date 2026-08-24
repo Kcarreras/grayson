@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from seekql.cli import app
-from seekql.ui.server import build_app
+from grayson.cli import app
+from grayson.ui.server import build_app
 
 runner = CliRunner()
 
@@ -61,7 +61,7 @@ def test_status_with_session_hints(workspace, fake_snow_env, sid):
 def test_session_start_returns_hints(workspace, fake_snow_env):
     out = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
     hints = "\n".join(out["hints"])
-    assert "seekql ui serve" in hints
+    assert "grayson ui serve" in hints
     assert out["session"]["id"] in hints
 
 
@@ -124,9 +124,9 @@ def test_ui_pages_auto_refresh(workspace, fake_snow_env, sid):
     detail = client.get(f"/session/{sid}?t=tok")
     assert 'http-equiv="refresh"' in detail.text
     # the intervention form page must NOT refresh (it would clear user input)
-    from seekql.core.session import Session
-    from seekql.interventions import build_request
-    from seekql.workspace import Workspace
+    from grayson.core.session import Session
+    from grayson.interventions import build_request
+    from grayson.workspace import Workspace
 
     s = Session(Workspace.find(), sid)
     iid = s.add_intervention("choose", "pick", "", build_request("choose", {"options": ["a", "b"]}))

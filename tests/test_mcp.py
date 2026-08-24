@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from seekql.mcp.server import build_server
+from grayson.mcp.server import build_server
 
 
 @pytest.fixture

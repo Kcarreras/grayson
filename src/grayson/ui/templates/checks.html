@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}grayson — checks{% endblock %}
+{% block content %}
+<h1>External checks {{ help("external_checks") }}</h1>
+<div class="muted small">Deterministic checks run by your automation (Airflow, dbt, …)
+  and dropped into the library's <code>checks/</code> folder. Agents see failing checks
+  on their target tables at session start as pre-vetted leads.</div>
+
+<div class="tiles">
+  <div class="tile"><div class="num">{{ summary.total_checks }}</div><div class="lbl">Checks on file</div></div>
+  <div class="tile"><div class="num {{ 'ok' if summary.by_status.get('pass') }}">{{ summary.by_status.get("pass", 0) }}</div><div class="lbl">Passing</div></div>
+  <div class="tile"><div class="num {{ 'attn' if summary.failing }}">{{ summary.failing | length }}</div><div class="lbl">Failing</div></div>
+  <div class="tile"><div class="num {{ 'attn' if summary.overdue }}">{{ summary.overdue | length }}</div><div class="lbl">Overdue</div></div>
+</div>
+
+{% if summary.parse_errors %}
+<div class="banner">{{ summary.parse_errors | length }} file(s) under <code>checks/</code>
+  could not be fully read — see below.</div>
+{% endif %}
+
+{% if summary.failing %}
+<h2>Failing now</h2>
+{% for f in summary.failing %}
+<div class="card attn">
+  <div class="row split">
+    <b>{{ f.name or f.check_id }}</b>
+    <span class="row">
+      <span class="badge bad">{{ f.status }}</span>
+      {% if f.source %}<span class="badge plain">{{ f.source }}</span>{% endif %}
+    </span>
+  </div>
+  {% if f.details %}<div class="ink2 small" style="margin: 5px 0;">{{ f.details }}</div>{% endif %}
+  {% if f.metrics %}
+  <dl class="props">
+    {% for k, v in f.metrics.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}
+  </dl>
+  {% endif %}
+  {% if f.sql %}
+  <details class="inlinefold" style="margin-top: 6px;"><summary>Check SQL</summary>
+    <pre>{{ f.sql }}</pre></details>
+  {% endif %}
+  <div class="faint small" style="margin-top: 5px;">
+    <span class="chip">{{ f.check_id }}</span>
+    {% for t in f.tables %} · {{ t }}{% endfor %}
+    · last run {{ f.run_at }}
+    {% if f.url %} · <a href="{{ f.url }}" rel="noopener noreferrer">run link ↗</a>{% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<h2>All checks (latest run each)</h2>
+<div class="card scroll">
+<table>
+<tr><th>Check</th><th>Status</th><th>Tables</th><th>Source</th><th>Last run</th></tr>
+{% for c in summary.checks %}
+<tr>
+  <td>{{ c.name }}<div class="faint mono small">{{ c.check_id }}</div></td>
+  <td>
+    {% if c.status == "pass" %}<span class="badge ok">pass</span>
+    {% elif c.status in ["fail", "error"] %}<span class="badge bad">{{ c.status }}</span>
+    {% elif c.status == "warn" %}<span class="badge attn">warn</span>
+    {% else %}<span class="badge plain">{{ c.status }}</span>{% endif %}
+    {% if c.overdue %}<span class="badge attn">overdue</span>{% endif %}
+  </td>
+  <td class="small">{% for t in c.tables %}
+    <a class="mono" href="/knowledge/{{ t }}?t={{ token }}">{{ t }}</a>{{ ", " if not loop.last }}{% endfor %}</td>
+  <td class="muted small">{{ c.source }}</td>
+  <td class="muted small mono">{{ c.run_at }}{% if c.age_hours is not none %}
+    <span class="faint">({{ c.age_hours }}h ago)</span>{% endif %}</td>
+</tr>
+{% endfor %}
+{% if not summary.checks %}
+<tr><td colspan="5" class="muted">No external check results on file yet — automation
+  (or <code>grayson checks ingest</code>) drops JSON into the library's
+  <code>checks/</code> folder; see its README for the format.</td></tr>
+{% endif %}
+</table>
+</div>
+
+{% if summary.parse_errors %}
+<details class="fold">
+  <summary>Files with problems ({{ summary.parse_errors | length }})</summary>
+  <div class="fold-body scroll">
+  <table>
+  <tr><th>File</th><th>Problem</th></tr>
+  {% for e in summary.parse_errors %}
+  <tr><td class="mono small">{{ e.file }}{% if e.entry is defined %} [{{ e.entry }}]{% endif %}</td>
+      <td class="small">{{ e.error }}</td></tr>
+  {% endfor %}
+  </table>
+  </div>
+</details>
+{% endif %}
+{% endblock %}
