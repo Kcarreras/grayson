@@ -11,8 +11,11 @@ Verification records deterministic before/after evidence that a fix worked, so
 
 from __future__ import annotations
 
+from pydantic import ValidationError
+
 from seekql.cache.store import compare_artifacts
 from seekql.core.session import Session
+from seekql.views import ViewEntry
 
 PROPOSAL_KINDS = {"file_diff", "ddl_snippet"}
 
@@ -44,11 +47,26 @@ def build_proposal_payload(kind: str, payload: dict) -> dict:
     ddl = payload.get("ddl")
     if not ddl:
         raise ProposalError("ddl_snippet requires 'ddl'")
-    return {
+    body = {
         "ddl": str(ddl),
         "run_target": payload.get("run_target", ""),
         "rationale": payload.get("rationale", ""),
     }
+    # A DDL snippet that creates a QA view declares it, so the library compounds:
+    # once the user has run the DDL and the proposal is marked applied, the view
+    # is registered (and scoped) automatically — no separate manual step.
+    view_name = payload.get("view_name")
+    if view_name:
+        try:
+            ViewEntry(name=str(view_name))  # early validation, clear message
+        except ValidationError as e:
+            first = e.errors()[0]
+            raise ProposalError(f"invalid view_name: {first['msg']}") from e
+        body["view_name"] = str(view_name)
+        body["source_tables"] = [str(t).upper() for t in payload.get("source_tables") or []]
+        body["base_files"] = [str(b) for b in payload.get("base_files") or []]
+        body["purpose"] = str(payload.get("purpose", ""))
+    return body
 
 
 def record_proposal(
@@ -83,7 +101,48 @@ def mark_applied(session: Session, pid: str, actor: str = "agent") -> dict:
             f"proposal '{pid}' must be approved before it is applied (status={p['status']})"
         )
     session.set_proposal_status(pid, "applied", actor)
-    return session.proposal(pid)
+    out = session.proposal(pid)
+    if p["kind"] == "ddl_snippet" and p["payload"].get("view_name"):
+        out["view_registered"] = _register_applied_view(session, p["payload"], pid, actor)
+    return out
+
+
+def _register_applied_view(session: Session, payload: dict, pid: str, actor: str) -> dict:
+    """Close the propose→execute→register loop for view-creating DDL.
+
+    Runs only after a user approved the proposal (mark_applied gates on that),
+    so agents cannot launder arbitrary names into the registry/scope. The
+    staleness baseline is captured now — the sources' LAST_ALTERED at the moment
+    the view exists — and the view enters this session's scope so verification
+    queries against it count as evidence.
+    """
+    from seekql.core.run import fetch_last_altered
+    from seekql.library import maybe_auto_push
+    from seekql.views import ViewRegistry
+
+    sources = payload.get("source_tables") or []
+    snapshot = fetch_last_altered(session.connection, session.workspace.root, sources)
+    entry = ViewEntry(
+        name=payload["view_name"],
+        purpose=payload.get("purpose", ""),
+        source_tables=sources,
+        base_files=payload.get("base_files") or [],
+    )
+    ViewRegistry(session.workspace.views_dir).register(
+        entry, ddl=payload["ddl"], source_last_altered=snapshot
+    )
+    session.add_scope([entry.name])
+    session.log_event(actor, "view_registered", {"view": entry.name, "proposal": pid})
+    registered = {
+        "name": entry.name,
+        "source_tables": sources,
+        "staleness_baseline_captured": bool(snapshot),
+        "in_session_scope": True,
+    }
+    sync = maybe_auto_push(session.workspace, f"seekql views: register {entry.name} ({pid})")
+    if sync is not None:
+        registered["library_sync"] = sync
+    return registered
 
 
 def verify(

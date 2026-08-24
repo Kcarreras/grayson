@@ -23,7 +23,7 @@ from seekql.interventions import build_request, validate_response
 from seekql.interventions.types import InterventionError
 from seekql.knowledge import KnowledgeStore, completeness
 from seekql.util import write_json
-from seekql.views import ViewEntry, ViewRegistry
+from seekql.views import ViewEntry, ViewRegistry, enter_session_scope
 from seekql.workflows import WorkflowNotFound, get_workflow, list_workflows
 from seekql.workspace import Workspace
 
@@ -387,7 +387,11 @@ def session_start(
     else:
         current = {}
     # front-load view coverage and relevant knowledge so analysis isn't interrupted
-    result["view_coverage"] = ViewRegistry(ws.views_dir).coverage_check(tables, current)
+    registry = ViewRegistry(ws.views_dir)
+    result["view_coverage"] = registry.coverage_check(tables, current)
+    # matching library views enter the query scope now — querying them must not
+    # trip the guard, and evidence touching them must count
+    result["views_in_scope"] = enter_session_scope(registry, session, tables)
     knowledge = KnowledgeStore(ws.knowledge_dir)
     result["knowledge"] = {t: knowledge.read(t)["facts"] for t in tables}
     result["knowledge_gaps"] = sorted(t for t, facts in result["knowledge"].items() if not facts)
@@ -1380,9 +1384,49 @@ def views_show(name: str) -> None:
 @views_app.command("check")
 def views_check(
     tables: list[str] = typer.Option(..., "--table", "-t", help="Target tables."),
+    check_freshness: bool = typer.Option(
+        False,
+        "--check-freshness",
+        help="Fetch current LAST_ALTERED so stale views land in 'refresh'.",
+    ),
 ) -> None:
     """Coverage check: which library views to reuse, refresh, or build."""
-    emit(ViewRegistry(_workspace().views_dir).coverage_check(list(tables)))
+    ws = _workspace()
+    registry = ViewRegistry(ws.views_dir)
+    current = None
+    if check_freshness:
+        from seekql.core.run import fetch_last_altered
+
+        sources = sorted(
+            {t.upper() for t in tables}
+            | {s for v in registry.matching(list(tables)) for s in v.normalized_sources()}
+        )
+        current = fetch_last_altered(ws.config.connection, ws.root, sources)
+    emit(registry.coverage_check(list(tables), current))
+
+
+@views_app.command("use")
+def views_use(
+    session_id: str,
+    names: list[str] = typer.Argument(..., help="Registered view name(s) to bring into scope."),
+) -> None:
+    """Bring registered library views into a session's query scope mid-session.
+
+    Only views already in the registry qualify — this widens scope to
+    user-curated surfaces, never to arbitrary tables."""
+    ws = _workspace()
+    registry = ViewRegistry(ws.views_dir)
+    resolved = []
+    for name in names:
+        entry = registry.get(name)
+        if entry is None:
+            fail(f"'{name}' is not in the view registry — only registered views can enter scope")
+            return
+        resolved.append(entry.name.upper())
+    s = _session(session_id)
+    s.add_scope(resolved)
+    s.log_event("agent", "views_in_scope", {"views": resolved})
+    emit({"views_in_scope": resolved, "scope": sorted(s.scope_tables)})
 
 
 @views_app.command("register")
@@ -1392,6 +1436,11 @@ def views_register(
     source_tables: list[str] = typer.Option([], "--source", "-s"),
     base_files: list[str] = typer.Option([], "--base-file", "-b"),
     ddl_file: Path = typer.Option(None, "--ddl-file", help="File with the view DDL."),
+    snapshot: bool = typer.Option(
+        True,
+        "--snapshot/--no-snapshot",
+        help="Capture the sources' current LAST_ALTERED as the staleness baseline.",
+    ),
 ) -> None:
     """Register a QA view (after the user has created it) so the library compounds."""
     ws = _workspace()
@@ -1406,7 +1455,18 @@ def views_register(
         source_tables=list(source_tables),
         base_files=list(base_files),
     )
-    out = ViewRegistry(ws.views_dir).register(entry, ddl).model_dump()
+    baseline = {}
+    if snapshot and source_tables:
+        from seekql.core.run import fetch_last_altered
+
+        baseline = fetch_last_altered(ws.config.connection, ws.root, list(source_tables))
+    out = ViewRegistry(ws.views_dir).register(entry, ddl, baseline).model_dump()
+    out["staleness_baseline_captured"] = bool(baseline)
+    if snapshot and source_tables and not baseline:
+        out["note"] = (
+            "could not fetch LAST_ALTERED for the sources (auth/connection?) — "
+            "staleness detection will report this view as never-stale until re-registered"
+        )
     _attach_library_sync(out, ws, f"seekql views: register {name}")
     emit(out)
 

@@ -51,8 +51,11 @@ they are equivalent. Never query Snowflake except through seekql.
    at session start): a failing Airflow/dbt check on a target table is a pre-vetted
    lead — replicate it with a guarded query first, then widen the investigation.
 2. Start: `seekql session start --workflow <name> --table DB.SCHEMA.TABLE ...`. Review
-   the returned view coverage — reuse existing QA views, ask the user to create/refresh
-   any the setup flags. Note the session id; use it in every later command.
+   the returned view coverage — library views matching the targets are already in your
+   query scope (`views_in_scope`), so query them directly; ask the user to create or
+   refresh any the setup flags. Need another registered view later?
+   `seekql views use <sid> <name>` brings it into scope. Note the session id; use it
+   in every later command.
 3. Analyze: run guarded queries (`seekql query run <sid> --sql "..."`). Before querying,
    check the cache (`seekql cache find <sid> --table ... --check-freshness`). Complete
    each required checkpoint with evidence:
@@ -77,6 +80,10 @@ they are equivalent. Never query Snowflake except through seekql.
    (`seekql proposal add <sid> --kind file_diff|ddl_snippet ...`). After the user
    approves, apply file diffs yourself with your editing tools, mark them applied
    (`seekql proposal applied <sid> <pid>`), and ask the user to rerun the definitions.
+   When a ddl_snippet CREATES A VIEW, include `view_name`, `source_tables`, and
+   `purpose` in its payload: once the user has run the DDL and you mark the proposal
+   applied, seekql registers the view in the library and adds it to your scope
+   automatically — no separate registration step.
 7. Verify: re-run the anomaly/parity query and record before/after evidence:
    `seekql proposal verify <sid> <pid> --before q_0003 --after q_0050 --verdict pass`.
 8. Advance stages as you go (`seekql session advance <sid> --to review`); gates enforce

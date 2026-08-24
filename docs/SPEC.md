@@ -140,11 +140,11 @@ setup → analysis → synthesis → review → fixes → verification → close
    tables, guard profile, parallelism (worker count), connection. seekql verifies snow
    auth, snapshots table metadata (columns, row counts, `last_altered`), loads relevant
    knowledge, runs the **view coverage check** (see §9a): existing library views
-   relevant to the target tables are presented for the user to pick from, stale ones
-   are flagged with a refresh proposal, and gaps become new-view DDL proposals
-   assembled from the registry's base-file pointers — all executed by the user now
-   (front-loaded so analysis isn't interrupted). Setup checkpoint cannot close until
-   coverage is confirmed.
+   relevant to the target tables **enter the session's query scope automatically**
+   (reported as `views_in_scope`), stale ones are flagged for refresh, and gaps
+   become new-view DDL proposals assembled from the registry's base-file pointers —
+   DDL is executed by the user, front-loaded so analysis isn't interrupted. Coverage
+   is informational; it does not gate the setup stage.
 2. **analysis** — the open-ended core. Agents (1..N workers) run guarded queries, cache
    results, log observations, request interventions when human judgment is needed.
    Workflow-defined **required checks** must each be completed with evidence; beyond
@@ -317,26 +317,31 @@ rights. `views/registry.yaml` records, per view: name, purpose, source tables,
 logic lives), the DDL file in `views/ddl/`, created_at, and the source tables'
 `last_altered` at creation time.
 
-**At session setup** the coverage check produces a three-part picture, resolved in one
-sitting before analysis begins:
+**At session setup** the coverage check produces a three-part picture:
 
-1. **Reuse** — library views matching the session's target tables, presented as a
-   pick-list (UI checkboxes / CLI selection). Chosen views enter the session scope.
-2. **Refresh** — seekql proactively flags stale views: source-table `last_altered` has
-   moved past the view's snapshot, source schema changed (column drift detected from
-   the metadata snapshot), or the registry DDL no longer matches what's deployed
-   (checked via `SHOW VIEWS` / `GET_DDL`). Each flag comes with regenerated
-   `CREATE OR REPLACE` DDL ready for the user to execute.
+1. **Reuse** — library views matching the session's target tables. These enter the
+   session's query scope automatically (`views_in_scope`): querying them passes the
+   guard — including strict-scope mode — and evidence touching them counts toward
+   checkpoints and findings. Mid-session, `seekql views use <sid> <name>` (MCP:
+   `views_use`) scopes in additional *registered* views; arbitrary unregistered
+   names are refused, so scope only ever widens to user-curated surfaces.
+2. **Refresh** — stale views: a source table's `last_altered` has moved past the
+   baseline captured when the view was registered. The baseline is captured at
+   registration (`views register`, one cheap metadata query; `--no-snapshot` opts
+   out) and by the automatic registration path below. Detection runs at session
+   start and on demand via `views check --check-freshness`.
 3. **Create** — for gaps, agents assemble proposed DDL. The registry's base-file
    pointers (plus per-table `definition_files` entries in the knowledge library) tell
-   agents exactly which work-repo files to read when deriving new view logic — the
-   user can also pass `--base-files <paths>` at setup to point agents at the right
-   sources explicitly. Proposals are queued for user execution.
+   agents exactly which work-repo files to read when deriving new view logic.
+   Proposals are queued for user execution.
 
-`seekql views list|check|propose|refresh` (and MCP equivalents) expose the same
-operations mid-session for the rare case a need surfaces after setup. Executed views
-are registered automatically (DDL, sources, base files, timestamps) so the library
-compounds.
+`seekql views list|show|check|register|use` (and the MCP `views_check`/`views_use`)
+expose the same operations mid-session. **Registration closes the loop
+automatically**: a `ddl_snippet` proposal that declares `view_name` (plus
+`source_tables`, `base_files`, `purpose`) is registered into the library — DDL,
+sources, and staleness baseline — the moment it is marked `applied`, which can only
+follow user approval; the new view also joins the session scope so verification
+queries against it count as evidence.
 
 ## 10. Interventions (human-in-the-loop)
 
