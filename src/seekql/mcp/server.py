@@ -562,6 +562,17 @@ def build_server(workspace: Workspace) -> Any:
     def checks_show(check_id: str) -> list[dict]:
         return [r.model_dump() for r in ChecksStore(workspace.checks_dir).history(check_id)]
 
+    @mcp.tool(
+        description="Read the workspace configuration: guard profiles, scopes, "
+        "connection, library pointer. READ-ONLY by design — changing settings is a "
+        "user action (`seekql config` or the console's Settings page); ask the user "
+        "if a setting needs to change."
+    )
+    def config_show() -> dict:
+        from seekql.config_edit import config_summary
+
+        return config_summary(workspace.root)
+
     return mcp
 
 

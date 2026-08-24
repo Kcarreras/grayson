@@ -43,6 +43,10 @@ checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_he
 finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_args_is_help=True)
 intervention_app = typer.Typer(help="Human-in-the-loop tasks.", no_args_is_help=True)
 proposal_app = typer.Typer(help="Fix proposals and verification.", no_args_is_help=True)
+config_app = typer.Typer(
+    help="Workspace settings (a user surface — agents get read-only access via MCP).",
+    no_args_is_help=True,
+)
 knowledge_app = typer.Typer(help="Team knowledge library.", no_args_is_help=True)
 checks_app = typer.Typer(
     help="External deterministic checks (Airflow, dbt, ...) dropped into the library.",
@@ -69,6 +73,7 @@ app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(finding_app, name="finding")
 app.add_typer(intervention_app, name="intervention")
 app.add_typer(proposal_app, name="proposal")
+app.add_typer(config_app, name="config")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(checks_app, name="checks")
 app.add_typer(chart_app, name="chart")
@@ -1098,6 +1103,75 @@ def proposal_verify(
     try:
         emit(proposals_engine.verify(_session(session_id), pid, before, after, verdict, note))
     except ProposalError as e:
+        fail(str(e))
+
+
+# -- config --------------------------------------------------------------
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Current workspace configuration, resolved (profiles, scopes, library)."""
+    from seekql.config_edit import config_summary
+
+    emit(config_summary(_workspace().root))
+
+
+@config_app.command("set")
+def config_set(
+    assignments: list[str] = typer.Argument(
+        ...,
+        help="key=value pairs, e.g. defaults.guard_profile=strict scopes.strict=true "
+        "library.auto_push=true connection.name=prod",
+    ),
+) -> None:
+    """Change workspace settings (validated; only the touched sections are rewritten).
+
+    This is a user command: it edits the rails agents run inside, so agents must
+    not run it — the MCP surface exposes configuration read-only."""
+    from seekql.config_edit import ConfigError, config_summary, set_values
+
+    changes: dict[str, str] = {}
+    for item in assignments:
+        if "=" not in item:
+            fail(f"expected key=value, got {item!r}")
+            return
+        key, value = item.split("=", 1)
+        changes[key.strip()] = value.strip()
+    ws = _workspace()
+    try:
+        result = set_values(ws.root, changes)
+    except ConfigError as e:
+        fail(str(e))
+        return
+    emit({**result, "config": config_summary(ws.root)})
+
+
+@config_app.command("profile")
+def config_profile(
+    name: str = typer.Argument(..., help="Guard profile to create or edit."),
+    auto_limit: int = typer.Option(None, "--auto-limit", min=0, help="Row cap (0 = off)."),
+    timeout_seconds: int = typer.Option(None, "--timeout", min=0, help="Seconds (0 = off)."),
+    budget_warn: int = typer.Option(None, "--budget-warn", min=0, help="Warn at N queries."),
+    budget_cap: int = typer.Option(None, "--budget-cap", min=0, help="Hard cap (0 = off)."),
+) -> None:
+    """Create or edit a named guard profile (unset flags keep current values)."""
+    from seekql.config_edit import ConfigError, set_guard_profile
+
+    try:
+        emit(
+            set_guard_profile(
+                _workspace().root,
+                name,
+                {
+                    "auto_limit": auto_limit,
+                    "timeout_seconds": timeout_seconds,
+                    "budget_warn": budget_warn,
+                    "budget_cap": budget_cap,
+                },
+            )
+        )
+    except ConfigError as e:
         fail(str(e))
 
 

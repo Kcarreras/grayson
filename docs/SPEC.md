@@ -394,6 +394,12 @@ Collaboration needs no server; it rides on git. Three kinds of repo, kept separa
    path = "~/work/data-qa-library"   # local clone of the team library repo
    ```
 
+**Bootstrap**: the team repo starts as an *empty* repo on the git host.
+`seekql library link <git-url>` clones it, scaffolds the asset structure, commits,
+and pushes that first commit automatically (only for clones seekql itself made —
+linking an existing local directory never auto-commits). Teammates then run the
+same command and receive the structure.
+
 **Resolution**: with `[library]` set, seekql reads/writes knowledge, views, workflows,
 checks,
 and shared profiles in the library clone; session state and cached data stay in the
@@ -463,6 +469,13 @@ per-launch session token in the URL. v1 views:
 6. **Knowledge** — browse/search; confirm or edit proposed facts.
 7. **Checks** — latest external check results (§11b): failures first with details
    and check SQL, overdue automation flagged, per-table checks on knowledge pages.
+8. **Settings** — edit the workspace rails (`seekql.toml`): connection, default
+   guard profile, strict scope, allowed scopes, per-profile guard controls, and
+   team-library controls (auto-push, pull/push, sync state). Settings mutation is
+   a *human* surface: this page and the `seekql config` CLI are the only writers;
+   the MCP tool surface exposes configuration read-only (`config_show`) so agents
+   cannot loosen the guards they run inside. Light/dark theme is per-browser (a
+   nav toggle backed by localStorage), not workspace state.
 
 ## 13. Harness integration
 

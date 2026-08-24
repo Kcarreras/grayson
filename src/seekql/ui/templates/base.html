@@ -5,9 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}seekql{% endblock %}</title>
 {% block head %}{% endblock %}
+<script>
+/* Stamp the pinned theme before first paint; "auto" stores nothing. */
+try {
+  var t = localStorage.getItem("seekql_theme");
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+} catch (e) {}
+</script>
 <style>
 /* ---- tokens ---------------------------------------------------------- */
 :root {
+  color-scheme: dark;
   --bg: #0d1017; --panel: #131824; --panel2: #1a2130; --panel3: #202940;
   --border: #262e40; --border-soft: #1e2536;
   --ink: #e8ecf4; --ink-2: #b9c2d0; --muted: #8b94a6; --faint: #626c7e;
@@ -19,8 +27,12 @@
   --bad: #ff7a85; --bad-soft: rgba(255,122,133,.10);        /* failed / rejected */
   --radius: 10px; --radius-sm: 7px;
 }
+/* Theme: dark is the base; light applies via the OS preference unless the
+   user pinned a theme with the nav toggle (data-theme wins both ways). The
+   light block exists twice on purpose — keep the two copies identical. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
     --bg: #f4f6f9; --panel: #ffffff; --panel2: #f1f3f7; --panel3: #e8ecf3;
     --border: #d7dce5; --border-soft: #e5e9f0;
     --ink: #1a1f29; --ink-2: #3d4554; --muted: #5d6675; --faint: #8a93a3;
@@ -30,6 +42,17 @@
     --ok: #178a55; --ok-soft: rgba(23,138,85,.09);
     --bad: #c73545; --bad-soft: rgba(199,53,69,.08);
   }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f9; --panel: #ffffff; --panel2: #f1f3f7; --panel3: #e8ecf3;
+  --border: #d7dce5; --border-soft: #e5e9f0;
+  --ink: #1a1f29; --ink-2: #3d4554; --muted: #5d6675; --faint: #8a93a3;
+  --viz-s1: #2a78d6; --viz-s2: #eb6834; --viz-s3: #1baf7a;
+  --act: #2563eb; --act-soft: rgba(37,99,235,.09);
+  --attn: #b57900; --attn-soft: rgba(181,121,0,.09);
+  --ok: #178a55; --ok-soft: rgba(23,138,85,.09);
+  --bad: #c73545; --bad-soft: rgba(199,53,69,.08);
 }
 * { box-sizing: border-box; }
 html { scrollbar-gutter: stable; }
@@ -65,6 +88,7 @@ header { border-bottom: 1px solid var(--border); background: var(--panel);
   font-size: 13.5px; }
 .tab:hover { color: var(--ink); text-decoration: none; background: var(--panel2); }
 .tab.active { color: var(--act); background: var(--act-soft); }
+.themebtn { border: none; background: transparent; cursor: pointer; font-family: inherit; }
 main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
 
 /* ---- surfaces -------------------------------------------------------- */
@@ -243,8 +267,37 @@ dl.props dd { margin: 0; color: var(--ink-2); }
     <a class="tab {{ 'active' if nav == 'knowledge' }}" href="/knowledge?t={{ token }}">Knowledge</a>
     <a class="tab {{ 'active' if nav == 'checks' }}" href="/checks?t={{ token }}">Checks</a>
     <a class="tab {{ 'active' if nav == 'records' }}" href="/records?t={{ token }}">Records</a>
+    <span style="flex: 1;"></span>
+    <button class="tab themebtn" type="button" id="themebtn"
+      title="Theme: follows your OS unless pinned">◐ auto</button>
+    <a class="tab {{ 'active' if nav == 'settings' }}" href="/settings?t={{ token }}"
+      title="Workspace settings">Settings</a>
   </nav>
 </div></header>
+<script>
+(function () {
+  var btn = document.getElementById("themebtn");
+  var order = ["auto", "light", "dark"];
+  var icons = { auto: "◐ auto", light: "○ light", dark: "● dark" };
+  function current() {
+    try { return localStorage.getItem("seekql_theme") || "auto"; } catch (e) { return "auto"; }
+  }
+  function apply(mode) {
+    if (mode === "auto") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = mode;
+    btn.textContent = icons[mode];
+  }
+  btn.addEventListener("click", function () {
+    var next = order[(order.indexOf(current()) + 1) % order.length];
+    try {
+      if (next === "auto") localStorage.removeItem("seekql_theme");
+      else localStorage.setItem("seekql_theme", next);
+    } catch (e) {}
+    apply(next);
+  });
+  apply(current());
+})();
+</script>
 <main>
 {% if error %}<div class="banner">{{ error }}</div>{% endif %}
 {% block content %}{% endblock %}

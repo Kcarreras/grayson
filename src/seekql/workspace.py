@@ -63,6 +63,11 @@ class Workspace:
             self._config = WorkspaceConfig.load(self.root / CONFIG_FILENAME)
         return self._config
 
+    def reload_config(self) -> WorkspaceConfig:
+        """Drop the cached config after an on-disk edit (Settings page, CLI)."""
+        self._config = None
+        return self.config
+
     @property
     def sessions_dir(self) -> Path:
         return self.root / ".seekql" / "sessions"
