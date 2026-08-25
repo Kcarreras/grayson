@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
 import shutil
@@ -90,7 +91,8 @@ CREATE TABLE IF NOT EXISTS findings(
     fid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
     schema_name TEXT NOT NULL, severity TEXT, confidence TEXT,
     title TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    superseded_by TEXT, rejected_reason TEXT, rejected_at TEXT
 );
 CREATE TABLE IF NOT EXISTS interventions(
     iid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
@@ -115,6 +117,24 @@ class Session:
         if not self.dir.is_dir():
             raise FileNotFoundError(f"session '{session_id}' not found")
         self.cache = CacheStore(self.dir / "data")
+        self._migrate()
+
+    #: additive columns for session DBs created before the feature existed
+    _MIGRATIONS = (
+        "ALTER TABLE findings ADD COLUMN superseded_by TEXT",
+        "ALTER TABLE findings ADD COLUMN rejected_reason TEXT",
+        "ALTER TABLE findings ADD COLUMN rejected_at TEXT",
+    )
+
+    def _migrate(self) -> None:
+        con = self._con()
+        try:
+            for stmt in self._MIGRATIONS:
+                with contextlib.suppress(sqlite3.OperationalError):  # column exists
+                    con.execute(stmt)
+            con.commit()
+        finally:
+            con.close()
 
     # -- lifecycle -------------------------------------------------------
 
@@ -550,13 +570,15 @@ class Session:
             con.row_factory = sqlite3.Row
             rows = con.execute(
                 "SELECT fid, ts, worker, schema_name, severity, confidence, title, "
-                "accepted, payload FROM findings ORDER BY rowid"
+                "accepted, payload, superseded_by, rejected_reason, rejected_at "
+                "FROM findings ORDER BY rowid"
             ).fetchall()
             out = []
             for r in rows:
                 d = dict(r)
                 d["payload"] = json.loads(d["payload"])
                 d["accepted"] = bool(d["accepted"])
+                d["rejected"] = bool(d["rejected_reason"])
                 out.append(d)
             return out
         finally:
@@ -568,7 +590,8 @@ class Session:
             con.row_factory = sqlite3.Row
             row = con.execute(
                 "SELECT fid, ts, worker, schema_name, severity, confidence, title, "
-                "accepted, payload FROM findings WHERE fid = ?",
+                "accepted, payload, superseded_by, rejected_reason, rejected_at "
+                "FROM findings WHERE fid = ?",
                 (fid,),
             ).fetchone()
         finally:
@@ -578,18 +601,59 @@ class Session:
         d = dict(row)
         d["payload"] = json.loads(d["payload"])
         d["accepted"] = bool(d["accepted"])
+        d["rejected"] = bool(d["rejected_reason"])
         return d
 
     def accept_finding(self, fid: str, actor: str = "user") -> None:
+        """Accept a finding (a user action). If the finding proposed to
+        supersede an earlier one, the supersession executes here — inside the
+        acceptance — so agents can only ever suggest it, never perform it."""
         con = self._con()
         try:
-            cur = con.execute("UPDATE findings SET accepted=1 WHERE fid=?", (fid,))
+            cur = con.execute(
+                "UPDATE findings SET accepted=1, rejected_reason=NULL, rejected_at=NULL "
+                "WHERE fid=?",
+                (fid,),
+            )
             con.commit()
             if cur.rowcount == 0:
                 raise KeyError(f"no finding '{fid}'")
         finally:
             con.close()
         self.log_event(actor, "finding_accepted", {"fid": fid})
+        target = (self.finding(fid) or {}).get("payload", {}).get("supersedes")
+        if target:
+            con = self._con()
+            try:
+                # first-wins: never re-point a finding that is already superseded
+                cur = con.execute(
+                    "UPDATE findings SET superseded_by=? WHERE fid=? AND superseded_by IS NULL",
+                    (fid, target),
+                )
+                con.commit()
+            finally:
+                con.close()
+            if cur.rowcount:
+                self.log_event(actor, "finding_superseded", {"fid": target, "by": fid})
+
+    def reject_finding(self, fid: str, reason: str, actor: str = "user") -> None:
+        """Reject a finding with a required reason (a user action). The reason
+        is the agent's signal to continue analysis in a corrected direction."""
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("a rejection requires a reason — it is what the agent works from")
+        con = self._con()
+        try:
+            cur = con.execute(
+                "UPDATE findings SET accepted=0, rejected_reason=?, rejected_at=? WHERE fid=?",
+                (reason, utcnow(), fid),
+            )
+            con.commit()
+            if cur.rowcount == 0:
+                raise KeyError(f"no finding '{fid}'")
+        finally:
+            con.close()
+        self.log_event(actor, "finding_rejected", {"fid": fid, "reason": reason})
 
     # -- interventions ---------------------------------------------------
 

@@ -28,6 +28,9 @@ class Finding(BaseModel):
     proposed_remediation: str = ""
     open_questions: list[str] = Field(default_factory=list)
     extra: dict = Field(default_factory=dict)
+    #: fid of an earlier finding this one corrects. A proposal only: the actual
+    #: supersession executes inside the user's accept action, never agent-side.
+    supersedes: str | None = None
 
     @field_validator("severity")
     @classmethod

@@ -11,13 +11,36 @@
   <span class="row">
     <span class="badge {{ 'bad' if record.severity in ['critical','high'] else 'attn' if record.severity == 'medium' else 'plain' }}">{{ record.severity }}</span>
     <span class="badge plain">confidence: {{ record.confidence }}</span>
-    {% if record.accepted %}<span class="badge ok">accepted</span>{% endif %}
+    {% if record.superseded_by %}<span class="badge plain">superseded by {{ record.superseded_by }}</span>
+    {% elif record.accepted %}<span class="badge ok">accepted</span>{% endif %}
+    {% if record.rejected %}<span class="badge bad">rejected</span>{% endif %}
   </span>
 </div>
+{% if record.rejected %}
+<div class="banner">Rejected: {{ record.rejected_reason }}</div>
+{% endif %}
+{% if lineage %}
+<h2>Finding history</h2>
+<div class="card">
+  {% for item in lineage %}
+  <div class="row" style="gap: 10px;">
+    <span class="mono small {{ 'faint' if item.superseded }}">{{ item.ts }}</span>
+    <a class="mono" href="/records/{{ session_id }}/finding/{{ item.fid }}?t={{ token }}">{{ item.fid }}</a>
+    <span class="{{ 'faint' if item.superseded }}">{{ item.title }}</span>
+    {% if item.current %}<span class="badge act">viewing</span>{% endif %}
+    {% if item.superseded %}<span class="badge plain">superseded</span>
+    {% elif item.proposed %}<span class="badge todo">proposed replacement</span>
+    {% elif item.rejected %}<span class="badge bad">rejected</span>
+    {% elif item.accepted %}<span class="badge ok">current · accepted</span>{% endif %}
+  </div>
+  {% if not loop.last %}<div class="faint small" style="margin: 2px 0 2px 4px;">↓ replaced by</div>{% endif %}
+  {% endfor %}
+</div>
+{% endif %}
 <div class="card">
   <div class="sections">{% for sec in record.payload.summary | sections %}
     <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
-      <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
+      <div class="sec-b">{{ sec.body | para }}</div></div>{% endfor %}</div>
   {% if record.payload.extra %}
   <dl class="props">
     {% for k, v in record.payload.extra.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}

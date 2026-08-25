@@ -41,7 +41,7 @@
     <div class="num {{ 'ok' if readiness.checks_complete }}">{{ checkpoints | selectattr("status","equalto","complete") | list | length }}/{{ checkpoints | length }}</div>
     <div class="lbl">Checkpoints</div></div>
   <div class="tile"><div class="num">{{ findings | length }}</div>
-    <div class="lbl">Findings ({{ findings | selectattr("accepted") | list | length }} accepted)</div></div>
+    <div class="lbl">Findings ({{ findings | selectattr("accepted") | rejectattr("superseded_by") | list | length }} accepted)</div></div>
   {% set open_iv = interventions | selectattr("status","equalto","open") | list %}
   <div class="tile"><div class="num {{ 'attn' if open_iv }}">{{ open_iv | length }}</div>
     <div class="lbl">Awaiting your input</div></div>
@@ -74,7 +74,7 @@
 {# newest four stay open; older tiles collapse to their title row. A manual
    toggle is remembered per chart in localStorage across the live refresh. #}
 <details class="card chartcard{{ ' chart-enter' if c.is_new }}"
-  data-chart="{{ c.spec.chart_id }}" {% if loop.index <= 4 %}open{% endif %}>
+  data-fold="{{ c.spec.chart_id }}" {% if loop.index <= 4 %}open{% endif %}>
   <summary class="chartsum">
     <span class="c-caret">▸</span>
     <b>{{ c.spec.title }}</b>
@@ -135,21 +135,38 @@
 
 <h2>Findings {{ help("findings") }}</h2>
 {% for f in findings %}
-<div class="card">
-  <div class="row split">
+{# newest three stay open; older and superseded findings collapse to their
+   title row. A manual toggle is remembered per finding in localStorage. #}
+<details class="card findcard{{ ' superseded' if f.superseded_by }}" id="{{ f.fid }}"
+  data-fold="{{ f.fid }}" {% if loop.revindex <= 3 and not f.superseded_by %}open{% endif %}>
+  <summary class="chartsum">
+    <span class="c-caret">▸</span>
     <b>{{ f.fid }} · {{ f.title }}</b>
-    <span class="row">
+    <span class="row" style="margin-left: auto;">
+      {% if f.superseded_by %}
+        <span class="badge plain">superseded by <a href="#{{ f.superseded_by }}" class="mono">{{ f.superseded_by }}</a></span>
+      {% endif %}
+      {% if f.payload.supersedes %}
+        <span class="badge todo">replaces <a href="#{{ f.payload.supersedes }}" class="mono">{{ f.payload.supersedes }}</a></span>
+      {% endif %}
       <span class="badge {{ 'bad' if f.severity in ['critical','high'] else 'attn' if f.severity == 'medium' else 'plain' }}">{{ f.severity }}</span>
       <span class="badge plain">confidence: {{ f.confidence }}</span>
-      {% if f.accepted %}<span class="badge ok">accepted</span>{% endif %}
+      {% if f.accepted and not f.superseded_by %}<span class="badge ok">accepted</span>{% endif %}
+      {% if f.rejected %}<span class="badge bad">rejected</span>{% endif %}
     </span>
+  </summary>
+  {% if f.rejected %}
+  <div class="banner" style="margin-top: 8px;">
+    Rejected: {{ f.rejected_reason }}
+    <span class="faint">({{ f.rejected_at }} — the agent sees this reason and continues analysis)</span>
   </div>
+  {% endif %}
   <div class="sections" style="margin: 6px 0;">{% for sec in f.payload.summary | sections %}
     <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
-      <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
+      <div class="sec-b">{{ sec.body | para }}</div></div>{% endfor %}</div>
   {% if f.payload.extra %}
   <dl class="props">
-    {% for k, v in f.payload.extra.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}
+    {% for k, v in f.payload.extra.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v | para }}</dd>{% endfor %}
   </dl>
   {% endif %}
   <div class="row" style="margin-top: 4px;">
@@ -161,15 +178,30 @@
     <summary>Suggested remediation</summary>
     <div class="sections">{% for sec in f.payload.proposed_remediation | sections %}
       <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
-        <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
+        <div class="sec-b">{{ sec.body | para }}</div></div>{% endfor %}</div>
   </details>
   {% endif %}
-  {% if not f.accepted %}
-  <form class="inline" method="post" action="/session/{{ s.id }}/finding/{{ f.fid }}/accept?t={{ token }}">
-    <button class="btn secondary sm" style="margin-top: 10px;" type="submit">Accept finding</button>
-  </form>
+  {% if not f.superseded_by %}
+  <div class="row" style="margin-top: 10px; gap: 14px;">
+    {% if not f.accepted %}
+    <form class="inline" method="post" action="/session/{{ s.id }}/finding/{{ f.fid }}/accept?t={{ token }}">
+      <button class="btn confirm sm" type="submit">Accept finding</button>
+    </form>
+    {% endif %}
+    {% if not f.rejected %}
+    <details class="inlinefold">
+      <summary class="attn-text">Reject…</summary>
+      <form method="post" action="/session/{{ s.id }}/finding/{{ f.fid }}/reject?t={{ token }}"
+        class="row" style="margin-top: 8px; gap: 8px; align-items: flex-start;">
+        <textarea name="reason" rows="2" required style="max-width: 520px;"
+          placeholder="Why is this finding wrong? The agent continues analysis from this."></textarea>
+        <button class="btn danger sm" type="submit">Reject finding</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
   {% endif %}
-</div>
+</details>
 {% endfor %}
 {% if not findings %}<div class="card empty">No findings recorded yet.</div>{% endif %}
 
