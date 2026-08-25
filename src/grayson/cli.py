@@ -1348,17 +1348,33 @@ def checks_show(check_id: str) -> None:
 def checks_ingest(
     path: Path = typer.Argument(..., help="A results JSON file, or a directory of them."),
     source: str = typer.Option(None, "--source", help="Fill in 'source' where results omit it."),
+    manifest: Path = typer.Option(
+        None,
+        "--manifest",
+        help="dbt manifest.json — resolves each test to its tables and compiled SQL.",
+    ),
+    ttl_hours: float = typer.Option(
+        None,
+        "--ttl-hours",
+        help="Cadence expectation stamped on adapter-converted results (older = overdue).",
+    ),
 ) -> None:
     """Validate external check results and fold them into the library
-    (checks/ingested/, bounded history per check). Idempotent per (check, run_at)."""
+    (checks/ingested/, bounded history per check). Idempotent per (check, run_at).
+    A dbt run_results.json is detected and converted automatically."""
     from grayson.checks import ChecksStore, scaffold_checks_dir
 
     ws = _workspace()
     if not path.exists():
         fail(f"path not found: {path}")
         return
+    if manifest is not None and not manifest.is_file():
+        fail(f"manifest not found: {manifest}")
+        return
     scaffold_checks_dir(ws.checks_dir)
-    out = ChecksStore(ws.checks_dir).ingest(path, source)
+    out = ChecksStore(ws.checks_dir).ingest(
+        path, source, manifest_path=manifest, ttl_hours=ttl_hours
+    )
     if out["ingested"]:
         _attach_library_sync(out, ws, f"grayson checks: ingest {out['ingested']} result(s)")
     emit(out)

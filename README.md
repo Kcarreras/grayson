@@ -140,7 +140,9 @@ SVGs.
 Teams already run deterministic checks outside grayson — Airflow DAGs, dbt tests,
 data-quality jobs. Drop their results as JSON into the library's `checks/` folder
 (directly from automation, or via `grayson checks ingest`, which validates, dedupes
-per run, and keeps bounded history) and they become agent context:
+per run, and keeps bounded history) and they become agent context. dbt is built in:
+`grayson checks ingest target/run_results.json --manifest target/manifest.json`
+converts a test run directly. Setup guide: [docs/CHECKS.md](docs/CHECKS.md).
 
 ```json
 {

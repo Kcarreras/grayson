@@ -37,7 +37,7 @@
   {% endif %}
   {% if f.sql %}
   <details class="inlinefold" style="margin-top: 6px;"><summary>Check SQL</summary>
-    <pre>{{ f.sql }}</pre></details>
+    <pre class="sql">{{ f.sql | sqlhl }}</pre></details>
   {% endif %}
   <div class="faint small" style="margin-top: 5px;">
     <span class="chip">{{ f.check_id }}</span>
