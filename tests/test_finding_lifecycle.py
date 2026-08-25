@@ -133,3 +133,27 @@ def test_paragraphs_filter_splits_walls_of_text():
     html = str(paragraphs(wall))
     assert html.count("<p>") == 3  # 3 + 3 + 1 sentences
     assert "<script>" not in str(paragraphs("<script>x</script> Bad. Actor. Here. Again."))
+
+
+def test_paragraphs_filter_tolerates_non_string_json_values():
+    # findings' `extra` values are arbitrary JSON (the field crash: a list)
+    assert str(paragraphs(["ORDERS side", "PROMOS side"])) == "<p>ORDERS side</p><p>PROMOS side</p>"
+    assert "rows: 396" in str(paragraphs({"rows": 396}))
+    assert str(paragraphs(42)) == "<p>42</p>"
+    assert str(paragraphs(None)) == ""
+
+
+def test_finding_with_list_extra_renders(workspace, session, qid):
+    payload = {
+        "title": "Fan-out with list extras",
+        "severity": "medium",
+        "confidence": "high",
+        "summary": "The join fans out; details in extra.",
+        "evidence": [qid],
+        "extra": {"codes": ["SUMMER25", "FLASH5"], "counts": {"rows": 396}},
+    }
+    engine.record_finding(session, payload)
+    client = TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{session.id}?t={TOKEN}")
+    assert page.status_code == 200
+    assert "SUMMER25" in page.text and "rows: 396" in page.text

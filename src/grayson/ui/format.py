@@ -25,14 +25,23 @@ _SECTION_RE = re.compile(r"(?:(?<=^)|(?<=[.?!)\]]\s)|(?<=\n))([A-Z][A-Z0-9 /&',-
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
 
 
-def paragraphs(text: str, sentences_per_para: int = 3) -> Markup:
+def paragraphs(text: object, sentences_per_para: int = 3) -> Markup:
     """Break agent prose into readable paragraphs.
 
     Existing blank-line breaks are respected; a wall of text with none is
     split deterministically every few sentences. Escaped first — this renders
-    agent-authored content.
+    agent-authored content. Findings' `extra` values are arbitrary JSON, so
+    non-string values render sensibly instead of crashing: a list becomes one
+    paragraph per item, a dict a key: value line, anything else its str().
     """
-    text = (text or "").strip()
+    if isinstance(text, list | tuple):
+        items = [str(x).strip() for x in text if str(x).strip()]
+        return Markup("".join(f"<p>{escape(i)}</p>" for i in items))
+    if isinstance(text, dict):
+        text = "; ".join(f"{k}: {v}" for k, v in text.items())
+    elif not isinstance(text, str):
+        text = "" if text is None else str(text)
+    text = text.strip()
     if not text:
         return Markup("")
     if "\n\n" in text:
