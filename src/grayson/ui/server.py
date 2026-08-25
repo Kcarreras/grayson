@@ -25,7 +25,7 @@ from grayson.core.engine import EnforcementError
 from grayson.core.session import STAGES, Session
 from grayson.interventions import validate_response
 from grayson.interventions.types import InterventionError
-from grayson.knowledge import KnowledgeStore, completeness
+from grayson.knowledge import KnowledgeDocError, KnowledgeStore, completeness
 from grayson.records import get_record, search_records
 from grayson.ui.format import GLOSSARY, relationship_graph, split_sections
 from grayson.ui.sqlhl import highlight_sql
@@ -174,7 +174,13 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             all_tables = [t for t in all_tables if ql in t.lower() or t in hit_tables]
         rows = []
         for fqn in all_tables:
-            doc = store.read(fqn)
+            try:
+                doc = store.read(fqn)
+            except KnowledgeDocError as e:
+                # a broken doc is a card with the parse error, never a 500 —
+                # the whole point is telling the user which file to fix
+                rows.append({"table": fqn, "grain": None, "completeness": None, "error": str(e)})
+                continue
             rows.append(
                 {"table": fqn, "grain": doc.get("grain"), "completeness": completeness(doc)}
             )
@@ -199,6 +205,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         store = KnowledgeStore(workspace.knowledge_dir)
         try:
             doc = store.read(fqn)
+        except KnowledgeDocError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         return templates.TemplateResponse(
