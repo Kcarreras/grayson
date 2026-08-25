@@ -109,6 +109,10 @@ class KnowledgeStore:
         }
         for key, default in _PROFILE_DEFAULTS.items():
             doc[key] = data.get(key, default.copy() if isinstance(default, list) else default)
+        # Hand-edited files write these in looser shapes; normalize once here so
+        # every consumer (graph, completeness, templates, agents) sees dicts.
+        doc["relationships"] = _norm_relationships(doc.get("relationships"))
+        doc["columns"] = _norm_columns(doc.get("columns"))
         return doc
 
     def fact(self, fqn: str, fact_id: str) -> dict | None:
@@ -192,6 +196,18 @@ class KnowledgeStore:
                 isinstance(c, dict) and c.get("name") for c in cols
             ):
                 raise ValueError("columns must be a list of objects, each with at least a 'name'")
+        if "relationships" in updates:
+            rels = updates["relationships"]
+            if not isinstance(rels, list) or not all(
+                (isinstance(r, dict) and (r.get("to") or r.get("table")))
+                or (isinstance(r, str) and r.strip())
+                for r in rels
+            ):
+                raise ValueError(
+                    "relationships must be a list of objects with at least a 'to' table "
+                    "(a bare 'DB.SCHEMA.TABLE' string is accepted as shorthand)"
+                )
+            updates = {**updates, "relationships": _norm_relationships(rels)}
         doc = self.read(fqn)
         doc.update(updates)
         self._write(fqn, doc)
@@ -294,6 +310,37 @@ def _strip_heading(body: str, table: str) -> str:
     if lines and lines[0].strip().lstrip("#").strip().upper() == table.upper():
         return (lines[1] if len(lines) > 1 else "").strip()
     return body.strip()
+
+
+def _norm_relationships(value: object) -> list[dict]:
+    """Canonicalize relationship entries: dicts pass through (with 'table'/'join'
+    accepted as aliases for 'to'/'on'), a bare string is shorthand for its 'to'
+    table, anything else is dropped rather than crashing a reader."""
+    out: list[dict] = []
+    for rel in value if isinstance(value, list) else []:
+        if isinstance(rel, dict):
+            rel = dict(rel)
+            if not rel.get("to") and rel.get("table"):
+                rel["to"] = rel.pop("table")
+            if not rel.get("on") and rel.get("join"):
+                rel["on"] = rel.pop("join")
+            if rel.get("to"):
+                out.append(rel)
+        elif isinstance(rel, str) and rel.strip():
+            out.append({"to": rel.strip()})
+    return out
+
+
+def _norm_columns(value: object) -> list[dict]:
+    """Canonicalize column entries: dicts with a name pass through, a bare
+    string is shorthand for an undescribed column, anything else is dropped."""
+    out: list[dict] = []
+    for col in value if isinstance(value, list) else []:
+        if isinstance(col, dict) and col.get("name"):
+            out.append(col)
+        elif isinstance(col, str) and col.strip():
+            out.append({"name": col.strip()})
+    return out
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:

@@ -164,6 +164,8 @@ def _collect_edges(docs: Mapping[str, Mapping[str, Any]]) -> list[dict]:
     seen: dict[tuple[str, str, str], dict] = {}
     for source, doc in docs.items():
         for rel in doc.get("relationships") or []:
+            if not isinstance(rel, Mapping):  # store.read normalizes; stay safe anyway
+                continue
             target = str(rel.get("to") or "").strip().upper()
             if not target or target == source:
                 continue
