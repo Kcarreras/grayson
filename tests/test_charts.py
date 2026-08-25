@@ -260,7 +260,7 @@ def test_chart_tiles_collapse_beyond_newest_four(workspace):
     client = TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1")
     page = client.get(f"/session/{s.id}?t={TOKEN}").text
     tiles = re.findall(
-        r'<details class="card chartcard[^"]*"\s+data-chart="c_\d+"\s*( open)?\s*>', page
+        r'<details class="card chartcard[^"]*"\s+data-fold="c_\d+"\s*( open)?\s*>', page
     )
     assert len(tiles) == 6
     assert sum(1 for open_attr in tiles if open_attr) == 4  # newest four open

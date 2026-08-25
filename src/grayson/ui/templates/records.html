@@ -31,7 +31,10 @@
     <span class="row">
       {% if r.kind == "finding" %}
         <span class="badge {{ 'bad' if r.severity in ['critical','high'] else 'attn' if r.severity == 'medium' else 'plain' }}">{{ r.severity }}</span>
-        {% if r.accepted %}<span class="badge ok">accepted</span>{% endif %}
+        {% if r.superseded_by %}<span class="badge plain">superseded by {{ r.superseded_by }}</span>
+        {% elif r.accepted %}<span class="badge ok">accepted</span>{% endif %}
+        {% if r.supersedes %}<span class="badge todo">replaces {{ r.supersedes }}</span>{% endif %}
+        {% if r.rejected %}<span class="badge bad">rejected</span>{% endif %}
       {% else %}
         <span class="badge plain">proposal</span>
         {% if r.verdict == "pass" %}<span class="badge ok">verified</span>

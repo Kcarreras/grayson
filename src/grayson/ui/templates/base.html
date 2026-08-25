@@ -120,13 +120,19 @@ main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
 .chartgrid { display: grid; gap: 12px; align-items: start;
   grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); }
 .chartcard { margin-bottom: 0; }
-details.chartcard > summary.chartsum { cursor: pointer; list-style: none;
-  display: flex; align-items: center; gap: 8px; user-select: none; }
-details.chartcard > summary.chartsum::-webkit-details-marker { display: none; }
+details.chartcard > summary.chartsum, details.findcard > summary.chartsum {
+  cursor: pointer; list-style: none;
+  display: flex; align-items: center; gap: 8px; user-select: none; flex-wrap: wrap; }
+details.chartcard > summary.chartsum::-webkit-details-marker,
+details.findcard > summary.chartsum::-webkit-details-marker { display: none; }
 .chartsum .c-caret { color: var(--faint); font-size: 11px; flex: none;
   transition: transform .15s; }
-details.chartcard[open] > .chartsum .c-caret { transform: rotate(90deg); }
-details.chartcard:not([open]):hover { border-color: var(--muted); }
+details.chartcard[open] > .chartsum .c-caret,
+details.findcard[open] > .chartsum .c-caret { transform: rotate(90deg); }
+details.chartcard:not([open]):hover, details.findcard:not([open]):hover {
+  border-color: var(--muted); }
+details.findcard.superseded { opacity: .62; }
+details.findcard.superseded[open] { opacity: .85; }
 @keyframes chart-in {
   from { opacity: 0; transform: translateX(32px); }
   to { opacity: 1; transform: none; }
@@ -180,6 +186,8 @@ details.chartcard:not([open]):hover { border-color: var(--muted); }
 .btn.secondary:hover { background: var(--act-soft); filter: none; }
 .btn.ghost { background: transparent; color: var(--muted); border-color: var(--border); }
 .btn.ghost:hover { color: var(--ink); border-color: var(--muted); filter: none; }
+.btn.confirm { background: var(--ok); border-color: var(--ok); color: var(--act-ink); }
+.btn.confirm:hover { filter: brightness(1.08); }
 .btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
 .btn.danger:hover { background: var(--bad-soft); filter: none; }
 .btn.sm { padding: 4px 11px; font-size: 12px; }
@@ -384,16 +392,17 @@ dl.props dd { margin: 0; color: var(--ink-2); }
   });
 })();
 
-/* Chart tiles: the server opens the newest four; a manual toggle is
-   remembered per chart so the 10s live refresh doesn't fight the user. */
+/* Collapsible tiles (charts, findings): the server opens the newest few; a
+   manual toggle is remembered per tile so the 10s live refresh doesn't fight
+   the user. */
 (function () {
-  var cards = document.querySelectorAll("details.chartcard[data-chart]");
+  var cards = document.querySelectorAll("details[data-fold]");
   if (!cards.length) return;
-  var key = "grayson_chartfold_" + location.pathname;
+  var key = "grayson_fold_" + location.pathname;
   var saved = {};
   try { saved = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) {}
   cards.forEach(function (d) {
-    var id = d.dataset.chart;
+    var id = d.dataset.fold;
     if (id in saved) d.open = !!saved[id];
     d.addEventListener("toggle", function () {
       saved[id] = d.open ? 1 : 0;

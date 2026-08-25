@@ -89,6 +89,18 @@ def record_finding(
     except (ValidationError, ValueError) as e:
         raise EnforcementError(f"finding failed schema '{tpl.findings_schema}': {e}") from e
     _validate_evidence(session, finding.evidence)
+    if finding.supersedes:
+        target = session.finding(finding.supersedes)
+        if target is None:
+            raise EnforcementError(
+                f"supersedes cites unknown finding '{finding.supersedes}'. "
+                "Cite an existing finding in this session."
+            )
+        if target.get("superseded_by"):
+            raise EnforcementError(
+                f"finding '{finding.supersedes}' is already superseded by "
+                f"'{target['superseded_by']}' — supersede the head of the chain instead."
+            )
     fid = session.add_finding(
         schema_name=finding.schema_name,
         severity=finding.severity,
@@ -97,6 +109,14 @@ def record_finding(
         payload=finding.model_dump(),
         worker=worker,
     )
+    if finding.supersedes:
+        # a proposal only — nothing changes on the old finding until the user
+        # accepts this one (see Session.accept_finding)
+        session.log_event(
+            worker or "agent",
+            "supersession_proposed",
+            {"fid": fid, "supersedes": finding.supersedes},
+        )
     return session.finding(fid)
 
 
@@ -108,7 +128,9 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
         k for k in tpl.required_check_keys() if checkpoints.get(k, {}).get("status") != "complete"
     ]
     findings = session.findings()
-    unaccepted = [f["fid"] for f in findings if not f["accepted"]]
+    # a superseded finding was replaced by a corrected one: it no longer counts
+    # as accepted for any gate, however it got there
+    unaccepted = [f["fid"] for f in findings if not f["accepted"] or f.get("superseded_by")]
     return {
         "stage": session.stage,
         "workflow": tpl.name,
@@ -117,6 +139,12 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
         "checks_complete": not open_checks,
         "findings_total": len(findings),
         "findings_unaccepted": unaccepted,
+        "findings_superseded": [
+            {"fid": f["fid"], "by": f["superseded_by"]} for f in findings if f.get("superseded_by")
+        ],
+        "findings_rejected": [
+            {"fid": f["fid"], "reason": f["rejected_reason"]} for f in findings if f.get("rejected")
+        ],
     }
 
 

@@ -152,7 +152,12 @@ setup → analysis → synthesis → review → fixes → verification → close
 3. **synthesis** — findings drafted against the workflow's findings schema; every claim
    must cite query evidence. grayson validates structure + evidence links.
 4. **review** — evidence gate: all required checkpoints closed, all findings validated,
-   all interventions resolved. Presented to user in UI; user accepts findings.
+   all interventions resolved. Presented to user in UI; user accepts findings, or
+   rejects them with a required reason the agent continues from. Findings are
+   immutable: a corrected finding may carry `supersedes: f_00X`, but that is a
+   proposal — the supersession executes only inside the user's accept of the new
+   finding (agents cannot perform it), the superseded finding stops counting as
+   accepted for every gate, and the full chain stays visible as history.
 5. **fixes** — agents write proposals (`file_diff` or `ddl_snippet`, each linked to the
    finding it addresses and payload-validated). User approves/rejects per proposal in
    UI/CLI. Approved file-diffs are applied by the harness agent in the work repo (grayson

@@ -28,7 +28,7 @@ from grayson.interventions import validate_response
 from grayson.interventions.types import InterventionError
 from grayson.knowledge import KnowledgeDocError, KnowledgeStore, completeness
 from grayson.records import get_record, search_records
-from grayson.ui.format import GLOSSARY, relationship_graph, split_sections
+from grayson.ui.format import GLOSSARY, paragraphs, relationship_graph, split_sections
 from grayson.ui.sqlhl import highlight_sql
 from grayson.workspace import Workspace
 
@@ -54,6 +54,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     templates.env.globals["asset_version"] = __version__
     templates.env.filters["sections"] = split_sections
     templates.env.filters["sqlhl"] = highlight_sql
+    templates.env.filters["para"] = paragraphs
 
     def _valid(supplied: str | None) -> bool:
         return bool(supplied) and secrets.compare_digest(supplied, token)
@@ -335,6 +336,60 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             {"nav": "records", "records": records, "q": q, "kind": kind},
         )
 
+    def _finding_lineage(s: Session, fid: str) -> list[dict]:
+        """The supersession chain around `fid`, oldest first.
+
+        Executed supersessions (superseded_by pointers, set only inside a user
+        accept) form the chain; a not-yet-accepted finding that proposes to
+        replace the head is appended as 'proposed'. Empty when there is no
+        history to show.
+        """
+        findings = {f["fid"]: f for f in s.findings()}
+        if fid not in findings:
+            return []
+        newer_to_older = {
+            f["superseded_by"]: f["fid"]
+            for f in findings.values()
+            if f.get("superseded_by") in findings
+        }
+        root = fid
+        while root in newer_to_older:
+            root = newer_to_older[root]
+        chain = [root]
+        while True:
+            nxt = findings[chain[-1]].get("superseded_by")
+            if nxt in findings and nxt not in chain:
+                chain.append(nxt)
+            else:
+                break
+        proposed = next(
+            (
+                f["fid"]
+                for f in findings.values()
+                if (f["payload"] or {}).get("supersedes") == chain[-1]
+                and not f["accepted"]
+                and f["fid"] not in chain
+            ),
+            None,
+        )
+        if proposed:
+            chain.append(proposed)
+        if len(chain) < 2:
+            return []
+        return [
+            {
+                "fid": c,
+                "title": findings[c]["title"],
+                "ts": findings[c]["ts"],
+                "accepted": findings[c]["accepted"],
+                "superseded": bool(findings[c].get("superseded_by")),
+                "rejected": findings[c].get("rejected", False),
+                "proposed": c == proposed,
+                "current": c == fid,
+            }
+            for c in chain
+        ]
+
     @app.get("/records/{sid}/{kind}/{rid}", response_class=HTMLResponse)
     def record_view(request: Request, sid: str, kind: str, rid: str) -> Any:
         _check(request)
@@ -344,15 +399,17 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(e)) from e
         if item is None:
             raise HTTPException(status_code=404, detail=f"no {kind} '{rid}' in session '{sid}'")
+        s = _session(sid)
         return templates.TemplateResponse(
             request,
             "record.html",
             {
                 "nav": "records",
                 "session_id": sid,
-                "session_title": _session(sid).get_meta("title", ""),
+                "session_title": s.get_meta("title", ""),
                 "kind": kind,
                 "record": item["record"],
+                "lineage": _finding_lineage(s, rid) if kind == "finding" else [],
             },
         )
 
@@ -480,6 +537,27 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         s = _session(sid)
         try:
             s.accept_finding(fid)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e.args[0])) from e
+        return _redirect(f"/session/{sid}")
+
+    @app.post("/session/{sid}/finding/{fid}/reject")
+    async def reject_finding(request: Request, sid: str, fid: str) -> Any:
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        reason = str(form.get("reason", "")).strip()
+        try:
+            s.reject_finding(fid, reason)
+        except ValueError:
+            return templates.TemplateResponse(
+                request,
+                "session.html",
+                _session_context(
+                    s, error=f"rejecting {fid} requires a reason — it is what the agent works from"
+                ),
+                status_code=400,
+            )
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e.args[0])) from e
         return _redirect(f"/session/{sid}")

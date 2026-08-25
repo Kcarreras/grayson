@@ -45,6 +45,10 @@ def collect_records(workspace: Workspace, kind: str | None = None) -> list[dict]
                         "title": f["title"],
                         "severity": f["severity"],
                         "accepted": f["accepted"],
+                        "superseded_by": f.get("superseded_by"),
+                        "supersedes": f["payload"].get("supersedes"),
+                        "rejected": f.get("rejected", False),
+                        "rejected_reason": f.get("rejected_reason"),
                         "summary": f["payload"].get("summary", ""),
                         "payload": f["payload"],
                     }

@@ -14,10 +14,36 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from markupsafe import Markup, escape
+
 # ALL-CAPS heading followed by a colon, e.g. "WHY THIS FIX:", "RISKS:",
 # "ASSUMPTIONS TO CONFIRM BEFORE APPLYING:". Requires >= 3 chars so ordinary
 # sentences with a capitalized word and colon ("SQL:") rarely false-positive.
 _SECTION_RE = re.compile(r"(?:(?<=^)|(?<=[.?!)\]]\s)|(?<=\n))([A-Z][A-Z0-9 /&',-]{2,60}):\s+")
+
+
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+
+
+def paragraphs(text: str, sentences_per_para: int = 3) -> Markup:
+    """Break agent prose into readable paragraphs.
+
+    Existing blank-line breaks are respected; a wall of text with none is
+    split deterministically every few sentences. Escaped first — this renders
+    agent-authored content.
+    """
+    text = (text or "").strip()
+    if not text:
+        return Markup("")
+    if "\n\n" in text:
+        paras = [p.strip() for p in text.split("\n\n") if p.strip()]
+    else:
+        sentences = _SENTENCE_RE.split(text)
+        paras = [
+            " ".join(sentences[i : i + sentences_per_para]).strip()
+            for i in range(0, len(sentences), sentences_per_para)
+        ]
+    return Markup("".join(f"<p>{escape(p)}</p>" for p in paras if p))
 
 
 def split_sections(text: str) -> list[dict]:
@@ -73,7 +99,10 @@ GLOSSARY: dict[str, str] = {
     ),
     "findings": (
         "Structured problem reports validated against the workflow's schema. "
-        "You accept the real ones; fixes can only begin after an accepted finding."
+        "You accept the real ones (fixes only begin after an accepted finding) "
+        "or reject them with a reason the agent works from. Findings are never "
+        "edited: a corrected finding proposes to supersede the old one, and the "
+        "swap executes only when you accept it — the history stays visible."
     ),
     "proposals": (
         "Concrete fixes the agent drafts — a file diff or DDL for you to apply. "

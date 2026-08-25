@@ -77,7 +77,13 @@ they are equivalent. Never query Snowflake except through grayson.
    `grayson knowledge add <table> --fact "..." --evidence <iid>` — the user confirms it
    from the console later.
 5. Findings: record them against the workflow schema, each citing evidence:
-   `grayson finding add <sid> --json '{...}'`.
+   `grayson finding add <sid> --json '{...}'`. Findings are immutable — never try
+   to edit one. If an accepted finding turns out to be wrong, record a corrected
+   finding with `"supersedes": "f_00X"` in the payload: that is a proposal, and
+   the old finding is replaced only if the user accepts the new one. If the user
+   REJECTS a finding, its rejection reason appears in `grayson finding list` and
+   `grayson session readiness` (findings_rejected) — read it, continue analysis
+   in that direction, and record a corrected finding.
 6. Fixes: draft proposals linked to findings
    (`grayson proposal add <sid> --kind file_diff|ddl_snippet ...`). After the user
    approves, apply file diffs yourself with your editing tools, mark them applied
