@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -360,13 +361,22 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         from grayson.charts import chart_data, list_charts, render_svg
 
         out = []
+        now = datetime.now(UTC)
         for spec in reversed(list_charts(s)[-limit:]):
             try:
                 data = chart_data(s, spec)
                 svg = render_svg(spec, data)
             except (OSError, ValueError, KeyError):
                 continue
-            out.append({"spec": spec, "data": data, "svg": Markup(svg)})
+            # charts younger than the live-refresh interval slide in animated;
+            # by the next refresh they render as settled tiles
+            try:
+                created_raw = str(spec.get("created_at", ""))
+                created = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                is_new = (now - created).total_seconds() < 15
+            except ValueError:
+                is_new = False
+            out.append({"spec": spec, "data": data, "svg": Markup(svg), "is_new": is_new})
         return out
 
     def _session_context(s: Session, error: str | None = None) -> dict:
