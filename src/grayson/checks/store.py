@@ -63,7 +63,9 @@ A file may contain a single result object, a list of them, or
 
 Automation can write files here directly (any layout, e.g. one file per DAG),
 or pipe results through `grayson checks ingest <file>` which validates and keeps
-a bounded per-check history under `ingested/`.
+a bounded per-check history under `ingested/`. A dbt run_results.json is
+detected and converted automatically (add `--manifest target/manifest.json` to
+resolve tables and compiled SQL). Full setup guide: docs/CHECKS.md.
 """
 
 
@@ -232,14 +234,30 @@ class ChecksStore:
 
     # -- ingest ----------------------------------------------------------
 
-    def ingest(self, source_path: Path, source: str | None = None) -> dict:
+    def ingest(
+        self,
+        source_path: Path,
+        source: str | None = None,
+        manifest_path: Path | None = None,
+        ttl_hours: float | None = None,
+    ) -> dict:
         """Validate an external results file (or directory of them) and fold the
         results into the library under `ingested/<check_id>.json`.
+
+        A dbt run_results.json is recognized automatically and converted via
+        the dbt adapter (pass `manifest_path` to resolve each test to its
+        tables and compiled SQL). `ttl_hours` stamps a cadence expectation on
+        adapter-converted results that carry none of their own.
 
         Idempotent: a (check_id, run_at) pair already on file is skipped, so
         re-running an automation hand-off never duplicates history. History is
         trimmed to the newest MAX_INGESTED_RUNS runs per check.
         """
+        from grayson.checks.adapters import dbt_run_results_to_checks, looks_like_dbt_run_results
+
+        manifest: dict | None = None
+        if manifest_path is not None:
+            manifest = read_json(manifest_path)
         paths = sorted(source_path.rglob("*.json")) if source_path.is_dir() else [source_path]
         ingested: dict[str, int] = {}
         skipped = 0
@@ -253,7 +271,13 @@ class ChecksStore:
             except (json.JSONDecodeError, OSError) as e:
                 errors.append({"file": str(path), "error": f"unreadable: {e}"})
                 continue
-            entries = _extract_results(data)
+            if looks_like_dbt_run_results(data):
+                entries = dbt_run_results_to_checks(data, manifest, ttl_hours=ttl_hours)
+                if not entries:
+                    errors.append({"file": str(path), "error": "dbt run_results has no test nodes"})
+                    continue
+            else:
+                entries = _extract_results(data)
             if not entries:
                 errors.append({"file": str(path), "error": "no result objects found"})
                 continue

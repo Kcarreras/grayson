@@ -52,6 +52,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     templates.env.globals["stages"] = STAGES
     templates.env.globals["asset_version"] = __version__
     templates.env.filters["sections"] = split_sections
+    templates.env.filters["sqlhl"] = highlight_sql
 
     def _valid(supplied: str | None) -> bool:
         return bool(supplied) and secrets.compare_digest(supplied, token)
