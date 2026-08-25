@@ -346,7 +346,13 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "record.html",
-            {"nav": "records", "session_id": sid, "kind": kind, "record": item["record"]},
+            {
+                "nav": "records",
+                "session_id": sid,
+                "session_title": _session(sid).get_meta("title", ""),
+                "kind": kind,
+                "record": item["record"],
+            },
         )
 
     def _charts_context(s: Session, limit: int = 24) -> list[dict]:
