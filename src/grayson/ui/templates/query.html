@@ -26,6 +26,10 @@
 <div class="banner" style="margin-top: 14px;">
   Rejected by the guard{% if q.guard_rule %} — <span class="mono">{{ q.guard_rule }}</span>{% endif %}{% if q.reason %}: {{ q.reason }}{% endif %}
 </div>
+{% elif q.error %}
+<div class="card attn" style="margin-top: 14px;">
+  <span class="overline attn-text">{{ q.status }}</span> — <span class="mono">{{ q.error }}</span>
+</div>
 {% endif %}
 {% for w in q_warnings %}<div class="card attn small" style="margin-top: 10px;">{{ w }}</div>{% endfor %}
 
