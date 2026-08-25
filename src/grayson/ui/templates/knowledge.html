@@ -44,6 +44,15 @@
 {% endif %}
 <div class="grid">
 {% for t in tables %}
+{% if t.error %}
+<div class="card attn">
+  <div class="row split">
+    <b class="mono">{{ t.table }}</b>
+    <span class="badge bad">unreadable</span>
+  </div>
+  <div class="small attn-text" style="margin-top: 6px;">{{ t.error }}</div>
+</div>
+{% else %}
 <div class="card">
   <div class="row split">
     <a href="/knowledge/{{ t.table }}?t={{ token }}"><b class="mono">{{ t.table }}</b></a>
@@ -61,6 +70,7 @@
       <span class="badge attn">{{ t.completeness.open_questions }} open question{{ "s" if t.completeness.open_questions != 1 }}</span>{% endif %}
   </div>
 </div>
+{% endif %}
 {% endfor %}
 </div>
 {% endblock %}

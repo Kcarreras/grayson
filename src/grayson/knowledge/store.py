@@ -17,6 +17,14 @@ from pydantic import BaseModel, Field
 
 from grayson.util import utcnow
 
+
+class KnowledgeDocError(ValueError):
+    """A knowledge doc exists but cannot be parsed (bad YAML front-matter,
+    leftover merge-conflict markers, a malformed fact). Subclasses ValueError
+    so every existing caller that handles bad input keeps working; the UI
+    catches it specifically to show *which* file is broken instead of a 500."""
+
+
 FactStatus = Literal["proposed", "data_inferred", "user_confirmed"]
 _FQN_PART = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")  # \Z: no trailing-newline match
 
@@ -78,8 +86,20 @@ class KnowledgeStore:
                 },
             }
         front, body = _split_frontmatter(path.read_text(encoding="utf-8"))
-        data = yaml.safe_load(front) or {} if front else {}
-        facts = [Fact.model_validate(f).model_dump() for f in data.get("facts", [])]
+        rel = path.relative_to(self.dir)
+        try:
+            data = yaml.safe_load(front) or {} if front else {}
+        except yaml.YAMLError as e:
+            raise KnowledgeDocError(
+                f"knowledge doc {rel} has malformed front-matter (hand edit or "
+                f"unresolved merge conflict?): {e}"
+            ) from e
+        if not isinstance(data, dict):
+            raise KnowledgeDocError(f"knowledge doc {rel}: front-matter is not a mapping")
+        try:
+            facts = [Fact.model_validate(f).model_dump() for f in data.get("facts") or []]
+        except ValueError as e:
+            raise KnowledgeDocError(f"knowledge doc {rel} has a malformed fact: {e}") from e
         table = data.get("table", fqn.upper())
         doc = {
             "table": table,
