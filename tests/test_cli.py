@@ -167,3 +167,53 @@ def test_checkpoint_and_findings_flow(workspace, fake_snow_env):
 
     # fixes reachable now that a finding exists
     invoke("session", "advance", sid, "--to", "fixes")
+
+
+def test_upgrade_dev_checkout_gets_instructions(monkeypatch):
+    import grayson.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/uv")
+
+    def fake_run(args, **kwargs):
+        class R:
+            returncode = 0
+            stdout = "some-other-tool v1.0.0\n"
+            stderr = ""
+
+        assert args[:3] == ["/usr/bin/uv", "tool", "list"]
+        return R()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    out = invoke("upgrade")
+    assert out["upgraded"] is False
+    assert "git pull" in out["detail"]
+
+
+def test_upgrade_runs_uv_tool_upgrade(monkeypatch):
+    import grayson.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/uv")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+
+        class R:
+            returncode = 0
+            stdout = "grayson-sql v0.1.0\n" if args[2] == "list" else "Updated grayson-sql\n"
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    out = invoke("upgrade")
+    assert out["upgraded"] is True
+    assert calls[-1] == ["/usr/bin/uv", "tool", "upgrade", "grayson-sql"]
+
+
+def test_upgrade_without_uv_fails(monkeypatch):
+    import grayson.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    result = runner.invoke(app, ["upgrade"])
+    assert result.exit_code == 1

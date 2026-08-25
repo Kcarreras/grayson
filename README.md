@@ -79,6 +79,7 @@ handles credentials. The sandbox below needs no Snowflake at all.
 
 ```bash
 uv tool install git+https://github.com/Kcarreras/grayson   # or: git clone && uv sync
+grayson upgrade                  # later: pull the newest build in place
 cd your-data-repo
 grayson init .                    # scaffold a workspace (grayson.toml, libraries, .grayson/)
 grayson doctor                    # verify snow CLI + connection

@@ -226,6 +226,33 @@ def doctor() -> None:
 
 
 @app.command()
+def upgrade() -> None:
+    """Upgrade grayson in place (uv tool installs; dev checkouts get instructions)."""
+    uv = shutil.which("uv")
+    if uv is None:
+        fail("uv not found on PATH — install uv, or upgrade however grayson was installed")
+        return
+    listed = subprocess.run([uv, "tool", "list"], capture_output=True, text=True, timeout=60)
+    if "grayson-sql" not in listed.stdout:
+        emit(
+            {
+                "upgraded": False,
+                "detail": "not a `uv tool` install — for a development checkout run "
+                "`git pull && uv sync` in the repo",
+            }
+        )
+        return
+    proc = subprocess.run(
+        [uv, "tool", "upgrade", "grayson-sql"], capture_output=True, text=True, timeout=600
+    )
+    out = (proc.stdout + proc.stderr).strip()
+    if proc.returncode != 0:
+        fail(f"uv tool upgrade failed: {out[-1000:]}")
+        return
+    emit({"upgraded": True, "detail": out[-1000:]})
+
+
+@app.command()
 def status() -> None:
     """Where am I? Workspace, latest session, and what needs attention next."""
     ws = _workspace()
