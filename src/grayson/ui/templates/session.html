@@ -62,7 +62,7 @@
     <b>{{ iv.title }}</b><span class="badge attn">{{ iv.kind }}</span>
   </div>
   {% if iv.prompt %}<div class="ink2 small" style="margin: 6px 0;">{{ iv.prompt }}</div>{% endif %}
-  <a class="btn" style="margin-top: 6px;" href="/session/{{ s.id }}/intervention/{{ iv.iid }}?t={{ token }}">Respond →</a>
+  <a class="btn confirm" style="margin-top: 6px;" href="/session/{{ s.id }}/intervention/{{ iv.iid }}?t={{ token }}">Respond →</a>
 </div>
 {% endfor %}
 {% endif %}
@@ -256,11 +256,11 @@
     </div>
   {% endif %}
   {% if p.status == "proposed" %}
-  <div class="row" style="margin-top: 12px;">
+  <div class="row" style="margin-top: 12px; gap: 14px;">
     <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}">
-      <button class="btn" type="submit">Approve</button></form>
+      <button class="btn confirm sm" type="submit">Approve proposal</button></form>
     <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/reject?t={{ token }}">
-      <button class="btn danger" type="submit">Reject</button></form>
+      <button class="btn danger sm" type="submit">Reject proposal</button></form>
   </div>
   {% endif %}
 </div>

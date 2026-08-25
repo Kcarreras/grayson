@@ -176,7 +176,13 @@ details.findcard.superseded[open] { opacity: .85; }
 .badge.todo { color: var(--todo); border-color: transparent; background: var(--todo-soft); }
 .badge.todo::before { background: var(--todo); }
 
-/* ---- buttons --------------------------------------------------------- */
+/* ---- buttons ----------------------------------------------------------
+   One system across the console:
+   .btn.confirm  solid amber  — committing a pending human decision
+                                (accept finding, approve proposal, answer
+                                an intervention)
+   .btn.danger   red outline  — the negative decision (reject), kept quiet
+   .btn / .btn.secondary / .btn.ghost — neutral actions and navigation */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 15px;
   border-radius: 8px; cursor: pointer; border: 1px solid var(--act);
   background: var(--act); color: var(--act-ink); font-size: 13px; font-weight: 620;
