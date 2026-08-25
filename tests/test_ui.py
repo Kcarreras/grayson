@@ -81,6 +81,14 @@ def test_query_detail_page_highlights_sql(client, session):
     assert client.get(f"/session/{session.id}/query/q_9999?t={TOKEN}").status_code == 404
 
 
+def test_query_detail_shows_execution_error(client, session):
+    err = FakeExecutor(status="error", error="no such column: BIRTHDATE")
+    run_statement(session, "SELECT nope FROM DB.S.T1", executor=err)
+    r = client.get(f"/session/{session.id}/query/q_0001?t={TOKEN}")
+    assert r.status_code == 200
+    assert "no such column: BIRTHDATE" in r.text
+
+
 def test_query_detail_escapes_hostile_sql(client, session):
     from grayson.core.run import run_statement
 
