@@ -2,7 +2,8 @@
 {% block title %}grayson — {{ record.title }}{% endblock %}
 {% block content %}
 <p class="small"><a href="/records?t={{ token }}">← Records</a> ·
-  from session <a class="mono" href="/session/{{ session_id }}?t={{ token }}">{{ session_id }}</a></p>
+  from session <a class="{{ 'mono' if not session_title }}" href="/session/{{ session_id }}?t={{ token }}"
+    title="{{ session_id }}">{{ session_title or session_id }}</a></p>
 
 {% if kind == "finding" %}
 <div class="row split">

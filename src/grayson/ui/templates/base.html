@@ -117,9 +117,25 @@ main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
   border: 1px solid var(--bad); color: var(--bad); background: var(--bad-soft); }
 
 /* ---- charts ---------------------------------------------------------- */
-.chartgrid { display: grid; gap: 12px;
+.chartgrid { display: grid; gap: 12px; align-items: start;
   grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); }
 .chartcard { margin-bottom: 0; }
+details.chartcard > summary.chartsum { cursor: pointer; list-style: none;
+  display: flex; align-items: center; gap: 8px; user-select: none; }
+details.chartcard > summary.chartsum::-webkit-details-marker { display: none; }
+.chartsum .c-caret { color: var(--faint); font-size: 11px; flex: none;
+  transition: transform .15s; }
+details.chartcard[open] > .chartsum .c-caret { transform: rotate(90deg); }
+details.chartcard:not([open]):hover { border-color: var(--muted); }
+@keyframes chart-in {
+  from { opacity: 0; transform: translateX(32px); }
+  to { opacity: 1; transform: none; }
+}
+.chartcard.chart-enter { animation: chart-in .5s cubic-bezier(.2, .7, .3, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .chartcard.chart-enter { animation: none; }
+  .chartsum .c-caret { transition: none; }
+}
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; display: inline-block; }
 .swatch.s1 { background: var(--viz-s1); }
 .swatch.s2 { background: var(--viz-s2); }
@@ -365,6 +381,24 @@ dl.props dd { margin: 0; color: var(--ink-2); }
       });
     });
     pre.appendChild(btn);
+  });
+})();
+
+/* Chart tiles: the server opens the newest four; a manual toggle is
+   remembered per chart so the 10s live refresh doesn't fight the user. */
+(function () {
+  var cards = document.querySelectorAll("details.chartcard[data-chart]");
+  if (!cards.length) return;
+  var key = "grayson_chartfold_" + location.pathname;
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) {}
+  cards.forEach(function (d) {
+    var id = d.dataset.chart;
+    if (id in saved) d.open = !!saved[id];
+    d.addEventListener("toggle", function () {
+      saved[id] = d.open ? 1 : 0;
+      try { localStorage.setItem(key, JSON.stringify(saved)); } catch (e) {}
+    });
   });
 })();
 </script>

@@ -43,7 +43,8 @@
   {% if r.summary %}<div class="ink2 small" style="margin: 5px 0;">{{ r.summary[:260] }}{% if r.summary | length > 260 %}…{% endif %}</div>{% endif %}
   <div class="faint small">
     <span class="chip">{{ r.id }}</span> · {{ r.workflow }} ·
-    <a class="mono" href="/session/{{ r.session_id }}?t={{ token }}">{{ r.session_id }}</a>
+    <a class="{{ 'mono' if not r.session_title }}" href="/session/{{ r.session_id }}?t={{ token }}"
+      title="{{ r.session_id }}">{{ r.session_title or r.session_id }}</a>
     · {{ r.ts }}
   </div>
 </div>

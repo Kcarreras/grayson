@@ -67,6 +67,29 @@ def test_rename_session_via_ui(client, session):
     assert session.get_meta("title") == "NULL email regression"
 
 
+def test_records_show_renamed_session_title(client, session):
+    qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    fid = engine.record_finding(
+        session,
+        {
+            "title": "Wrong buckets",
+            "severity": "low",
+            "confidence": "high",
+            "summary": "Some URLs land in the wrong category bucket.",
+            "evidence": [qid],
+        },
+    )["fid"]
+    client.post(
+        f"/session/{session.id}/title?t={TOKEN}",
+        data={"title": "Renamed for the archive"},
+        follow_redirects=False,
+    )
+    assert "Renamed for the archive" in client.get(f"/records?t={TOKEN}").text
+    detail = client.get(f"/records/{session.id}/finding/{fid}?t={TOKEN}")
+    assert detail.status_code == 200
+    assert "Renamed for the archive" in detail.text
+
+
 def test_query_detail_page_highlights_sql(client, session):
     from grayson.core.run import run_statement
 

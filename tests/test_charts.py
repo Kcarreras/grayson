@@ -242,3 +242,27 @@ def test_mcp_chart_add_returns_text(workspace, fake_snow_env):
          "title": "NULL rate by day"},
     )  # fmt: skip
     assert "▁" in spec["text"] or "█" in spec["text"]
+
+
+def test_chart_tiles_collapse_beyond_newest_four(workspace):
+    import re
+
+    s = Session.create(
+        workspace,
+        workflow="table-health",
+        targets=["DB.S.T1"],
+        guard=GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0),
+        guard_profile="moderate",
+    )
+    q = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=DAILY))["qid"]
+    for i in range(6):
+        add_chart(s, q, "line", "DAY", ["NULL_RATE"], f"chart {i}")
+    client = TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{s.id}?t={TOKEN}").text
+    tiles = re.findall(
+        r'<details class="card chartcard[^"]*"\s+data-chart="c_\d+"\s*( open)?\s*>', page
+    )
+    assert len(tiles) == 6
+    assert sum(1 for open_attr in tiles if open_attr) == 4  # newest four open
+    # just-created charts carry the slide-in animation class
+    assert "chart-enter" in page
