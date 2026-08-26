@@ -57,9 +57,17 @@ def test_user_settings_preserved(tmp_path):
     assert data["permissions"]["allow"] == ["Bash(ls:*)"]
 
 
-def test_unsupported_harness_gets_guidance(tmp_path):
-    result = apply_guard(tmp_path, harness="cursor")
-    assert result["supported"] is False and "read-only Snowflake role" in result["guidance"]
+def test_unwritable_harnesses_get_specific_guidance(tmp_path):
+    cursor = apply_guard(tmp_path, harness="cursor")
+    assert cursor["supported"] is False
+    assert "command denylist" in cursor["guidance"]
+    assert "beforeShellExecution" in cursor["guidance"]  # hooks: the hard-deny layer
+    codex = guard_status(tmp_path, harness="codex")
+    assert codex["supported"] is False
+    assert "workspace-write" in codex["guidance"]  # sandbox blocks network egress
+    assert "mcp_servers" in codex["guidance"]  # MCP runs outside the sandbox
+    unknown = guard_status(tmp_path, harness="windsurf")
+    assert "read-only Snowflake role" in unknown["guidance"]  # generic fallback
 
 
 def test_broken_settings_surfaces_error(tmp_path):
@@ -88,9 +96,13 @@ def test_cli_harness_init_with_guard(tmp_path, monkeypatch):
     assert result.exit_code == 0
     out = json.loads(result.output)
     assert out["guard_permissions"]["added"] == GUARD_DENY_RULES
-    # non-interactive without the flag: no write, just the hint
+    # harnesses without a writable config get the concrete setup steps instead
     result = runner.invoke(app, ["harness", "init", "codex", "--path", str(tmp_path)])
-    assert "guard" in json.loads(result.output)["hint"]
+    out = json.loads(result.output)
+    assert "hint" not in out
+    assert "workspace-write" in out["guard_guidance"]
+    result = runner.invoke(app, ["harness", "init", "cursor", "--path", str(tmp_path)])
+    assert "command denylist" in json.loads(result.output)["guard_guidance"]
 
 
 # -- HTTP bearer wall ----------------------------------------------------

@@ -129,10 +129,18 @@ Two deliberate design choices in support of this:
   the ingested pass/warn verdict.
 - **Harness deny rules are consent-based.** They are offered during
   `harness init` and managed by `harness guard status|apply|remove` — shown
-  before written, reversible after, never applied silently. Only harnesses
-  with a machine-readable permission config (Claude Code today) get real
-  rules; others get instructions, stated as such.
+  before written, reversible after, never applied silently.
+
+Every supported harness has a real mechanism for blocking the bypass paths;
+they differ in who writes the config and how hard the wall is:
+
+| Harness | Mechanism | How it's set up |
+|---|---|---|
+| Claude Code | Deny rules in `.claude/settings.json`: `Bash(snow:*)` and `.grayson/**` file access hit a permission prompt | grayson writes them on consent (`harness guard apply`) |
+| Cursor (IDE agent) | Agent **command denylist** (direct `snow` never auto-runs — a human sees the prompt); where available, a `beforeShellExecution` **hook** in `.cursor/hooks.json` can hard-deny `snow` and `.grayson/` access | Human-configured; `harness init cursor` and `harness guard status --harness cursor` print the steps |
+| Cursor CLI (`cursor-agent`) | The IDE denylist/hooks do **not** apply; the CLI has its own permission config — set its allow/deny rules to block `snow`, and prefer MCP as the interface (the CLI shares the project's rules and MCP config) | Human-configured, separately from the IDE |
+| Codex | The **OS-level sandbox**: default `workspace-write` mode blocks network egress from shell commands, so direct `snow` cannot reach the warehouse at all. Register grayson as an MCP server in `~/.codex/config.toml` — MCP servers run outside the sandbox, so the guarded path works while the bypass path doesn't (this makes MCP, not the CLI, the warehouse path under Codex) | Human-configured; `harness init codex` and `harness guard status --harness codex` print the steps |
 
 The recommended baseline for production use: a dedicated read-only role for
-agent connections, guard permissions applied where the harness supports them,
-and periodic `grayson audit reconcile --ingest`.
+agent connections, the harness guard configured per the table above, and
+periodic `grayson audit reconcile --ingest`.
