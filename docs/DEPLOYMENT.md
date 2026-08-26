@@ -6,6 +6,22 @@ CLI; git auth stays entirely inside git). These recipes cover the three ways
 to run it beyond a laptop. The trust model behind each is in
 [SECURITY.md](SECURITY.md#bypass-and-containment-where-the-guards-authority-ends).
 
+## Modes at a glance
+
+Two independent choices: the **surface** (full harness vs knowledge-only) and
+the **transport** (local stdio vs served HTTP). All four combinations work.
+
+| Mode | Command | Runs | Snowflake credentials | Git auth | Best for |
+|---|---|---|---|---|---|
+| Full, local (default) | `grayson mcp serve` — the CLI is the same surface in shell form | On the analyst's machine, spawned by the harness | The analyst's own `snow` connection | The analyst's own, when a library is linked | Running investigations end to end |
+| Knowledge-only, local | `grayson mcp serve --knowledge-only --library <url-or-path>` | On a collaborator's machine, spawned by their harness | None | The collaborator's own, read access to the library repo | Briefing an agent from the team library without running the harness |
+| Knowledge-only, served (appliance) | As above plus `--http`, or the `docker/` image | On an internal VM or container | None | One read-only deploy credential, held by the server | A whole team's agents; each client needs only a URL and token |
+| Full, served (single identity) | `grayson mcp serve --http` | Under a service account holding the credentials | A key-pair connection (read-only role recommended) | A service credential, if a library is linked | Environments where warehouse credentials must not exist beside agents |
+
+Auth beyond the bearer token (network placement, TLS termination, identity
+proxies) is deliberately left to the hosting environment — the served modes
+are plain HTTP services and compose with whatever the platform provides.
+
 ## 1. Solo / same-machine (the default)
 
 Nothing to deploy. The CLI and the stdio MCP server are the same trust domain

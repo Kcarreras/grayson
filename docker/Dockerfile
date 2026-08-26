@@ -10,11 +10,15 @@ RUN apt-get update \
 COPY . /src
 RUN pip install --no-cache-dir /src && rm -rf /src
 
-RUN useradd --create-home grayson
-USER grayson
+RUN useradd --create-home --uid 1001 grayson
+ENV HOME=/home/grayson
 WORKDIR /home/grayson
-RUN mkdir -p .ssh && chmod 700 .ssh \
-    && printf 'Host *\n  StrictHostKeyChecking accept-new\n' > .ssh/config
+RUN mkdir -p /home/grayson/.ssh && chmod 700 /home/grayson/.ssh \
+    && printf 'Host *\n  StrictHostKeyChecking accept-new\n' > /home/grayson/.ssh/config \
+    # group-0 write access keeps the image working on platforms that run
+    # containers under an arbitrary non-root UID (e.g. OpenShift)
+    && chgrp -R 0 /home/grayson && chmod -R g=u /home/grayson
+USER 1001
 
 EXPOSE 8850
 # GRAYSON_LIBRARY_URL: git URL of the team qa-library (deploy key mounted at
