@@ -380,6 +380,19 @@ class Session:
         finally:
             con.close()
 
+    def executed_statements(self) -> list[dict]:
+        """Full executed SQL text, for audit reconciliation against warehouse history."""
+        con = self._con()
+        try:
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                "SELECT qid, ts, COALESCE(sql_executed, sql_raw) AS sql FROM queries "
+                "WHERE status = 'executed' ORDER BY rowid"
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            con.close()
+
     def executed_count(self) -> int:
         con = self._con()
         try:

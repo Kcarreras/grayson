@@ -236,6 +236,198 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             {"nav": "checks", "summary": ChecksStore(workspace.checks_dir).summary()},
         )
 
+    # -- workflows --------------------------------------------------------
+
+    def _workflow_usage() -> dict[str, dict]:
+        """Sessions per workflow: count and most recent start."""
+        usage: dict[str, dict] = {}
+        for sid in workspace.list_session_ids():
+            try:
+                meta = Session(workspace, sid).meta_all()
+            except (OSError, ValueError):
+                continue
+            u = usage.setdefault(meta.get("workflow") or "", {"count": 0, "last": ""})
+            u["count"] += 1
+            u["last"] = max(u["last"], meta.get("created_at") or "")
+        return usage
+
+    def _workflows_context(error: str | None = None) -> dict:
+        from grayson.identity import get_user_id
+        from grayson.workflows import list_workflows, override_problems
+        from grayson.workflows.registry import core_names
+
+        user_id = get_user_id()
+        usage = _workflow_usage()
+        cores, team = [], []
+        for tpl in list_workflows(workspace.workflows_dir):
+            row = {
+                "tpl": tpl,
+                "usage": usage.get(tpl.name, {"count": 0, "last": ""}),
+                "mine": bool(user_id) and tpl.created_by == user_id,
+            }
+            (cores if tpl.name in core_names() else team).append(row)
+        return {
+            "nav": "workflows",
+            "cores": cores,
+            "team": team,
+            "problems": override_problems(workspace.workflows_dir),
+            "fork_bases": sorted(r["tpl"].name for r in cores + team),
+            "user_id": user_id,
+            "error": error,
+        }
+
+    @app.get("/workflows", response_class=HTMLResponse)
+    def workflows_page(request: Request) -> Any:
+        _check(request)
+        return templates.TemplateResponse(request, "workflows.html", _workflows_context())
+
+    def _workflow_or_404(name: str):
+        from grayson.workflows import WorkflowNotFound, get_workflow
+
+        try:
+            return get_workflow(name, workspace.workflows_dir)
+        except WorkflowNotFound as e:
+            raise HTTPException(status_code=404, detail=str(e.args[0] if e.args else e)) from e
+
+    @app.get("/workflows/{name}", response_class=HTMLResponse)
+    def workflow_detail(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.findings.schemas import FINDINGS_SCHEMAS
+        from grayson.identity import get_user_id
+        from grayson.workflows.authoring import can_edit
+        from grayson.workflows.registry import core_names
+
+        tpl = _workflow_or_404(name)
+        user_id = get_user_id()
+        schema = FINDINGS_SCHEMAS.get(tpl.findings_schema, {})
+        return templates.TemplateResponse(
+            request,
+            "workflow_detail.html",
+            {
+                "nav": "workflows",
+                "tpl": tpl,
+                "is_core": tpl.name in core_names(),
+                "editable": can_edit(tpl, user_id),
+                "usage": _workflow_usage().get(tpl.name, {"count": 0, "last": ""}),
+                "required_extra": schema.get("required_extra", []),
+                "fork_name": f"{tpl.name}-{user_id}" if user_id else f"{tpl.name}-fork",
+                "user_id": user_id,
+            },
+        )
+
+    @app.get("/workflows/{name}/yaml")
+    def workflow_yaml(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.workflows.authoring import _dump
+
+        tpl = _workflow_or_404(name)
+        path = workspace.workflows_dir / f"{name}.yaml"
+        text = (
+            path.read_text(encoding="utf-8") if path.is_file() else _dump(tpl)  # core: rendered
+        )
+        return Response(text, media_type="text/plain; charset=utf-8")
+
+    def _workflow_edit_context(name: str, text: str, error: str | None = None) -> dict:
+        return {"nav": "workflows", "name": name, "text": text, "error": error}
+
+    @app.get("/workflows/{name}/edit", response_class=HTMLResponse)
+    def workflow_edit(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.identity import get_user_id
+        from grayson.workflows.authoring import can_edit
+        from grayson.workflows.registry import core_names
+
+        if name in core_names():
+            raise HTTPException(
+                status_code=403, detail="core workflows are canonical — fork instead"
+            )
+        path = workspace.workflows_dir / f"{name}.yaml"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"no library file {name}.yaml")
+        tpl = _workflow_or_404(name)
+        if not can_edit(tpl, get_user_id()):
+            raise HTTPException(
+                status_code=403,
+                detail=f"'{name}' was created by '{tpl.created_by}' — fork it instead",
+            )
+        return templates.TemplateResponse(
+            request,
+            "workflow_edit.html",
+            _workflow_edit_context(name, path.read_text(encoding="utf-8")),
+        )
+
+    @app.post("/workflows/{name}/edit")
+    async def workflow_save(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+        from grayson.workflows.authoring import WorkflowAuthoringError, save_workflow_yaml
+
+        form = await request.form()
+        text = str(form.get("yaml", ""))
+        try:
+            save_workflow_yaml(workspace.workflows_dir, name, text, get_user_id())
+        except WorkflowAuthoringError as e:
+            return templates.TemplateResponse(
+                request,
+                "workflow_edit.html",
+                _workflow_edit_context(name, text, error=str(e)),
+                status_code=400,
+            )
+        maybe_auto_push(workspace, f"grayson workflows: edit {name}")
+        return _redirect(f"/workflows/{name}")
+
+    @app.post("/workflows/{name}/fork")
+    async def workflow_fork(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+        from grayson.workflows import WorkflowNotFound
+        from grayson.workflows.authoring import WorkflowAuthoringError, create_workflow
+
+        form = await request.form()
+        new_name = str(form.get("new_name", "")).strip()
+        _workflow_or_404(name)
+        try:
+            create_workflow(workspace.workflows_dir, new_name, fork_of=name, user_id=get_user_id())
+        except (WorkflowAuthoringError, WorkflowNotFound) as e:
+            return templates.TemplateResponse(
+                request,
+                "workflows.html",
+                _workflows_context(error=str(e.args[0] if e.args else e)),
+                status_code=400,
+            )
+        maybe_auto_push(workspace, f"grayson workflows: fork {name} -> {new_name}")
+        return _redirect(f"/workflows/{new_name}/edit")
+
+    @app.post("/workflows/new")
+    async def workflow_create(request: Request) -> Any:
+        _check(request)
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+        from grayson.workflows import WorkflowNotFound
+        from grayson.workflows.authoring import WorkflowAuthoringError, create_workflow
+
+        form = await request.form()
+        new_name = str(form.get("new_name", "")).strip()
+        fork_of = str(form.get("fork_of", "")).strip() or None
+        try:
+            create_workflow(
+                workspace.workflows_dir, new_name, fork_of=fork_of, user_id=get_user_id()
+            )
+        except (WorkflowAuthoringError, WorkflowNotFound) as e:
+            return templates.TemplateResponse(
+                request,
+                "workflows.html",
+                _workflows_context(error=str(e.args[0] if e.args else e)),
+                status_code=400,
+            )
+        maybe_auto_push(
+            workspace,
+            f"grayson workflows: new {new_name}" + (f" (fork of {fork_of})" if fork_of else ""),
+        )
+        return _redirect(f"/workflows/{new_name}/edit")
+
     # -- settings ---------------------------------------------------------
 
     def _settings_context(error: str | None = None) -> dict:

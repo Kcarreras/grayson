@@ -112,6 +112,17 @@ def test_workflow_lint_clean_and_broken(workspace):
     assert "shadows the core workflow" in report["errors"][0]["problem"]
 
 
+def test_workflow_new_and_fork(workspace):
+    invoke("user", "set", "kcg")
+    out = invoke("workflow", "new", "orders-health", "--fork", "table-health")
+    assert out["lint"]["ok"] is True
+    show = invoke("workflow", "show", "orders-health")
+    assert show["forked_from"] == "table-health"
+    assert show["created_by"] == "kcg"
+    result = runner.invoke(app, ["workflow", "new", "bug-hunter"])
+    assert result.exit_code == 1  # core names are canonical
+
+
 def test_user_set_and_show():
     shown = invoke("user", "show")
     assert shown["user_id"] is None

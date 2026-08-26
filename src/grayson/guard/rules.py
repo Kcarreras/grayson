@@ -67,8 +67,34 @@ ALWAYS_ALLOWED_CATALOGS = {"SNOWFLAKE"}
 # the family includes session/query-mutating side effects (ABORT_SESSION,
 # CANCEL_QUERY, WAIT); QA never needs them. RESULT_SCAN reads arbitrary prior
 # query output by id, bypassing scope — agents use grayson's own cache instead.
-DENIED_FUNCTIONS = {"RESULT_SCAN", "GET_ABSOLUTE_PATH", "GET_PRESIGNED_URL", "GET_STAGE_LOCATION"}
+# The *_HISTORY table functions expose other statements' full text (which can
+# carry sensitive literals) and login/session metadata — privileged audit data
+# the human reads via `grayson audit reconcile`, never the agent.
+DENIED_FUNCTIONS = {
+    "RESULT_SCAN",
+    "GET_ABSOLUTE_PATH",
+    "GET_PRESIGNED_URL",
+    "GET_STAGE_LOCATION",
+    "QUERY_HISTORY",
+    "QUERY_HISTORY_BY_SESSION",
+    "QUERY_HISTORY_BY_USER",
+    "QUERY_HISTORY_BY_WAREHOUSE",
+    "LOGIN_HISTORY",
+    "LOGIN_HISTORY_BY_USER",
+}
 DENIED_FUNCTION_PREFIXES = ("SYSTEM$",)
+
+# Account-usage views carrying the same audit data as the denied history
+# functions. SNOWFLAKE.* is otherwise always in scope (INFORMATION_SCHEMA
+# metadata is legitimate QA input), so these are denied by name.
+DENIED_TABLES = {
+    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+    "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY",
+    "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
+    "SNOWFLAKE.ACCOUNT_USAGE.SESSIONS",
+    "SNOWFLAKE.READER_ACCOUNT_USAGE.QUERY_HISTORY",
+    "SNOWFLAKE.READER_ACCOUNT_USAGE.LOGIN_HISTORY",
+}
 
 # Built-in table functions that are safe as row sources (no scope/exfil concern).
 SAFE_TABLE_FUNCTIONS = {"GENERATOR", "FLATTEN", "SPLIT_TO_TABLE", "EXPLODE"}
@@ -255,6 +281,14 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
         if not catalog and not schema and name in cte_names:
             continue
         fq = ".".join(p for p in (catalog, schema, name) if p)
+        if fq in DENIED_TABLES:
+            return _reject(
+                "denied_table",
+                f"'{fq}' is not allowed",
+                "warehouse query/login history is privileged audit data; agents work "
+                "from grayson's own cache and audit trail — the user reviews history "
+                "via `grayson audit reconcile`",
+            )
         tables.append(fq)
         if schema in ALWAYS_ALLOWED_SCHEMAS or catalog in ALWAYS_ALLOWED_CATALOGS:
             continue

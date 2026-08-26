@@ -108,6 +108,11 @@ def load_override_report(
     return out, problems
 
 
+def core_names() -> set[str]:
+    """Names of the canonical built-in templates (unshadowable)."""
+    return set(_builtin())
+
+
 def override_problems(overrides_dir: Path | None) -> list[dict]:
     """The library workflow files that could not be loaded, and why."""
     return load_override_report(overrides_dir)[1]

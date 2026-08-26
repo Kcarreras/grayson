@@ -97,3 +97,42 @@ and fixed (regressions in `tests/test_integrity_hardening.py` and additions to
   read-only role for the strongest guarantee.
 - The guard's correctness depends on sqlglot parsing SQL the way Snowflake executes it.
   sqlglot is version-pinned; dialect updates are reviewed before bumping.
+
+## Bypass and containment (where the guard's authority ends)
+
+The guard is airtight for statements that pass **through** grayson. It is not a
+sandbox around the agent: the agent runs under the user's OS account, and the
+Snowflake CLI's named connection (credentials, cached tokens, key files) is
+reachable by any process running as that user. An agent with unrestricted shell
+access could call `snow` directly and skip the guard, the audit trail, and the
+workflow entirely. grayson's protocol files tell agents not to — and prompting
+is exactly what this project does not accept as a guarantee.
+
+Containment therefore comes from layers *around* grayson, each honest about
+what it provides:
+
+| Layer | Provides | Survives full bypass? |
+|---|---|---|
+| Read-only Snowflake role on the agent's connection | Warehouse-enforced write prevention | **Yes** — the only layer that does |
+| Harness guard permissions (`grayson harness init --guard-permissions`, `grayson harness guard`) | Deny rules in the harness config: direct `snow` use and `.grayson/` state access hit a human-visible permission prompt | No — friction and visibility, harness-dependent |
+| Credential isolation (`grayson mcp serve --http`) | The MCP server runs where the credentials live (service account, container); the agent's machine holds only a URL and bearer token | Yes for credentials — there is nothing on the agent's machine to steal |
+| Evidence gates | Work done outside grayson yields nothing citable: checkpoints, findings, and verifications close only on queries that executed through grayson | Removes the incentive, not the ability |
+| Audit reconciliation (`grayson audit reconcile`) | Diffs warehouse `QUERY_HISTORY` against grayson's audit trail; unmatched statements are a bypass review list, optionally recorded as an external check (verdict only) | Detection after the fact, not prevention |
+
+Two deliberate design choices in support of this:
+
+- **History is one-directional.** `QUERY_HISTORY`/`LOGIN_HISTORY` table
+  functions and the `SNOWFLAKE.ACCOUNT_USAGE` history views are on the guard's
+  denylist: warehouse history is how the *human* audits the agent, never data
+  the agent reads (past statements can carry sensitive literals). The
+  reconciliation command has no MCP twin for the same reason; agents see only
+  the ingested pass/warn verdict.
+- **Harness deny rules are consent-based.** They are offered during
+  `harness init` and managed by `harness guard status|apply|remove` — shown
+  before written, reversible after, never applied silently. Only harnesses
+  with a machine-readable permission config (Claude Code today) get real
+  rules; others get instructions, stated as such.
+
+The recommended baseline for production use: a dedicated read-only role for
+agent connections, guard permissions applied where the harness supports them,
+and periodic `grayson audit reconcile --ingest`.

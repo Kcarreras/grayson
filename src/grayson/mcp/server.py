@@ -624,3 +624,51 @@ def build_server(workspace: Workspace) -> Any:
 def serve_stdio(workspace: Workspace) -> None:
     mcp = build_server(workspace)
     mcp.run(transport="stdio")
+
+
+class BearerAuthASGI:
+    """Minimal bearer-token wall around the streamable-HTTP MCP app.
+
+    The HTTP transport exists so the server can run where the Snowflake
+    credentials live (a service account, a container) while the agent runs
+    where they don't — the credential-isolation deployment. The token gates
+    the tool surface itself; the isolation comes from the process boundary.
+    """
+
+    def __init__(self, app: Any, token: str):
+        self.app = app
+        self._expected = f"Bearer {token}"
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") == "http":
+            import secrets
+
+            headers = {k.lower(): v for k, v in scope.get("headers") or []}
+            supplied = (headers.get(b"authorization") or b"").decode("latin-1")
+            if not secrets.compare_digest(supplied, self._expected):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", b"Bearer"),
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": b'{"error": "missing or invalid bearer token"}',
+                    }
+                )
+                return
+        await self.app(scope, receive, send)
+
+
+def serve_http(mcp: Any, host: str, port: int, token: str) -> None:
+    """Serve an MCP server over streamable HTTP behind a bearer token."""
+    import uvicorn
+
+    app = BearerAuthASGI(mcp.streamable_http_app(host=host), token)
+    uvicorn.run(app, host=host, port=port, log_level="warning")

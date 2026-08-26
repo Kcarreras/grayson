@@ -87,10 +87,23 @@ grayson harness init cursor       # teach your agent the protocol (or claude-cod
 ```
 
 `grayson harness init` writes the protocol file for your harness (a Cursor rule, a
-`CLAUDE.md` section, or an `AGENTS.md` section). Harnesses that prefer typed tools
+`CLAUDE.md` section, or an `AGENTS.md` section) — and offers to also write harness
+**guard permissions**: deny rules so the agent calling `snow` directly, or reading
+`.grayson/` state, hits a permission prompt instead of silently working around the
+guard ("no way but the highway"). Consent-based and reversible:
+`grayson harness guard status|apply|remove`. Harnesses that prefer typed tools
 can use the MCP server instead — `grayson mcp serve` (stdio) mirrors the CLI
-one-to-one. `grayson status` tells you where you are and what needs attention;
+one-to-one, and `--http` serves it token-gated over the network so it can run
+where the Snowflake credentials live while the agent runs where they don't.
+`grayson status` tells you where you are and what needs attention;
 `latest` works anywhere a session id is expected.
+
+The guard is the wall for everything that goes through grayson; what goes around
+it is covered by a read-only Snowflake role (recommended), these harness deny
+rules, and `grayson audit reconcile` — a human-only command that diffs warehouse
+query history against grayson's audit trail and flags statements that ran around
+it (`--ingest` records the verdict as an external check). The full boundary
+analysis: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Try it without Snowflake (sandbox)
 
@@ -239,6 +252,15 @@ name. `grayson workflow lint` validates the library's YAML (parse errors,
 core-name shadowing, duplicate names or checkpoint keys, unknown findings
 schemas), and files that fail to load are reported wherever workflows are
 listed, never silently skipped.
+
+The console's **Workflows tab** makes the catalog browsable: a gallery of core
+and team workflows (lint failures shown red, in place), and per-workflow pages
+with the session flow drawn stage by stage — evidence gates and human-approval
+points marked — plus every checkpoint, setup input, and findings-schema field
+unpacked. Creating is `grayson workflow new <name> [--fork <base>]` or the same
+flow in the console; editing is ownership-aware: your own workflows edit in
+place, a teammate's or a core workflow forks a copy under your id with
+`forked_from` lineage recorded in the YAML.
 
 | Workflow | Purpose |
 |---|---|

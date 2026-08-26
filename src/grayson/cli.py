@@ -62,6 +62,9 @@ user_app = typer.Typer(
     help="Your per-user id, stamped on knowledge writes and library commits.",
     no_args_is_help=True,
 )
+audit_app = typer.Typer(
+    help="Audit-trail tools (human-side; reads warehouse history).", no_args_is_help=True
+)
 harness_app = typer.Typer(help="Agent harness integration.", no_args_is_help=True)
 mcp_app = typer.Typer(help="MCP server.", no_args_is_help=True)
 ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
@@ -84,6 +87,7 @@ app.add_typer(chart_app, name="chart")
 app.add_typer(views_app, name="views")
 app.add_typer(library_app, name="library")
 app.add_typer(user_app, name="user")
+app.add_typer(audit_app, name="audit")
 app.add_typer(harness_app, name="harness")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(ui_app, name="ui")
@@ -843,6 +847,40 @@ def workflow_show(name: str) -> None:
         emit(get_workflow(name, overrides).model_dump())
     except WorkflowNotFound as e:
         fail(str(e.args[0] if e.args else e))
+
+
+@workflow_app.command("new")
+def workflow_new(
+    name: str = typer.Argument(..., help="Workflow name (lowercase, hyphens), e.g. orders-health."),
+    fork: str = typer.Option(
+        None, "--fork", help="Start from a copy of this existing workflow (lineage recorded)."
+    ),
+    title: str = typer.Option("", "--title"),
+) -> None:
+    """Scaffold a new workflow in the team library — blank, or forked from an
+    existing one. Core names are refused (core templates are canonical). The
+    file is stamped with your `grayson user` id; edit it, lint it, push it."""
+    from grayson.identity import get_user_id
+    from grayson.workflows import lint_workflows
+    from grayson.workflows.authoring import WorkflowAuthoringError, create_workflow
+
+    ws = _workspace()
+    try:
+        path = create_workflow(
+            ws.workflows_dir, name, fork_of=fork, title=title, user_id=get_user_id()
+        )
+    except (WorkflowAuthoringError, WorkflowNotFound) as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    emit(
+        {
+            "created": str(path),
+            **({"forked_from": fork} if fork else {}),
+            "lint": lint_workflows(ws.workflows_dir),
+            "next": "edit the YAML (or use the console's Workflows tab), then "
+            "`grayson workflow lint` and `grayson library push`",
+        }
+    )
 
 
 @workflow_app.command("lint")
@@ -1667,6 +1705,49 @@ def user_show() -> None:
     )
 
 
+# -- audit ---------------------------------------------------------------
+
+
+@audit_app.command("reconcile")
+def audit_reconcile(
+    hours: int = typer.Option(24, "--hours", min=1, max=168, help="History window to check."),
+    limit: int = typer.Option(10000, "--limit", min=1, help="Max history rows to fetch."),
+    ingest: bool = typer.Option(
+        False,
+        "--ingest",
+        help="Also record the verdict (counts only, no statement text) as an "
+        "external check, so it shows on the Checks tab and at session start.",
+    ),
+) -> None:
+    """Diff Snowflake's query history for this connection against grayson's own
+    audit trail. Unmatched statements ran around grayson — a bypass review list.
+
+    A human command by design: it reads QUERY_HISTORY (full statement text),
+    which agents are denied both here (no MCP twin) and in the guard."""
+    from grayson.audit import reconcile, reconcile_check_result
+
+    ws = _workspace()
+    report = reconcile(ws, hours=hours, limit=limit)
+    if report.get("error"):
+        fail(report["error"])
+        return
+    if ingest:
+        import tempfile
+
+        from grayson.checks import ChecksStore
+
+        payload = json.dumps([reconcile_check_result(report)])
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(payload)
+            tmp = Path(f.name)
+        try:
+            report["ingested"] = ChecksStore(ws.checks_dir).ingest(tmp, source="grayson")
+        finally:
+            tmp.unlink(missing_ok=True)
+        _attach_library_sync(report, ws, "grayson checks: audit reconcile")
+    emit(report)
+
+
 # -- records -------------------------------------------------------------
 
 
@@ -1715,12 +1796,72 @@ def harness_init(
     harness: str = typer.Argument(..., help="cursor | claude-code | codex"),
     path: Path = typer.Option(Path("."), "--path", help="Repo root to write into."),
     no_mcp: bool = typer.Option(False, "--no-mcp", help="Omit the MCP note."),
+    guard_permissions: bool = typer.Option(
+        None,
+        "--guard-permissions/--no-guard-permissions",
+        help="Also write harness deny rules blocking direct `snow` use and "
+        "`.grayson/` state access (asked interactively when unset).",
+    ),
 ) -> None:
-    """Generate the skill/instruction file that teaches a harness the grayson protocol."""
+    """Generate the skill/instruction file that teaches a harness the grayson protocol.
+
+    Optionally also writes permission deny rules so the agent's bypass paths
+    (direct snow CLI, .grayson state files) hit a human-visible permission
+    prompt instead of a paragraph of prose. Consent-based: never written
+    without a yes; `grayson harness guard` inspects and reverses it later."""
     from grayson.harness import generate_harness
+    from grayson.harness.permissions import GUARD_DENY_RULES, apply_guard, guard_status
 
     try:
-        emit(generate_harness(path.resolve(), harness, with_mcp=not no_mcp))
+        out = generate_harness(path.resolve(), harness, with_mcp=not no_mcp)
+    except ValueError as e:
+        fail(str(e))
+        return
+    wants_guard = guard_permissions
+    if wants_guard is None and sys.stdin.isatty() and sys.stdout.isatty():
+        status = guard_status(path.resolve(), harness)
+        if status.get("supported"):
+            typer.echo(
+                "\nAlso block the agent's bypass paths via harness permissions?\n"
+                "This writes these deny rules to "
+                + status["file"]
+                + ":\n  "
+                + "\n  ".join(GUARD_DENY_RULES)
+                + "\n(friction + visibility, not containment — pair with a read-only "
+                "Snowflake role; reverse anytime with `grayson harness guard remove`)",
+                err=True,
+            )
+            wants_guard = typer.confirm("Apply guard permissions?", default=False)
+    if wants_guard:
+        try:
+            out["guard_permissions"] = apply_guard(path.resolve(), harness)
+        except ValueError as e:
+            out["guard_permissions"] = {"error": str(e)}
+    elif wants_guard is None:
+        out["hint"] = (
+            "consider `grayson harness guard apply` (or --guard-permissions): deny "
+            "rules that stop the agent calling `snow` around the guard"
+        )
+    emit(out)
+
+
+@harness_app.command("guard")
+def harness_guard(
+    action: str = typer.Argument(..., help="status | apply | remove"),
+    harness: str = typer.Option("claude-code", "--harness"),
+    path: Path = typer.Option(Path("."), "--path", help="Repo root holding the harness config."),
+) -> None:
+    """Inspect, apply, or remove grayson's harness deny rules (the 'no way but
+    the highway' setup: direct `snow` use and `.grayson/` state access get a
+    permission prompt instead of silently succeeding)."""
+    from grayson.harness.permissions import apply_guard, guard_status, remove_guard
+
+    actions = {"status": guard_status, "apply": apply_guard, "remove": remove_guard}
+    if action not in actions:
+        fail("action must be status, apply, or remove")
+        return
+    try:
+        emit(actions[action](path.resolve(), harness))
     except ValueError as e:
         fail(str(e))
 
@@ -1825,33 +1966,80 @@ def mcp_serve(
         "(cloned under ~/.grayson/libraries and pulled on start). Defaults to the "
         "current workspace's library.",
     ),
+    http: bool = typer.Option(
+        False,
+        "--http",
+        help="Serve over streamable HTTP (bearer-token gated) instead of stdio. "
+        "Run it where the Snowflake credentials live (a service account or "
+        "container); point the agent at the URL from a machine that holds none — "
+        "credential isolation by process boundary.",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="HTTP bind address."),
+    port: int = typer.Option(8850, "--port", help="HTTP port."),
+    token: str = typer.Option(
+        None,
+        "--token",
+        envvar="GRAYSON_MCP_TOKEN",
+        help="Bearer token HTTP clients must present (generated and printed if unset).",
+    ),
 ) -> None:
-    """Run the MCP server over stdio (for Cursor/Claude Code/Codex MCP configs).
-
-    Default mode mirrors the full CLI for a workspace. --knowledge-only serves
-    just the team library, read-only — for a teammate whose agent should be
-    briefed by shared knowledge without running the harness end to end."""
-    if not knowledge_only:
-        if library:
-            fail("--library only applies with --knowledge-only")
-            return
-        from grayson.mcp import serve_stdio
-
-        serve_stdio(_workspace())
+    """Run the MCP server: stdio by default, --http for the credential-isolated
+    deployment. --knowledge-only serves just the team library, read-only — for a
+    teammate whose agent should be briefed by shared knowledge without running
+    the harness end to end. The two flags compose."""
+    if library and not knowledge_only:
+        fail("--library only applies with --knowledge-only")
         return
-    from grayson.library import resolve_library_source
-    from grayson.mcp.knowledge_server import serve_knowledge_stdio
 
-    if library:
-        try:
-            root, _action, _remote = resolve_library_source(library)
-        except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
-            fail(str(e))
-            return
+    if knowledge_only:
+        from grayson.library import library_pull_path, resolve_library_source
+        from grayson.mcp.knowledge_server import build_knowledge_server
+
+        if library:
+            try:
+                root, _action, _remote = resolve_library_source(library)
+            except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
+                fail(str(e))
+                return
+        else:
+            ws = _workspace()
+            root = ws.knowledge_dir.parent  # linked library clone, or the workspace itself
+        library_pull_path(root)  # stale knowledge misleads; failure is non-fatal
+        server = build_knowledge_server(root)
     else:
-        ws = _workspace()
-        root = ws.knowledge_dir.parent  # linked library clone, or the workspace itself
-    serve_knowledge_stdio(root)
+        from grayson.mcp.server import build_server
+
+        server = build_server(_workspace())
+
+    if not http:
+        server.run(transport="stdio")
+        return
+
+    import secrets as _secrets
+
+    from grayson.mcp.server import serve_http
+
+    resolved_token = token or _secrets.token_urlsafe(24)
+    typer.echo(f"grayson mcp (streamable HTTP): http://{host}:{port}/mcp", err=True)
+    if not token:
+        typer.echo(f"bearer token (per-launch): {resolved_token}", err=True)
+        typer.echo(
+            "  pass a stable one via --token or GRAYSON_MCP_TOKEN for service deployments",
+            err=True,
+        )
+    typer.echo(
+        "  client config: Authorization: Bearer <token>  (e.g. `claude mcp add "
+        f"--transport http grayson http://{host}:{port}/mcp "
+        '--header "Authorization: Bearer <token>"`)',
+        err=True,
+    )
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        typer.echo(
+            "WARNING: binding beyond loopback serves plaintext HTTP — front it with "
+            "TLS (reverse proxy) or an SSH tunnel before crossing machines",
+            err=True,
+        )
+    serve_http(server, host, port, resolved_token)
 
 
 # -- ui ------------------------------------------------------------------

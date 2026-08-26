@@ -26,6 +26,11 @@ class WorkflowTemplate(BaseModel):
     required_checks: list[CheckDef] = Field(default_factory=list)
     open_stages: list[str] = Field(default_factory=lambda: ["analysis"])
     findings_schema: str = "standard_v1"
+    #: provenance for library workflows: who authored the file (`grayson user`
+    #: id) and, for forks, which workflow it started from. Empty on core
+    #: templates and legacy library files.
+    created_by: str = ""
+    forked_from: str = ""
 
     def check(self, key: str) -> CheckDef | None:
         return next((c for c in self.required_checks if c.key == key), None)
