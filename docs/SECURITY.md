@@ -137,7 +137,8 @@ they differ in who writes the config and how hard the wall is:
 | Harness | Mechanism | How it's set up |
 |---|---|---|
 | Claude Code | Deny rules in `.claude/settings.json`: `Bash(snow:*)` and `.grayson/**` file access hit a permission prompt | grayson writes them on consent (`harness guard apply`) |
-| Cursor | Agent **command denylist** (direct `snow` never auto-runs — a human sees the prompt); where available, a `beforeShellExecution` **hook** in `.cursor/hooks.json` can hard-deny `snow` and `.grayson/` access | Human-configured; `harness init cursor` and `harness guard status --harness cursor` print the steps |
+| Cursor (IDE agent) | Agent **command denylist** (direct `snow` never auto-runs — a human sees the prompt); where available, a `beforeShellExecution` **hook** in `.cursor/hooks.json` can hard-deny `snow` and `.grayson/` access | Human-configured; `harness init cursor` and `harness guard status --harness cursor` print the steps |
+| Cursor CLI (`cursor-agent`) | The IDE denylist/hooks do **not** apply; the CLI has its own permission config — set its allow/deny rules to block `snow`, and prefer MCP as the interface (the CLI shares the project's rules and MCP config) | Human-configured, separately from the IDE |
 | Codex | The **OS-level sandbox**: default `workspace-write` mode blocks network egress from shell commands, so direct `snow` cannot reach the warehouse at all. Register grayson as an MCP server in `~/.codex/config.toml` — MCP servers run outside the sandbox, so the guarded path works while the bypass path doesn't (this makes MCP, not the CLI, the warehouse path under Codex) | Human-configured; `harness init codex` and `harness guard status --harness codex` print the steps |
 
 The recommended baseline for production use: a dedicated read-only role for

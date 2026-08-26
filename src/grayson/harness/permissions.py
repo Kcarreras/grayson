@@ -40,9 +40,14 @@ HARNESS_GUIDANCE = {
         ".cursor/hooks.json can hard-deny commands matching `snow` or paths "
         "under .grayson/; see Cursor's hooks documentation for the exact hook "
         "script contract.\n"
+        "Note the denylist and hooks govern the IDE agent; `cursor-agent` (the "
+        "Cursor CLI) has its own permission config, set separately — for "
+        "CLI-driven use, lean on the MCP server as the interface and configure "
+        "the CLI's own allow/deny rules to block `snow`.\n"
         "Point the agent at grayson via the Cursor rule (`grayson harness init "
-        "cursor`) and/or the MCP server, and pair with a read-only Snowflake "
-        "role — the control that holds regardless of harness settings."
+        "cursor` — the CLI reads project rules too) and/or the MCP server, and "
+        "pair with a read-only Snowflake role — the control that holds "
+        "regardless of harness settings."
     ),
     "codex": (
         "Codex's OS-level sandbox is the enforcement layer:\n"
