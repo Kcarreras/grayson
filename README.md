@@ -17,12 +17,11 @@
 
 ---
 
-Agents are good at data investigation and bad at being trusted with a
-warehouse. grayson resolves that: your agent — in Cursor, Claude Code, Codex,
-or any harness — supplies the analysis, and grayson supplies the rails it runs
+Agents are good at data investigation, but investigation is messy, open-ended and in messy schemas and disjointed orgs, each agent starts from the same messy context. grayson resolves that: your agent — in Cursor, Claude Code, Codex,
+or any harness — does the analysis, and grayson gives you the confidence and rails to run on
 on (Snowflake-first). Guarded read-only access, sessions that cannot claim
-work without evidence, a human console at every judgment call, and a
-git-shared team library so every investigation makes the next one smarter.
+work without evidence, a human console at every critical semantic judgment call, and a
+git-shared team library so every investigation makes the next one smarter, and documentation of every pipeline fix persists beyond your agents context window.
 
 grayson itself never calls an LLM. Every guarantee is enforced by code, not by
 prompting.
