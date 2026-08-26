@@ -28,13 +28,49 @@ GUARD_DENY_RULES = [
     "Write(.grayson/**)",
 ]
 
-#: harnesses without a standardized permission file get instructions instead.
+#: harnesses grayson cannot (yet) write config for get concrete, per-harness
+#: setup instructions naming their real enforcement mechanism — not a shrug.
+HARNESS_GUIDANCE = {
+    "cursor": (
+        "Cursor has two layers for this, both set up by a human:\n"
+        "1. Command denylist — in Cursor's agent/terminal settings, add `snow` "
+        "to the command denylist so it is never auto-run: any direct warehouse "
+        "call surfaces as a prompt a human sees.\n"
+        "2. Hooks (where available) — a `beforeShellExecution` hook in "
+        ".cursor/hooks.json can hard-deny commands matching `snow` or paths "
+        "under .grayson/; see Cursor's hooks documentation for the exact hook "
+        "script contract.\n"
+        "Point the agent at grayson via the Cursor rule (`grayson harness init "
+        "cursor`) and/or the MCP server, and pair with a read-only Snowflake "
+        "role — the control that holds regardless of harness settings."
+    ),
+    "codex": (
+        "Codex's OS-level sandbox is the enforcement layer:\n"
+        "1. Keep the default `workspace-write` sandbox with network access "
+        "disabled — shell commands then cannot reach the warehouse at all, so "
+        "a direct `snow` call fails by construction. Avoid "
+        "`danger-full-access` and never-ask approval for grayson work.\n"
+        "2. Register grayson as an MCP server in ~/.codex/config.toml "
+        '(`[mcp_servers.grayson] command = "grayson", args = ["mcp", '
+        '"serve"]`): MCP servers run OUTSIDE the sandbox, so the guarded '
+        "path reaches Snowflake while the bypass path does not. Note this "
+        "makes MCP the warehouse path — the grayson CLI's query commands "
+        "would be sandboxed away from the network too.\n"
+        "Pair with a read-only Snowflake role — the control that holds "
+        "regardless of harness settings."
+    ),
+}
+
 MANUAL_GUIDANCE = (
     "this harness has no machine-writable permission config grayson knows; "
     "configure its command allowlist to deny `snow` (and warehouse SDK "
     "invocations) for agent sessions, and pair it with a read-only Snowflake "
     "role — that role is the control that holds even without harness support"
 )
+
+
+def harness_guidance(harness: str) -> str:
+    return HARNESS_GUIDANCE.get(harness, MANUAL_GUIDANCE)
 
 
 def _settings_path(root: Path) -> Path:
@@ -56,7 +92,7 @@ def _load(path: Path) -> dict:
 def guard_status(root: Path, harness: str = "claude-code") -> dict:
     """Which of grayson's deny rules are present in the harness config."""
     if harness != "claude-code":
-        return {"harness": harness, "supported": False, "guidance": MANUAL_GUIDANCE}
+        return {"harness": harness, "supported": False, "guidance": harness_guidance(harness)}
     path = _settings_path(root)
     try:
         deny = _load(path).get("permissions", {}).get("deny", [])
@@ -77,7 +113,7 @@ def guard_status(root: Path, harness: str = "claude-code") -> dict:
 def apply_guard(root: Path, harness: str = "claude-code") -> dict:
     """Add grayson's deny rules (idempotent; other settings untouched)."""
     if harness != "claude-code":
-        return {"harness": harness, "supported": False, "guidance": MANUAL_GUIDANCE}
+        return {"harness": harness, "supported": False, "guidance": harness_guidance(harness)}
     path = _settings_path(root)
     data = _load(path)
     perms = data.setdefault("permissions", {})
@@ -104,7 +140,7 @@ def apply_guard(root: Path, harness: str = "claude-code") -> dict:
 def remove_guard(root: Path, harness: str = "claude-code") -> dict:
     """Remove exactly grayson's deny rules; user-authored rules are kept."""
     if harness != "claude-code":
-        return {"harness": harness, "supported": False, "guidance": MANUAL_GUIDANCE}
+        return {"harness": harness, "supported": False, "guidance": harness_guidance(harness)}
     path = _settings_path(root)
     if not path.is_file():
         return {"harness": harness, "supported": True, "file": str(path), "removed": []}

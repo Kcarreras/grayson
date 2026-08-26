@@ -1817,21 +1817,26 @@ def harness_init(
     except ValueError as e:
         fail(str(e))
         return
+    status = guard_status(path.resolve(), harness)
+    if not status.get("supported"):
+        # no machine-writable config for this harness — hand over the concrete
+        # per-harness setup (denylist/hooks for Cursor, sandbox + MCP for Codex)
+        out["guard_guidance"] = status["guidance"]
+        emit(out)
+        return
     wants_guard = guard_permissions
     if wants_guard is None and sys.stdin.isatty() and sys.stdout.isatty():
-        status = guard_status(path.resolve(), harness)
-        if status.get("supported"):
-            typer.echo(
-                "\nAlso block the agent's bypass paths via harness permissions?\n"
-                "This writes these deny rules to "
-                + status["file"]
-                + ":\n  "
-                + "\n  ".join(GUARD_DENY_RULES)
-                + "\n(friction + visibility, not containment — pair with a read-only "
-                "Snowflake role; reverse anytime with `grayson harness guard remove`)",
-                err=True,
-            )
-            wants_guard = typer.confirm("Apply guard permissions?", default=False)
+        typer.echo(
+            "\nAlso block the agent's bypass paths via harness permissions?\n"
+            "This writes these deny rules to "
+            + status["file"]
+            + ":\n  "
+            + "\n  ".join(GUARD_DENY_RULES)
+            + "\n(friction + visibility, not containment — pair with a read-only "
+            "Snowflake role; reverse anytime with `grayson harness guard remove`)",
+            err=True,
+        )
+        wants_guard = typer.confirm("Apply guard permissions?", default=False)
     if wants_guard:
         try:
             out["guard_permissions"] = apply_guard(path.resolve(), harness)
