@@ -18,13 +18,14 @@
 ---
 
 Agents are good at data investigation, but investigation is messy, open-ended and in messy schemas and disjointed orgs, each agent starts from the same messy context. grayson resolves that: your agent — in Cursor, Claude Code, Codex,
-or any harness — does the analysis, and grayson gives you the confidence and rails to run on
-on (Snowflake-first). Guarded read-only access, sessions that cannot claim
-work without evidence, a human console at every critical semantic judgment call, and a
-git-shared team library so every investigation makes the next one smarter, and documentation of every pipeline fix persists beyond your agents context window.
+or any harness — does the analysis, and grayson gives it rails to run on, and you, the confidence to automate. Currently, Snowflake-first. Guarded read-only access. Sessions that cannot claim
+work without evidence. A human console at every critical semantic judgment call. A
+git-shared team library so every investigation makes the next one smarter. Documentation of every pipeline fix persists beyond your agents context window. 
+
+Holy Cartesian Product Batman! 
 
 grayson itself never calls an LLM. Every guarantee is enforced by code, not by
-prompting.
+prompts.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/session_dark.png">
