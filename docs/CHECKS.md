@@ -12,6 +12,11 @@ This page is the end-to-end setup guide: the result contract, the three ways
 to feed results in, and how to adapt whatever shape your validation tool
 already produces.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/checks_dark.png">
+  <img src="img/checks_light.png" alt="The Checks tab: failing checks first with details, metrics and check SQL; all checks with status, source, and last run">
+</picture>
+
 ## 1. The contract
 
 One check run = one JSON object. A file may hold a single object, a list, or
