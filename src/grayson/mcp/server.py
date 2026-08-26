@@ -61,18 +61,26 @@ def build_server(workspace: Workspace) -> Any:
 
     # -- workflows & session ------------------------------------------
 
-    @mcp.tool(description="List available QA workflow templates.")
-    def workflow_list() -> list[dict]:
-        return [
-            {
-                "name": t.name,
-                "title": t.title,
-                "description": t.description.strip(),
-                "required_checks": t.required_check_keys(),
-                "suggested_guard_profile": t.suggested_guard_profile,
-            }
-            for t in list_workflows(workspace.workflows_dir)
-        ]
+    @mcp.tool(
+        description="List available QA workflow templates (built-in + library). "
+        "library_problems reports library files that are not loadable and why."
+    )
+    def workflow_list() -> dict:
+        from grayson.workflows import override_problems
+
+        return {
+            "workflows": [
+                {
+                    "name": t.name,
+                    "title": t.title,
+                    "description": t.description.strip(),
+                    "required_checks": t.required_check_keys(),
+                    "suggested_guard_profile": t.suggested_guard_profile,
+                }
+                for t in list_workflows(workspace.workflows_dir)
+            ],
+            "library_problems": override_problems(workspace.workflows_dir),
+        }
 
     @mcp.tool(description="Show a workflow template's setup inputs, checks, and schema.")
     def workflow_show(name: str) -> dict:
@@ -429,7 +437,7 @@ def build_server(workspace: Workspace) -> Any:
     def _library_sync(out: dict, message: str) -> dict:
         from grayson.library import maybe_auto_push
 
-        sync = maybe_auto_push(workspace, message)
+        sync = maybe_auto_push(workspace, message, via="mcp-agent")
         if sync is not None:
             out["library_sync"] = sync
         return out

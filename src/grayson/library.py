@@ -79,14 +79,10 @@ def set_library_config(workspace_root: Path, lib_path: Path, auto_push: bool) ->
     cfg.write_text("\n".join(kept).rstrip() + "\n" + "\n".join(block) + "\n", encoding="utf-8")
 
 
-def link_library(
-    workspace: Workspace,
-    source: str,
-    dest: Path | None = None,
-    auto_push: bool = False,
-) -> dict:
-    """Connect the workspace to a team library: clone a git URL, or link a local path."""
-    is_remote = "://" in source or source.endswith(".git") or _REMOTE_RE.match(source)
+def resolve_library_source(source: str, dest: Path | None = None) -> tuple[Path, str, bool]:
+    """Resolve a library source to a local directory: clone a git URL (or pull an
+    existing clone), or use a local path as-is. Returns (path, action, is_remote)."""
+    is_remote = bool("://" in source or source.endswith(".git") or _REMOTE_RE.match(source))
     if is_remote:
         name = source.rstrip("/").split("/")[-1].removesuffix(".git") or "qa-library"
         target = (dest or Path.home() / ".grayson" / "libraries" / name).resolve()
@@ -113,6 +109,17 @@ def link_library(
         if not target.is_dir():
             raise FileNotFoundError(f"library path does not exist: {target}")
         action = "linked existing directory"
+    return target, action, is_remote
+
+
+def link_library(
+    workspace: Workspace,
+    source: str,
+    dest: Path | None = None,
+    auto_push: bool = False,
+) -> dict:
+    """Connect the workspace to a team library: clone a git URL, or link a local path."""
+    target, action, is_remote = resolve_library_source(source, dest)
     init_library(target)  # idempotent: scaffold only what is missing
     set_library_config(workspace.root, target, auto_push)
     result = {
@@ -141,11 +148,28 @@ def link_library(
     return result
 
 
-def push_library(workspace: Workspace, message: str = "grayson: library update") -> dict:
-    """Commit and push the linked library repo. Soft-fails with detail on error."""
+def push_library(
+    workspace: Workspace, message: str = "grayson: library update", via: str | None = None
+) -> dict:
+    """Commit and push the linked library repo. Soft-fails with detail on error.
+
+    When a user id is configured (`grayson user set`), every commit message
+    carries a Grayson-User trailer — and Grayson-Via when the write came
+    through an agent surface — so shared-library history stays attributable
+    even from shared machines or generic git identities."""
+    from grayson.identity import get_user_id
+
     lib = workspace.config.library_path
     if lib is None or not (lib / ".git").exists():
         return {"ok": False, "detail": "no linked git library to push"}
+    trailers = []
+    user_id = get_user_id()
+    if user_id:
+        trailers.append(f"Grayson-User: {user_id}")
+    if via:
+        trailers.append(f"Grayson-Via: {via}")
+    if trailers:
+        message = message + "\n\n" + "\n".join(trailers)
     _git(lib, "add", "-A")
     commit = _git(lib, "commit", "-m", message)
     committed = commit.returncode == 0
@@ -158,31 +182,26 @@ def push_library(workspace: Workspace, message: str = "grayson: library update")
     }
 
 
-def maybe_auto_push(workspace: Workspace, message: str) -> dict | None:
+def maybe_auto_push(workspace: Workspace, message: str, via: str | None = None) -> dict | None:
     """Auto commit+push after a library write, when [library] auto_push is on."""
     try:
         if not workspace.config.library_auto_push:
             return None
-        return push_library(workspace, message)
+        return push_library(workspace, message, via=via)
     except (OSError, subprocess.SubprocessError) as e:  # never fail the write itself
         return {"ok": False, "detail": f"auto-push failed: {e}"}
 
 
-def library_status(workspace: Workspace) -> dict:
-    """Report whether the linked library clone is behind its remote / dirty."""
-    lib = workspace.config.library_path
-    if lib is None:
-        return {"linked": False, "detail": "no [library] path configured (solo mode)"}
+def repo_status(lib: Path) -> dict:
+    """Git freshness of a library directory: dirty/ahead/behind its remote."""
     if not lib.is_dir():
         return {
-            "linked": True,
             "exists": False,
             "path": str(lib),
-            "detail": "configured library path does not exist",
+            "detail": "library path does not exist",
         }
     if not (lib / ".git").exists():
         return {
-            "linked": True,
             "exists": True,
             "is_git": False,
             "path": str(lib),
@@ -198,7 +217,6 @@ def library_status(workspace: Workspace) -> dict:
         with contextlib.suppress(ValueError):
             ahead, behind = (int(x) for x in counts.stdout.split())
     return {
-        "linked": True,
         "exists": True,
         "is_git": True,
         "path": str(lib),
@@ -214,12 +232,30 @@ def library_status(workspace: Workspace) -> dict:
     }
 
 
+def library_status(workspace: Workspace) -> dict:
+    """Report whether the linked library clone is behind its remote / dirty."""
+    lib = workspace.config.library_path
+    if lib is None:
+        return {"linked": False, "detail": "no [library] path configured (solo mode)"}
+    return {"linked": True, **repo_status(lib)}
+
+
+def library_pull_path(lib: Path) -> dict:
+    """Fast-forward a library directory from its remote (no-op when not a clone)."""
+    if not (lib / ".git").exists():
+        return {"ok": False, "detail": "not a git clone — nothing to pull"}
+    try:
+        result = _git(lib, "pull", "--ff-only", timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"ok": False, "detail": f"pull failed: {e}"}
+    return {"ok": result.returncode == 0, "output": (result.stdout + result.stderr).strip()[:2000]}
+
+
 def library_pull(workspace: Workspace) -> dict:
     lib = workspace.config.library_path
     if lib is None or not (lib / ".git").exists():
         return {"ok": False, "detail": "no linked git library to pull"}
-    result = _git(lib, "pull", "--ff-only", timeout=120)
-    return {"ok": result.returncode == 0, "output": (result.stdout + result.stderr).strip()[:2000]}
+    return library_pull_path(lib)
 
 
 def extract_library(workspace: Workspace, dest: Path) -> dict:

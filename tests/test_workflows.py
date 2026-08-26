@@ -46,10 +46,99 @@ def test_workspace_override(workspace):
     assert "custom-check" in {w.name for w in list_workflows(workspace.workflows_dir)}
 
 
-def test_override_shadows_builtin(workspace):
+def test_core_workflows_are_canonical(workspace):
+    """A library file cannot shadow a core template — core changes only with a
+    grayson release; the collision is reported, not silently merged."""
+    from grayson.workflows import override_problems
+
     (workspace.workflows_dir / "th.yaml").write_text(
         "name: table-health\ntitle: My Health\nrequired_checks:\n  - key: mine\n    title: mine\n",
         encoding="utf-8",
     )
     t = get_workflow("table-health", workspace.workflows_dir)
-    assert t.title == "My Health"
+    assert t.title != "My Health"  # the core template wins
+    problems = override_problems(workspace.workflows_dir)
+    assert len(problems) == 1
+    assert "shadows the core workflow" in problems[0]["problem"]
+    assert "table-health" not in {
+        w.name for w in list_workflows(workspace.workflows_dir) if w.title == "My Health"
+    }
+
+
+def test_invalid_yaml_reported_not_silent(workspace):
+    from grayson.workflows import override_problems
+
+    (workspace.workflows_dir / "broken.yaml").write_text(
+        "name: broken\n  bad indent: [unclosed\n", encoding="utf-8"
+    )
+    problems = override_problems(workspace.workflows_dir)
+    assert len(problems) == 1
+    assert problems[0]["file"] == "broken.yaml"
+    assert "parse" in problems[0]["problem"]
+
+
+def test_unloadable_workflow_error_names_the_reason(workspace):
+    (workspace.workflows_dir / "custom.yaml").write_text(
+        "name: custom\ntitle: C\nfindings_schema: nope_v9\n"
+        "required_checks:\n  - key: a\n    title: A\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(WorkflowNotFound, match="nope_v9"):
+        get_workflow("custom", workspace.workflows_dir)
+
+
+def test_unknown_findings_schema_blocks_load(workspace):
+    from grayson.workflows import override_problems
+
+    (workspace.workflows_dir / "custom.yaml").write_text(
+        "name: custom\ntitle: C\nfindings_schema: contract_v2\n",
+        encoding="utf-8",
+    )
+    assert "custom" not in {w.name for w in list_workflows(workspace.workflows_dir)}
+    [problem] = override_problems(workspace.workflows_dir)
+    assert "unknown findings_schema" in problem["problem"]
+
+
+def test_duplicate_checkpoint_keys_block_load(workspace):
+    from grayson.workflows import override_problems
+
+    (workspace.workflows_dir / "dup.yaml").write_text(
+        "name: dup\ntitle: D\nrequired_checks:\n"
+        "  - key: a\n    title: A\n  - key: a\n    title: A again\n",
+        encoding="utf-8",
+    )
+    [problem] = override_problems(workspace.workflows_dir)
+    assert "duplicate checkpoint keys" in problem["problem"]
+
+
+def test_lint_reports_errors_and_warnings(workspace):
+    from grayson.workflows import lint_workflows
+
+    (workspace.workflows_dir / "shadow.yaml").write_text(
+        "name: bug-hunter\ntitle: Shadow\n", encoding="utf-8"
+    )
+    (workspace.workflows_dir / "sparse.yaml").write_text(
+        "name: sparse\ntitle: Sparse\nrequired_checks:\n  - key: only\n    title: Only\n",
+        encoding="utf-8",
+    )
+    report = lint_workflows(workspace.workflows_dir)
+    assert report["ok"] is False
+    assert {e["file"] for e in report["errors"]} == {"shadow.yaml"}
+    warned = {w["problem"] for w in report["warnings"] if w["name"] == "sparse"}
+    assert any("no description" in w for w in warned)
+    assert any("checkpoint 'only' has no description" in w for w in warned)
+
+
+def test_lint_clean_library_is_ok(workspace):
+    from grayson.workflows import lint_workflows
+
+    (workspace.workflows_dir / "good.yaml").write_text(
+        "name: good\ntitle: Good\ndescription: A well-described workflow.\n"
+        "required_checks:\n  - key: one\n    title: One\n    description: Do the one thing.\n",
+        encoding="utf-8",
+    )
+    report = lint_workflows(workspace.workflows_dir)
+    assert report["ok"] is True
+    assert report["errors"] == []
+    assert report["warnings"] == []
+    assert report["checked"] == ["good.yaml"]

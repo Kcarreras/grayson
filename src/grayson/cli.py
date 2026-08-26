@@ -58,6 +58,10 @@ chart_app = typer.Typer(
 )
 views_app = typer.Typer(help="QA view library.", no_args_is_help=True)
 library_app = typer.Typer(help="Team library repo linking.", no_args_is_help=True)
+user_app = typer.Typer(
+    help="Your per-user id, stamped on knowledge writes and library commits.",
+    no_args_is_help=True,
+)
 harness_app = typer.Typer(help="Agent harness integration.", no_args_is_help=True)
 mcp_app = typer.Typer(help="MCP server.", no_args_is_help=True)
 ui_app = typer.Typer(help="Local web console.", no_args_is_help=True)
@@ -79,6 +83,7 @@ app.add_typer(checks_app, name="checks")
 app.add_typer(chart_app, name="chart")
 app.add_typer(views_app, name="views")
 app.add_typer(library_app, name="library")
+app.add_typer(user_app, name="user")
 app.add_typer(harness_app, name="harness")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(ui_app, name="ui")
@@ -341,7 +346,7 @@ def session_start(
     try:
         tpl = get_workflow(workflow, ws.workflows_dir)
     except WorkflowNotFound as e:
-        fail(str(e))
+        fail(str(e.args[0] if e.args else e))
         return
     # Re-running session start moments later (lost output, shell retry) reuses
     # the fresh session instead of littering the workspace with twins.
@@ -790,7 +795,9 @@ def chart_render(
 
 @workflow_app.command("list")
 def workflow_list() -> None:
-    """List available workflow templates (built-in + workspace overrides)."""
+    """List available workflow templates (built-in + library extensions)."""
+    from grayson.workflows import override_problems
+
     try:
         ws = Workspace.find()
         overrides = ws.workflows_dir
@@ -809,6 +816,19 @@ def workflow_list() -> None:
             for t in list_workflows(overrides)
         ]
     )
+    problems = override_problems(overrides)
+    if problems:
+        typer.echo(
+            json.dumps(
+                {
+                    "warning": f"{len(problems)} library workflow file(s) are not "
+                    "loadable — run `grayson workflow lint`",
+                    "problems": problems,
+                },
+                indent=2,
+            ),
+            err=True,
+        )
 
 
 @workflow_app.command("show")
@@ -822,7 +842,25 @@ def workflow_show(name: str) -> None:
     try:
         emit(get_workflow(name, overrides).model_dump())
     except WorkflowNotFound as e:
-        fail(str(e))
+        fail(str(e.args[0] if e.args else e))
+
+
+@workflow_app.command("lint")
+def workflow_lint() -> None:
+    """Validate the library's workflow YAML: parse/shape errors, core-name
+    shadowing, duplicate names or checkpoint keys, unknown findings schemas
+    (errors), plus quality warnings. Exits non-zero on errors."""
+    from grayson.workflows import lint_workflows
+
+    try:
+        ws = Workspace.find()
+        overrides = ws.workflows_dir
+    except FileNotFoundError:
+        overrides = None
+    report = lint_workflows(overrides)
+    emit(report)
+    if not report["ok"]:
+        raise typer.Exit(1)
 
 
 # -- checkpoint ----------------------------------------------------------
@@ -1594,6 +1632,41 @@ def library_extract_cmd(
     emit(extract_library(_workspace(), dest))
 
 
+# -- user ----------------------------------------------------------------
+
+
+@user_app.command("set")
+def user_set(
+    user_id: str = typer.Argument(..., help="Alphanumeric id, e.g. your initials."),
+) -> None:
+    """Set your user id (stored per-user in ~/.grayson/config.toml, never in the
+    workspace). It stamps knowledge facts and library commit messages so shared
+    history stays attributable. Set it once after install."""
+    from grayson.identity import set_user_id, user_config_path
+
+    try:
+        stored = set_user_id(user_id)
+    except ValueError as e:
+        fail(str(e))
+        return
+    emit({"user_id": stored, "stored_in": str(user_config_path())})
+
+
+@user_app.command("show")
+def user_show() -> None:
+    """Show the configured user id (GRAYSON_USER_ID overrides the file)."""
+    from grayson.identity import get_user_id, user_config_path
+
+    uid = get_user_id()
+    emit(
+        {
+            "user_id": uid,
+            "stored_in": str(user_config_path()),
+            **({} if uid else {"hint": "set one with `grayson user set <id>`"}),
+        }
+    )
+
+
 # -- records -------------------------------------------------------------
 
 
@@ -1738,11 +1811,47 @@ def sandbox_reset() -> None:
 
 
 @mcp_app.command("serve")
-def mcp_serve() -> None:
-    """Run the MCP server over stdio (for Cursor/Claude Code/Codex MCP configs)."""
-    from grayson.mcp import serve_stdio
+def mcp_serve(
+    knowledge_only: bool = typer.Option(
+        False,
+        "--knowledge-only",
+        help="Serve READ-ONLY knowledge-library tools (no sessions, no queries, "
+        "no writes). Needs no workspace when --library is given.",
+    ),
+    library: str = typer.Option(
+        None,
+        "--library",
+        help="Knowledge-only mode: the library to serve — a local path or a git URL "
+        "(cloned under ~/.grayson/libraries and pulled on start). Defaults to the "
+        "current workspace's library.",
+    ),
+) -> None:
+    """Run the MCP server over stdio (for Cursor/Claude Code/Codex MCP configs).
 
-    serve_stdio(_workspace())
+    Default mode mirrors the full CLI for a workspace. --knowledge-only serves
+    just the team library, read-only — for a teammate whose agent should be
+    briefed by shared knowledge without running the harness end to end."""
+    if not knowledge_only:
+        if library:
+            fail("--library only applies with --knowledge-only")
+            return
+        from grayson.mcp import serve_stdio
+
+        serve_stdio(_workspace())
+        return
+    from grayson.library import resolve_library_source
+    from grayson.mcp.knowledge_server import serve_knowledge_stdio
+
+    if library:
+        try:
+            root, _action, _remote = resolve_library_source(library)
+        except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
+            fail(str(e))
+            return
+    else:
+        ws = _workspace()
+        root = ws.knowledge_dir.parent  # linked library clone, or the workspace itself
+    serve_knowledge_stdio(root)
 
 
 # -- ui ------------------------------------------------------------------
