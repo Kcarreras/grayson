@@ -113,6 +113,14 @@ def test_bearer_auth_wall():
     assert ok.status_code == 200 and ok.text == "ok"
 
 
+def test_http_flags_mutually_exclusive(workspace):
+    result = runner.invoke(
+        app, ["mcp", "serve", "--http", "--no-token", "--token", "x", "--knowledge-only"]
+    )
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
 # -- audit reconcile -----------------------------------------------------
 
 

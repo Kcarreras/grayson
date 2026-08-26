@@ -21,6 +21,9 @@ the **transport** (local stdio vs served HTTP). All four combinations work.
 Auth beyond the bearer token (network placement, TLS termination, identity
 proxies) is deliberately left to the hosting environment — the served modes
 are plain HTTP services and compose with whatever the platform provides.
+Behind a gateway that already authenticates every caller (and typically owns
+the `Authorization` header itself), pass `--no-token` to disable the built-in
+bearer wall — only ever on a port reachable solely through that gateway.
 
 ## 1. Solo / same-machine (the default)
 

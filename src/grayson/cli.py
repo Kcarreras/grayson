@@ -1982,6 +1982,14 @@ def mcp_serve(
         envvar="GRAYSON_MCP_TOKEN",
         help="Bearer token HTTP clients must present (generated and printed if unset).",
     ),
+    no_token: bool = typer.Option(
+        False,
+        "--no-token",
+        help="Serve WITHOUT the built-in bearer wall. Only for deployment behind "
+        "a gateway that already authenticates every caller (and usually owns the "
+        "Authorization header, e.g. platform SSO with an API token policy) — the "
+        "port must not be reachable except through that gateway.",
+    ),
 ) -> None:
     """Run the MCP server: stdio by default, --http for the credential-isolated
     deployment. --knowledge-only serves just the team library, read-only — for a
@@ -2019,20 +2027,31 @@ def mcp_serve(
 
     from grayson.mcp.server import serve_http
 
-    resolved_token = token or _secrets.token_urlsafe(24)
+    if no_token and token:
+        fail("--no-token and --token are mutually exclusive")
+        return
+    resolved_token = None if no_token else (token or _secrets.token_urlsafe(24))
     typer.echo(f"grayson mcp (streamable HTTP): http://{host}:{port}/mcp", err=True)
-    if not token:
+    if no_token:
+        typer.echo(
+            "WARNING: no bearer wall — every peer that can reach this port has the "
+            "full tool surface. Run this ONLY behind a gateway that authenticates "
+            "every caller, on a port reachable solely through it.",
+            err=True,
+        )
+    elif not token:
         typer.echo(f"bearer token (per-launch): {resolved_token}", err=True)
         typer.echo(
             "  pass a stable one via --token or GRAYSON_MCP_TOKEN for service deployments",
             err=True,
         )
-    typer.echo(
-        "  client config: Authorization: Bearer <token>  (e.g. `claude mcp add "
-        f"--transport http grayson http://{host}:{port}/mcp "
-        '--header "Authorization: Bearer <token>"`)',
-        err=True,
-    )
+    if resolved_token:
+        typer.echo(
+            "  client config: Authorization: Bearer <token>  (e.g. `claude mcp add "
+            f"--transport http grayson http://{host}:{port}/mcp "
+            '--header "Authorization: Bearer <token>"`)',
+            err=True,
+        )
     if host not in {"127.0.0.1", "localhost", "::1"}:
         typer.echo(
             "WARNING: binding beyond loopback serves plaintext HTTP — front it with "

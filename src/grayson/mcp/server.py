@@ -666,9 +666,15 @@ class BearerAuthASGI:
         await self.app(scope, receive, send)
 
 
-def serve_http(mcp: Any, host: str, port: int, token: str) -> None:
-    """Serve an MCP server over streamable HTTP behind a bearer token."""
+def serve_http(mcp: Any, host: str, port: int, token: str | None) -> None:
+    """Serve an MCP server over streamable HTTP.
+
+    With a token, requests must present it as a bearer. token=None disables
+    the wall — ONLY for deployment behind a gateway that already authenticates
+    callers (and typically owns the Authorization header itself)."""
     import uvicorn
 
-    app = BearerAuthASGI(mcp.streamable_http_app(host=host), token)
+    app = mcp.streamable_http_app(host=host)
+    if token:
+        app = BearerAuthASGI(app, token)
     uvicorn.run(app, host=host, port=port, log_level="warning")
