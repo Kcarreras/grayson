@@ -46,8 +46,14 @@
   {% if r.summary %}<div class="ink2 small" style="margin: 5px 0;">{{ r.summary[:260] }}{% if r.summary | length > 260 %}…{% endif %}</div>{% endif %}
   <div class="faint small">
     <span class="chip">{{ r.id }}</span> · {{ r.workflow }} ·
+    {% if r.source == "library" %}
+    <span class="{{ 'mono' if not r.session_title }}"
+      title="{{ r.session_id }}">{{ r.session_title or r.session_id }}</span>
+    <span class="badge act">team</span>{% if r.author %} <span class="mono">by {{ r.author }}</span>{% endif %}
+    {% else %}
     <a class="{{ 'mono' if not r.session_title }}" href="/session/{{ r.session_id }}?t={{ token }}"
       title="{{ r.session_id }}">{{ r.session_title or r.session_id }}</a>
+    {% endif %}
     · {{ r.ts }}
   </div>
 </div>

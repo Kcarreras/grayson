@@ -211,6 +211,15 @@ message carries a `Grayson-User:` trailer (plus `Grayson-Via: mcp-agent` for
 agent-surface writes), so shared history stays attributable even from shared
 machines. `GRAYSON_USER_ID` overrides it per process.
 
+Records compound the same way: when a finding is **accepted** or a fix
+verification is recorded — the human-approved moments — the distilled record
+publishes into the library's `records/` (small JSON, author-stamped, git-shared
+like facts). Raw session state stays local; the vetted output travels. So
+`grayson records search` answers "how did *anyone on the team* diagnose and fix
+this" from any linked workspace, teammates' records show on the Records tab
+badged `team`, and superseded findings update in place rather than standing as
+current knowledge.
+
 A teammate who doesn't run the harness can still give their agent the team's
 knowledge, read-only — no workspace, no Snowflake, no write tools registered
 at all:
@@ -220,7 +229,10 @@ grayson mcp serve --knowledge-only --library git@github.com:your-org/qa-library.
 ```
 
 This clones (or pulls) the library and serves just `knowledge_*`, `workflow_*`,
-`views_list`, `checks_*`, and `library_info` over stdio.
+`views_list`, `checks_*`, `records_*` (the team's published findings and fixes),
+and `library_info` over stdio — or containerized for the whole team:
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) has the recipes (solo, knowledge
+appliance, credential-isolated server), including the `docker/` image.
 
 ## Settings
 

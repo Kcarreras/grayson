@@ -194,4 +194,9 @@ def verify(
         "note": note,
     }
     session.attach_verification(pid, verification, actor)
+    # a verification (either verdict) is the moment the fix outcome compounds
+    # into the team library (best-effort — never fails the verification)
+    from grayson.records import publish_proposal
+
+    publish_proposal(session, pid)
     return session.proposal(pid)

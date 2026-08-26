@@ -591,17 +591,27 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(e)) from e
         if item is None:
             raise HTTPException(status_code=404, detail=f"no {kind} '{rid}' in session '{sid}'")
-        s = _session(sid)
+        # a library-published record from a teammate has no local session:
+        # render it from the published copy, without lineage or a session link
+        from_library = item.get("source") == "library"
+        if from_library:
+            title, lineage = item.get("session_title", ""), []
+        else:
+            s = _session(sid)
+            title = s.get_meta("title", "")
+            lineage = _finding_lineage(s, rid) if kind == "finding" else []
         return templates.TemplateResponse(
             request,
             "record.html",
             {
                 "nav": "records",
                 "session_id": sid,
-                "session_title": s.get_meta("title", ""),
+                "session_title": title,
                 "kind": kind,
                 "record": item["record"],
-                "lineage": _finding_lineage(s, rid) if kind == "finding" else [],
+                "lineage": lineage,
+                "from_library": from_library,
+                "author": item.get("author"),
             },
         )
 

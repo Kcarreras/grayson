@@ -15,7 +15,7 @@ from pathlib import Path
 from grayson.config import CONFIG_FILENAME
 from grayson.workspace import Workspace
 
-LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks")
+LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks", "records")
 
 _REMOTE_RE = re.compile(r"^[\w.-]+@[\w.-]+:")  # scp-style git remote (git@host:org/repo)
 
@@ -27,6 +27,7 @@ def init_library(path: Path) -> Path:
     (path / "knowledge").mkdir(exist_ok=True)
     (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
     (path / "workflows").mkdir(exist_ok=True)
+    (path / "records").mkdir(exist_ok=True)
     from grayson.checks import scaffold_checks_dir
 
     scaffold_checks_dir(path / "checks")

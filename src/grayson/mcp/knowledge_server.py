@@ -25,10 +25,12 @@ from grayson.workflows import (
 INSTRUCTIONS = """\
 Read-only access to a grayson team knowledge library: table semantics with
 provenance (proposed / data_inferred / user_confirmed facts), QA workflow
-templates, registered QA views, and external deterministic check results.
-Use it to brief yourself before working with these tables: check knowledge_show
-for grain/semantics, checks_status for failing deterministic checks, and
-workflow_list for how this team structures investigations.
+templates, registered QA views, external deterministic check results, and the
+team's published records (accepted findings and verified fixes from past
+sessions). Use it to brief yourself before working with these tables: check
+knowledge_show for grain/semantics, checks_status for failing deterministic
+checks, records_search for how similar problems were diagnosed and fixed
+before, and workflow_list for how this team structures investigations.
 This surface cannot write, run queries, or start sessions — it is a library
 card, not the harness. Treat user_confirmed facts as authoritative; treat
 proposed facts as unverified hypotheses.
@@ -109,6 +111,30 @@ def build_knowledge_server(library_root: Path) -> Any:
     @mcp.tool(description="One external check's run history, newest first.")
     def checks_show(check_id: str) -> list[dict]:
         return [r.model_dump() for r in ChecksStore(checks_dir).history(check_id)]
+
+    @mcp.tool(
+        description="Search the team's published records — accepted findings and "
+        "verified fixes from past sessions — for how similar problems were "
+        "diagnosed and what fixed them. Returns summaries; use records_get for "
+        "the full record."
+    )
+    def records_search(term: str = "", kind: str | None = None, limit: int = 20) -> list[dict]:
+        from grayson.records import search_library_records
+
+        try:
+            return search_library_records(library_root / "records", term, kind, limit)
+        except ValueError as e:
+            return [_err(e)]
+
+    @mcp.tool(
+        description="Fetch one published team record in full (a finding or "
+        "proposal, including its payload and verification)."
+    )
+    def records_get(session_id: str, record_id: str) -> dict:
+        from grayson.records import get_library_record
+
+        item = get_library_record(library_root / "records", session_id, record_id)
+        return item or {"error": f"no published record '{record_id}' from '{session_id}'"}
 
     @mcp.tool(
         description="Where this library lives and how fresh the local copy is "

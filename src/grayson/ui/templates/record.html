@@ -2,8 +2,14 @@
 {% block title %}grayson — {{ record.title }}{% endblock %}
 {% block content %}
 <p class="small"><a href="/records?t={{ token }}">← Records</a> ·
+  {% if from_library %}
+  from a teammate's session <span class="{{ 'mono' if not session_title }}"
+    title="{{ session_id }}">{{ session_title or session_id }}</span>
+  <span class="badge act">team</span>{% if author %} <span class="mono faint">by {{ author }}</span>{% endif %}
+  {% else %}
   from session <a class="{{ 'mono' if not session_title }}" href="/session/{{ session_id }}?t={{ token }}"
-    title="{{ session_id }}">{{ session_title or session_id }}</a></p>
+    title="{{ session_id }}">{{ session_title or session_id }}</a>
+  {% endif %}</p>
 
 {% if kind == "finding" %}
 <div class="row split">
