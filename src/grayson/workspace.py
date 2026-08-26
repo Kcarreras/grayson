@@ -40,6 +40,7 @@ class Workspace:
         (path / "knowledge").mkdir(exist_ok=True)
         (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
         (path / "workflows").mkdir(exist_ok=True)
+        (path / "records").mkdir(exist_ok=True)
         from grayson.checks import scaffold_checks_dir
 
         scaffold_checks_dir(path / "checks")
@@ -106,3 +107,9 @@ class Workspace:
     @property
     def checks_dir(self) -> Path:
         return self._library_root() / "checks"
+
+    @property
+    def records_dir(self) -> Path:
+        """Published records (accepted findings, verified fixes) — the distilled,
+        team-shareable output of sessions, unlike .grayson/ session state."""
+        return self._library_root() / "records"

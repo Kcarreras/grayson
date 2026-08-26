@@ -1,0 +1,15 @@
+# Team knowledge appliance — see docs/DEPLOYMENT.md recipe 2.
+services:
+  grayson-knowledge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      GRAYSON_LIBRARY_URL: git@github.com:your-org/qa-library.git
+      GRAYSON_MCP_TOKEN: change-me-to-a-long-random-token
+    volumes:
+      # read-only deploy key for the qa-library repo (never a personal key)
+      - ./deploy_key:/home/grayson/.ssh/id_ed25519:ro
+    ports:
+      - "8850:8850"
+    restart: unless-stopped

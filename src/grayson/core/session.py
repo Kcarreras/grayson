@@ -648,6 +648,11 @@ class Session:
                 con.close()
             if cur.rowcount:
                 self.log_event(actor, "finding_superseded", {"fid": target, "by": fid})
+        # acceptance is the provenance gate: the vetted finding compounds into
+        # the team library (best-effort — publication never fails the accept)
+        from grayson.records import publish_finding
+
+        publish_finding(self, fid)
 
     def reject_finding(self, fid: str, reason: str, actor: str = "user") -> None:
         """Reject a finding with a required reason (a user action). The reason

@@ -49,6 +49,8 @@ def test_only_read_tools_registered(server):
         "views_list",
         "checks_status",
         "checks_show",
+        "records_search",
+        "records_get",
         "library_info",
     }
     # the write/session surface must not exist here at all
@@ -79,6 +81,35 @@ def test_workflows_include_builtins_and_library(server, library):
     assert result["library_problems"] == []
     shown = _call(server, "workflow_show", {"name": "custom"})
     assert shown["required_checks"][0]["key"] == "one"
+
+
+def test_records_served_from_library(server, library):
+    record_dir = library / "records" / "s_20260826_0001"
+    record_dir.mkdir(parents=True)
+    (record_dir / "f_001.json").write_text(
+        json.dumps(
+            {
+                "kind": "finding",
+                "session_id": "s_20260826_0001",
+                "id": "f_001",
+                "ts": "2026-08-26T10:00:00Z",
+                "title": "Join fan-out on ORDERS",
+                "severity": "high",
+                "accepted": True,
+                "summary": "Fan-out duplicated revenue rows.",
+                "author": "kcg",
+                "payload": {"summary": "Fan-out duplicated revenue rows."},
+                "record": {"fid": "f_001", "payload": {"summary": "Fan-out duplicated rows."}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    hits = _call(server, "records_search", {"term": "fan-out"})
+    assert len(hits) == 1 and hits[0]["author"] == "kcg"
+    full = _call(server, "records_get", {"session_id": "s_20260826_0001", "record_id": "f_001"})
+    assert full["record"]["fid"] == "f_001"
+    missing = _call(server, "records_get", {"session_id": "s_x", "record_id": "f_009"})
+    assert "error" in missing
 
 
 def test_checks_and_views_and_info(server, library):
