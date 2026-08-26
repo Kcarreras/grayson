@@ -845,6 +845,40 @@ def workflow_show(name: str) -> None:
         fail(str(e.args[0] if e.args else e))
 
 
+@workflow_app.command("new")
+def workflow_new(
+    name: str = typer.Argument(..., help="Workflow name (lowercase, hyphens), e.g. orders-health."),
+    fork: str = typer.Option(
+        None, "--fork", help="Start from a copy of this existing workflow (lineage recorded)."
+    ),
+    title: str = typer.Option("", "--title"),
+) -> None:
+    """Scaffold a new workflow in the team library — blank, or forked from an
+    existing one. Core names are refused (core templates are canonical). The
+    file is stamped with your `grayson user` id; edit it, lint it, push it."""
+    from grayson.identity import get_user_id
+    from grayson.workflows import lint_workflows
+    from grayson.workflows.authoring import WorkflowAuthoringError, create_workflow
+
+    ws = _workspace()
+    try:
+        path = create_workflow(
+            ws.workflows_dir, name, fork_of=fork, title=title, user_id=get_user_id()
+        )
+    except (WorkflowAuthoringError, WorkflowNotFound) as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    emit(
+        {
+            "created": str(path),
+            **({"forked_from": fork} if fork else {}),
+            "lint": lint_workflows(ws.workflows_dir),
+            "next": "edit the YAML (or use the console's Workflows tab), then "
+            "`grayson workflow lint` and `grayson library push`",
+        }
+    )
+
+
 @workflow_app.command("lint")
 def workflow_lint() -> None:
     """Validate the library's workflow YAML: parse/shape errors, core-name

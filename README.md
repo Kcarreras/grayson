@@ -240,6 +240,15 @@ core-name shadowing, duplicate names or checkpoint keys, unknown findings
 schemas), and files that fail to load are reported wherever workflows are
 listed, never silently skipped.
 
+The console's **Workflows tab** makes the catalog browsable: a gallery of core
+and team workflows (lint failures shown red, in place), and per-workflow pages
+with the session flow drawn stage by stage — evidence gates and human-approval
+points marked — plus every checkpoint, setup input, and findings-schema field
+unpacked. Creating is `grayson workflow new <name> [--fork <base>]` or the same
+flow in the console; editing is ownership-aware: your own workflows edit in
+place, a teammate's or a core workflow forks a copy under your id with
+`forked_from` lineage recorded in the YAML.
+
 | Workflow | Purpose |
 |---|---|
 | `bug-hunter` | Replicate a reported anomaly and isolate its source |

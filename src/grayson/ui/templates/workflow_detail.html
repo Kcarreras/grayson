@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}grayson — {{ tpl.name }}{% endblock %}
+{% block head %}
+<style>
+.wfrail { display: flex; align-items: stretch; gap: 0; margin-top: 6px; }
+.wfnode { flex: 1; display: flex; flex-direction: column; gap: 5px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 11px 13px; }
+.wfnode .nh { display: flex; align-items: center; gap: 7px; font-weight: 650;
+  font-size: 13px; }
+.wfnode .nd { color: var(--muted); font-size: 12px; }
+.wfdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.wflink { position: relative; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; width: 58px; flex: none; }
+.wflink .line { position: absolute; left: 0; right: 0; top: 50%; height: 1px;
+  background: var(--border); }
+.wflink .gate { position: relative; display: flex; flex-direction: column;
+  align-items: center; gap: 2px; background: var(--panel); padding: 3px;
+  font-size: 10px; color: var(--attn); font-weight: 600; text-align: center;
+  line-height: 1.25; }
+.wfcols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 14px; align-items: start; }
+@media (max-width: 860px) { .wfcols { grid-template-columns: 1fr; } .wfrail { flex-wrap: wrap; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="faint small" style="margin-bottom: 8px;">
+  <a href="/workflows?t={{ token }}">Workflows</a> / {{ tpl.name }}</div>
+
+<div class="row split" style="align-items: flex-start; margin-bottom: 14px;">
+  <div>
+    <div class="row" style="gap: 10px;">
+      <h1 style="margin: 0;">{{ tpl.title or tpl.name }}</h1>
+      {% if is_core %}<span class="badge plain">core</span>
+      {% elif editable and user_id and tpl.created_by == user_id %}<span class="badge todo">mine</span>
+      {% else %}<span class="badge act">team</span>{% endif %}
+      <span class="mono faint small">{{ tpl.name }}</span>
+    </div>
+    <div class="muted small" style="max-width: 620px; margin-top: 4px;">{{ tpl.description.strip() }}</div>
+  </div>
+  <span class="row">
+    <a class="btn ghost" href="/workflows/{{ tpl.name }}/yaml?t={{ token }}">YAML</a>
+    {% if editable %}
+    <a class="btn secondary" href="/workflows/{{ tpl.name }}/edit?t={{ token }}">Edit</a>
+    {% endif %}
+    <form class="inline" method="post" action="/workflows/{{ tpl.name }}/fork?t={{ token }}">
+      <span class="row" style="gap: 6px;">
+        <input type="text" name="new_name" value="{{ fork_name }}"
+          pattern="[a-z0-9][a-z0-9-]*" required style="width: 220px;">
+        <button class="btn secondary" type="submit">Fork to edit</button>
+      </span>
+    </form>
+  </span>
+</div>
+
+<div class="card">
+  <div class="overline" style="margin-bottom: 12px;">How a session runs — every gate is
+    enforced by grayson, not by prompting</div>
+  <div class="wfrail">
+    <div class="wfnode">
+      <div class="nh"><span class="wfdot" style="background: var(--ok);"></span>Setup</div>
+      <div class="nd">{{ tpl.setup_inputs | length }} input{{ "s" if tpl.setup_inputs | length != 1 }}
+        from the human before analysis starts.</div>
+    </div>
+    <div class="wflink"><div class="line"></div></div>
+    <div class="wfnode" style="flex: 1.3;">
+      <div class="nh"><span class="wfdot" style="background: var(--brand-accent); box-shadow: 0 0 0 3px var(--act-soft);"></span>Analysis</div>
+      <div class="nd">Guarded queries cached as <span class="mono">q_0001…</span> —
+        {{ tpl.required_checks | length }} checkpoint{{ "s" if tpl.required_checks | length != 1 }}
+        close only by citing them. Suggested guard: <b>{{ tpl.suggested_guard_profile }}</b>.</div>
+    </div>
+    <div class="wflink"><div class="line"></div>
+      <div class="gate"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>evidence<br>gate</div></div>
+    <div class="wfnode">
+      <div class="nh"><span class="wfdot" style="background: var(--todo);"></span>Findings</div>
+      <div class="nd">Validated against <span class="mono">{{ tpl.findings_schema }}</span>;
+        the human accepts or rejects each.</div>
+    </div>
+    <div class="wflink"><div class="line"></div>
+      <div class="gate"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5l5.5 9.5H2.5z"/><path d="M8 6.8v2.4"/><circle cx="8" cy="10.9" r="0.3"/></svg>human<br>approval</div></div>
+    <div class="wfnode">
+      <div class="nh"><span class="wfdot" style="background: var(--ok);"></span>Fix &amp; verify</div>
+      <div class="nd">Approved fixes applied, proved with a before/after re-run.</div>
+    </div>
+  </div>
+</div>
+
+<div class="wfcols">
+  <div>
+    <h2>Checkpoints — evidence-gated</h2>
+    {% for c in tpl.required_checks %}
+    <details class="fold" {% if loop.first %}open{% endif %}>
+      <summary><span class="mono faint">{{ loop.index }}</span> {{ c.title }}
+        <span style="flex: 1;"></span><span class="mono faint small">{{ c.key }}</span></summary>
+      <div class="fold-body">
+        {% if c.description %}<div class="ink2 small" style="margin-top: 8px;">{{ c.description.strip() }}</div>
+        {% else %}<div class="faint small" style="margin-top: 8px;">No description recorded.</div>{% endif %}
+        <div class="kv" style="margin-top: 9px;">
+          <span class="item"><b>closes by</b>citing executed query ids (q_XXXX)</span>
+          <span class="item"><b>enforced</b>queries must have run and touched the target tables</span>
+        </div>
+      </div>
+    </details>
+    {% else %}
+    <div class="card empty">No checkpoints — sessions on this workflow have no evidence gates.</div>
+    {% endfor %}
+
+    <h2>Findings gate</h2>
+    <div class="card">
+      <div class="row" style="gap: 8px;">
+        <span class="chip">{{ tpl.findings_schema }}</span>
+        <span class="muted small">every finding must validate against this shape and cite
+          ≥1 executed query</span>
+      </div>
+      <div class="row" style="gap: 6px; margin-top: 10px;">
+        {% for f in ["title", "severity", "confidence", "summary", "evidence ≥1"] %}
+        <span class="chip">{{ f }}</span>
+        {% endfor %}
+        {% for key, desc in required_extra %}
+        <span class="chip" style="color: var(--todo); border-color: var(--todo);"
+          title="{{ desc }}">+ {{ key }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h2>Setup inputs</h2>
+    <div class="card">
+      {% for i in tpl.setup_inputs %}
+      <div style="margin-bottom: 9px;">
+        <div class="mono small">{{ i.key }}{% if i.required %} <span class="attn-text">*</span>{% endif %}</div>
+        <div class="muted small">{{ i.prompt.strip() }}</div>
+      </div>
+      {% else %}<div class="muted small">None — sessions start straight into analysis.</div>{% endfor %}
+    </div>
+
+    <h2>Usage</h2>
+    <div class="card">
+      <dl class="props">
+        <dt>Sessions</dt><dd>{{ usage.count }}{% if usage.last %} · last {{ usage.last[:10] }}{% endif %}</dd>
+      </dl>
+    </div>
+
+    <h2>Provenance</h2>
+    {% if is_core %}
+    <div class="card attn">
+      <b style="display: inline-flex; align-items: center; gap: 7px;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--attn)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>Canonical — ships with grayson</b>
+      <div class="muted small" style="margin-top: 5px;">Core workflows are read-only for
+        everyone; they change only with a grayson release. Forking copies this definition
+        into the team library under your id — the original stays untouched.</div>
+    </div>
+    {% else %}
+    <div class="card">
+      <dl class="props">
+        <dt>Created by</dt><dd>{% if tpl.created_by %}<span class="mono">{{ tpl.created_by }}</span>
+          {% else %}<span class="faint">unrecorded (legacy file — first edit stamps the editor)</span>{% endif %}</dd>
+        {% if tpl.forked_from %}<dt>Forked from</dt><dd><a class="mono" href="/workflows/{{ tpl.forked_from }}?t={{ token }}">{{ tpl.forked_from }}</a></dd>{% endif %}
+        <dt>File</dt><dd class="mono small">workflows/{{ tpl.name }}.yaml</dd>
+      </dl>
+      {% if not editable %}
+      <div class="muted small" style="margin-top: 4px;">Created by a teammate — editing
+        forks a copy under your id; their original stays as the team knows it.</div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

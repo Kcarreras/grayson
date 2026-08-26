@@ -330,6 +330,7 @@ dl.props dd { margin: 0; color: var(--ink-2); }
   <nav class="nav">
     <a class="brand" href="/?t={{ token }}"><span class="b-gray">gray</span>son<svg class="b-wing" width="15" height="9" viewBox="2 8 28 17" aria-hidden="true"><polygon points="2,8 15,20 15,25 4,13"/><polygon points="30,8 17,20 17,25 28,13"/></svg></a>
     <a class="tab {{ 'active' if nav == 'sessions' }}" href="/?t={{ token }}">Sessions</a>
+    <a class="tab {{ 'active' if nav == 'workflows' }}" href="/workflows?t={{ token }}">Workflows</a>
     <a class="tab {{ 'active' if nav == 'knowledge' }}" href="/knowledge?t={{ token }}">Knowledge</a>
     <a class="tab {{ 'active' if nav == 'checks' }}" href="/checks?t={{ token }}">Checks</a>
     <a class="tab {{ 'active' if nav == 'records' }}" href="/records?t={{ token }}">Records</a>

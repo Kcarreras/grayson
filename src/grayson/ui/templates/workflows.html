@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}grayson — workflows{% endblock %}
+{% block head %}
+<style>
+.wfgrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.wfcard { display: flex; flex-direction: column; gap: 7px; margin-bottom: 0; }
+.wfcard .desc { color: var(--ink-2); font-size: 13px; flex: 1; }
+.wfcard .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  border-top: 1px solid var(--border-soft); padding-top: 9px; font-size: 12px;
+  color: var(--muted); }
+a.wfcard { color: inherit; }
+a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
+.newcard { border-style: dashed; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Workflows</h1>
+<div class="muted small">Core workflows ship with grayson and are canonical; team workflows
+  live in the shared library's <code>workflows/</code> and travel by git.
+  {% if user_id %}Your id: <span class="chip">{{ user_id }}</span>{% else %}
+  No user id set — <code>grayson user set &lt;id&gt;</code> makes your workflows and
+  facts attributable.{% endif %}</div>
+
+{% if problems %}
+<div class="banner" style="margin-top: 12px;">{{ problems | length }} library workflow
+  file(s) are not loadable — sessions cannot start from them until they lint clean.</div>
+{% endif %}
+
+<h2>Core — canonical, fork to customize</h2>
+<div class="wfgrid">
+  {% for row in cores %}
+  <a class="card wfcard" href="/workflows/{{ row.tpl.name }}?t={{ token }}">
+    <div class="row split">
+      <b>{{ row.tpl.title or row.tpl.name }}</b>
+      <span class="badge plain">core</span>
+    </div>
+    <span class="mono faint small">{{ row.tpl.name }}</span>
+    <div class="desc">{{ row.tpl.description.strip().split("\n")[0] }}</div>
+    <div class="meta">
+      <span>{{ row.tpl.required_checks | length }} checkpoints</span>
+      <span class="faint">·</span>
+      <span class="mono">{{ row.tpl.findings_schema }}</span>
+      <span style="flex: 1;"></span>
+      <span class="faint">{{ row.usage.count }} session{{ "s" if row.usage.count != 1 }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+<h2>Team library</h2>
+<div class="wfgrid">
+  {% for row in team %}
+  <a class="card wfcard" href="/workflows/{{ row.tpl.name }}?t={{ token }}">
+    <div class="row split">
+      <b>{{ row.tpl.title or row.tpl.name }}</b>
+      {% if row.mine %}<span class="badge todo">mine</span>
+      {% else %}<span class="badge act">team</span>{% endif %}
+    </div>
+    <div class="row" style="gap: 6px;">
+      <span class="mono faint small">{{ row.tpl.name }}</span>
+      {% if row.tpl.forked_from %}
+      <span class="faint small">forked from</span>
+      <span class="chip">{{ row.tpl.forked_from }}</span>
+      {% endif %}
+    </div>
+    <div class="desc">{{ row.tpl.description.strip().split("\n")[0] }}</div>
+    <div class="meta">
+      <span>{{ row.tpl.required_checks | length }} checkpoints</span>
+      <span class="faint">·</span>
+      <span class="mono">{{ row.tpl.findings_schema }}</span>
+      <span style="flex: 1;"></span>
+      {% if row.tpl.created_by %}<span class="mono faint">by {{ row.tpl.created_by }}</span>
+      {% else %}<span class="faint">{{ row.usage.count }} session{{ "s" if row.usage.count != 1 }}</span>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+
+  {% for p in problems %}
+  <div class="card wfcard" style="border-color: var(--bad);">
+    <div class="row split">
+      <b class="ink2">{{ p.name or p.file }}</b>
+      <span class="badge bad">lint failed</span>
+    </div>
+    <span class="mono faint small">workflows/{{ p.file }}</span>
+    <div class="desc muted">{{ p.problem }}</div>
+    <div class="meta"><span class="faint">fix the file (or <code>grayson workflow lint</code>), then push</span></div>
+  </div>
+  {% endfor %}
+
+  <div class="card wfcard newcard">
+    <div class="row split"><b class="muted">New workflow</b></div>
+    <div class="desc faint">Start blank or fork any workflow — the YAML lands in the
+      team library under your id and travels on push.</div>
+    <form method="post" action="/workflows/new?t={{ token }}" style="display: flex; flex-direction: column; gap: 8px;">
+      <input type="text" name="new_name" placeholder="name, e.g. orders-slim-health"
+        pattern="[a-z0-9][a-z0-9-]*" required>
+      <select name="fork_of">
+        <option value="">start from scratch</option>
+        {% for base in fork_bases %}<option value="{{ base }}">fork {{ base }}</option>{% endfor %}
+      </select>
+      <div><button class="btn sm" type="submit">Create &amp; edit</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}
