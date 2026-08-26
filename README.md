@@ -17,7 +17,7 @@
 
 ---
 
-Agents are good at data investigation, but investigation is messy, open-ended and in messy schemas and disjointed orgs, each agent starts from the same messy context. grayson resolves that: your agent — in Cursor, Claude Code, Codex,
+Agents are now really good at data QA, troubleshooting and remediation. But the investigation process in a typical enterprise warehouse is messy. Sometimes it's open-ended, and in messy schemas and disjointed orgs, each agent starts from the same messy, incomplete context. grayson resolves that: your agent — in Cursor, Claude Code, Codex,
 or any harness — does the analysis, and grayson gives it rails to run on, and you, the confidence to automate. Currently, Snowflake-first. Guarded read-only access. Sessions that cannot claim
 work without evidence. A human console at every critical semantic judgment call. A
 git-shared team library so every investigation makes the next one smarter. Documentation of every pipeline fix persists beyond your agents context window. 
