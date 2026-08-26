@@ -55,6 +55,13 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Workspace:
     return ws
 
 
+@pytest.fixture(autouse=True)
+def _isolated_user_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # keep the developer's real ~/.grayson/config.toml user id out of test facts
+    monkeypatch.setenv("GRAYSON_CONFIG_DIR", str(tmp_path / "user-config"))
+    monkeypatch.delenv("GRAYSON_USER_ID", raising=False)
+
+
 @pytest.fixture
 def fake_snow_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(SNOW_CMD_ENV, json.dumps([sys.executable, str(FAKE_SNOW)]))

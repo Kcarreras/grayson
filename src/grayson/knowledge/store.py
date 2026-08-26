@@ -51,6 +51,10 @@ class Fact(BaseModel):
     confirmed_by: str | None = None
     confirmed_at: str | None = None
     evidence: list[str] = Field(default_factory=list)
+    #: the configured user id (`grayson user set`) the write is attributable to.
+    #: created_by records the actor KIND (agent|user); author records WHOSE
+    #: workspace/identity produced it — the traceability handle in a shared library.
+    author: str | None = None
 
 
 class KnowledgeStore:
@@ -149,6 +153,7 @@ class KnowledgeStore:
         status: FactStatus = "proposed",
         created_by: str = "agent",
         evidence: list[str] | None = None,
+        author: str | None = None,
     ) -> dict:
         # 'agents propose; users confirm': user_confirmed status is reachable ONLY
         # through confirm_fact (a user action), never by writing a new fact. This
@@ -162,23 +167,30 @@ class KnowledgeStore:
         fid = fact_id or _slug(fact_text, {f["id"] for f in doc["facts"]})
         if any(f["id"] == fid for f in doc["facts"]):
             raise ValueError(f"fact id '{fid}' already exists for {fqn}")
+        from grayson.identity import get_user_id
+
         fact = Fact(
             id=fid,
             fact=fact_text,
             status=status,
             created_by=created_by,
             evidence=evidence or [],
+            author=author or get_user_id(),
         )
         doc["facts"].append(fact.model_dump())
         self._write(fqn, doc)
         return fact.model_dump()
 
     def confirm_fact(self, fqn: str, fact_id: str, by: str = "user") -> dict:
+        from grayson.identity import get_user_id
+
         doc = self.read(fqn)
         for f in doc["facts"]:
             if f["id"] == fact_id:
                 f["status"] = "user_confirmed"
-                f["confirmed_by"] = by
+                # a generic 'user' resolves to the configured id when one is set,
+                # so shared-library history names the confirmer
+                f["confirmed_by"] = (get_user_id() or by) if by == "user" else by
                 f["confirmed_at"] = utcnow()
                 self._write(fqn, doc)
                 return f

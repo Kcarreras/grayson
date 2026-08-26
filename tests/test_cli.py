@@ -100,6 +100,27 @@ def test_workflow_list_and_show(workspace):
     assert show["findings_schema"] == "bug_hunter_v1"
 
 
+def test_workflow_lint_clean_and_broken(workspace):
+    assert invoke("workflow", "lint")["ok"] is True
+    (workspace.workflows_dir / "shadow.yaml").write_text(
+        "name: bug-hunter\ntitle: Shadow\n", encoding="utf-8"
+    )
+    result = runner.invoke(app, ["workflow", "lint"])
+    assert result.exit_code == 1
+    report = json.loads(result.output)
+    assert report["ok"] is False
+    assert "shadows the core workflow" in report["errors"][0]["problem"]
+
+
+def test_user_set_and_show():
+    shown = invoke("user", "show")
+    assert shown["user_id"] is None
+    assert invoke("user", "set", "kcg")["user_id"] == "kcg"
+    assert invoke("user", "show")["user_id"] == "kcg"
+    result = runner.invoke(app, ["user", "set", "not ok!"])
+    assert result.exit_code == 1
+
+
 def test_unknown_workflow_start_fails(workspace, fake_snow_env):
     result = runner.invoke(app, ["session", "start", "--workflow", "nope", "--table", "DB.S.T1"])
     assert result.exit_code == 1

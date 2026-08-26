@@ -77,7 +77,17 @@ def test_tools_registered(server):
 
 def test_workflow_list_tool(server):
     result = _call(server, "workflow_list", {})
-    assert any(t["name"] == "bug-hunter" for t in result)
+    assert any(t["name"] == "bug-hunter" for t in result["workflows"])
+    assert result["library_problems"] == []
+
+
+def test_workflow_list_reports_library_problems(server, workspace):
+    (workspace.workflows_dir / "shadow.yaml").write_text(
+        "name: table-health\ntitle: Shadow\n", encoding="utf-8"
+    )
+    result = _call(server, "workflow_list", {})
+    assert len(result["library_problems"]) == 1
+    assert "shadows the core workflow" in result["library_problems"][0]["problem"]
 
 
 def test_session_lifecycle_via_mcp(server, workspace):

@@ -192,6 +192,23 @@ The console's Knowledge tab includes a relationship canvas of the whole library
 (Cytoscape + ELK, vendored — no CDN), and each table page shows its completeness
 report, facts, and the external checks that cover it.
 
+Set a short per-user id once after install — `grayson user set kcg` — and every
+fact carries it (`author`) alongside the actor kind, and every library commit
+message carries a `Grayson-User:` trailer (plus `Grayson-Via: mcp-agent` for
+agent-surface writes), so shared history stays attributable even from shared
+machines. `GRAYSON_USER_ID` overrides it per process.
+
+A teammate who doesn't run the harness can still give their agent the team's
+knowledge, read-only — no workspace, no Snowflake, no write tools registered
+at all:
+
+```bash
+grayson mcp serve --knowledge-only --library git@github.com:your-org/qa-library.git
+```
+
+This clones (or pulls) the library and serves just `knowledge_*`, `workflow_*`,
+`views_list`, `checks_*`, and `library_info` over stdio.
+
 ## Settings
 
 Workspace configuration lives in `grayson.toml` — committed, reviewable, diffable.
@@ -215,8 +232,13 @@ workspace setting.
 
 ## Workflows
 
-Six templates ship built-in; they are YAML data, overridable and extendable in the
-library's `workflows/`:
+Six templates ship built-in; the library's `workflows/` extends them with your
+team's own. Core templates are canonical — a library file cannot shadow a core
+name (it changes only with a grayson release); customize by forking under a new
+name. `grayson workflow lint` validates the library's YAML (parse errors,
+core-name shadowing, duplicate names or checkpoint keys, unknown findings
+schemas), and files that fail to load are reported wherever workflows are
+listed, never silently skipped.
 
 | Workflow | Purpose |
 |---|---|
