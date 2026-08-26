@@ -546,3 +546,31 @@ Application Control policy on the target work machine (§8).
 *Spec converged 2026-08-20 from requirements interview. Open items intentionally
 deferred: read-only role adoption, any central collaboration service (git-based
 library model specified in §11a is v1), additional workflow templates.*
+
+## Repository layout
+
+```
+grayson/
+├── src/grayson/
+│   ├── guard/        # SQL statement guard (the airtight wall)
+│   ├── executor/     # snow CLI execution + auth detection
+│   ├── cache/        # result storage, freshness, guarded local analysis
+│   ├── core/         # session state machine, evidence engine, proposals
+│   ├── workflows/    # YAML workflow templates, registry, lint, authoring
+│   ├── findings/     # findings schemas
+│   ├── interventions/# human-in-the-loop task types
+│   ├── knowledge/    # team knowledge store
+│   ├── views/        # QA view library + coverage checks
+│   ├── checks/       # external check results (Airflow, dbt, …)
+│   ├── charts/       # chart specs + SVG/terminal renderers
+│   ├── ui/           # FastAPI + Jinja2 local console (loopback, token-gated)
+│   ├── mcp/          # MCP servers (full + knowledge-only; tools mirror the CLI)
+│   ├── harness/      # per-harness protocol files + guard permissions
+│   ├── library.py    # team library repo: linking, sync, freshness
+│   ├── records.py    # cross-session records + library publication
+│   ├── identity.py   # per-user id for attribution
+│   └── audit.py      # warehouse-history reconciliation
+├── docker/           # knowledge-appliance image + compose
+├── tests/            # pytest suite
+└── docs/             # SESSIONS, WORKFLOWS, LIBRARY, CHECKS, DEPLOYMENT, SECURITY, SPEC
+```
