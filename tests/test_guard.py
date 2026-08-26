@@ -210,9 +210,15 @@ def test_information_schema_always_in_scope():
     assert v.allowed
 
 
-def test_snowflake_account_usage_always_in_scope():
-    v = verdict("SELECT * FROM snowflake.account_usage.query_history", strict_scope=True)
+def test_snowflake_catalog_in_scope_but_history_views_denied():
+    # the SNOWFLAKE catalog stays in scope (metadata is legitimate QA input)...
+    v = verdict("SELECT * FROM snowflake.account_usage.tables", strict_scope=True)
     assert v.allowed
+    # ...but the query/login history views are privileged audit data: they
+    # carry other statements' full text, and they are how a human audits the
+    # agent (grayson audit reconcile) — never the other way around.
+    v = verdict("SELECT * FROM snowflake.account_usage.query_history", strict_scope=True)
+    assert not v.allowed and v.rule == "denied_table"
 
 
 def test_cte_names_not_scope_checked():

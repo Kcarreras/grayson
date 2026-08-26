@@ -112,3 +112,49 @@ def test_ordinary_scalar_functions_allowed():
         "SELECT COALESCE(a, b) FROM db.s.t",
     ]:
         assert v(sql, scope_tables={"DB.S.T"}).allowed, sql
+
+
+# -- warehouse history is privileged audit data (bypass-detection review) --
+
+HISTORY_FUNCS = [
+    "SELECT * FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY())",
+    "SELECT * FROM TABLE(QUERY_HISTORY(RESULT_LIMIT => 100))",
+    "SELECT * FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER(USER_NAME => 'X'))",
+    "SELECT * FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION())",
+    "SELECT * FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_WAREHOUSE())",
+    "SELECT * FROM TABLE(INFORMATION_SCHEMA.LOGIN_HISTORY())",
+]
+
+
+@pytest.mark.parametrize("sql", HISTORY_FUNCS)
+def test_history_table_functions_blocked(sql):
+    verdict = v(sql)
+    assert not verdict.allowed and verdict.rule == "denied_function"
+
+
+HISTORY_TABLES = [
+    "SELECT QUERY_TEXT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+    "SELECT * FROM snowflake.account_usage.access_history",
+    "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY WHERE 1=1",
+    "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS",
+    "SELECT * FROM SNOWFLAKE.READER_ACCOUNT_USAGE.QUERY_HISTORY",
+]
+
+
+@pytest.mark.parametrize("sql", HISTORY_TABLES)
+def test_history_account_usage_tables_blocked(sql):
+    verdict = v(sql)
+    assert not verdict.allowed and verdict.rule == "denied_table"
+
+
+def test_history_table_blocked_in_subquery():
+    sql = (
+        "SELECT * FROM db.s.t WHERE c IN "
+        "(SELECT QUERY_ID FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY)"
+    )
+    verdict = v(sql, scope_tables={"DB.S.T"})
+    assert not verdict.allowed and verdict.rule == "denied_table"
+
+
+def test_information_schema_metadata_still_allowed():
+    assert v("SELECT * FROM DB.INFORMATION_SCHEMA.TABLES").allowed
