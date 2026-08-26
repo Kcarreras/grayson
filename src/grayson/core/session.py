@@ -219,6 +219,28 @@ class Session:
         finally:
             con.close()
 
+    # -- setup inputs ----------------------------------------------------
+
+    def setup_inputs(self) -> dict[str, str]:
+        """The workflow setup answers recorded on this session (may be empty —
+        answers historically lived only in the agent's chat transcript)."""
+        raw = self.get_meta("setup_inputs")
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def set_setup_inputs(self, inputs: dict[str, str], actor: str = "user") -> dict[str, str]:
+        """Record (merge) setup-input answers, so the session itself says why it
+        was started — not just the chat transcript. Returns the merged dict."""
+        merged = {**self.setup_inputs(), **{k: str(v) for k, v in inputs.items()}}
+        self.set_meta("setup_inputs", json.dumps(merged))
+        self.log_event(actor, "setup_inputs_recorded", {"keys": sorted(inputs)})
+        return merged
+
     # -- properties ------------------------------------------------------
 
     @property

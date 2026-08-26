@@ -90,6 +90,32 @@ def test_workflow_list_reports_library_problems(server, workspace):
     assert "shadows the core workflow" in result["library_problems"][0]["problem"]
 
 
+def test_session_start_setup_inputs(server, workspace):
+    bad = _call(
+        server,
+        "session_start",
+        {"workflow": "bug-hunter", "tables": ["DB.S.T1"], "inputs": {"nope": "x"}},
+    )
+    assert "unknown setup input" in bad["error"]
+    started = _call(
+        server,
+        "session_start",
+        {
+            "workflow": "bug-hunter",
+            "tables": ["DB.S.T1"],
+            "inputs": {"anomaly_description": "dup rows"},
+            "new": True,
+        },
+    )
+    assert started["setup_inputs"] == {"anomaly_description": "dup rows"}
+    assert "setup inputs not recorded" in started["hint"]
+    from grayson.core.session import Session
+
+    assert Session(workspace, started["session"]["id"]).setup_inputs() == {
+        "anomaly_description": "dup rows"
+    }
+
+
 def test_session_lifecycle_via_mcp(server, workspace):
     started = _call(server, "session_start", {"workflow": "table-health", "tables": ["DB.S.T1"]})
     sid = started["session"]["id"]

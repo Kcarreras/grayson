@@ -90,8 +90,10 @@ def build_server(workspace: Workspace) -> Any:
             return _err(e)
 
     @mcp.tool(
-        description="Start a QA session for a workflow over target tables. Returns the "
-        "session id, seeded checkpoints, view coverage, and relevant knowledge."
+        description="Start a QA session for a workflow over target tables. Pass the "
+        "user's answers to the workflow's setup inputs via `inputs` (key -> answer) "
+        "so the session records them. Returns the session id, seeded checkpoints, "
+        "view coverage, and relevant knowledge."
     )
     def session_start(
         workflow: str,
@@ -100,19 +102,30 @@ def build_server(workspace: Workspace) -> Any:
         guard_profile: str | None = None,
         strict_scope: bool | None = None,
         new: bool = False,
+        inputs: dict[str, str] | None = None,
     ) -> dict:
         try:
             tpl = get_workflow(workflow, workspace.workflows_dir)
         except WorkflowNotFound as e:
             return _err(e)
+        provided = {k: str(v) for k, v in (inputs or {}).items()}
+        unknown = tpl.unknown_input_keys(provided)
+        if unknown:
+            return {
+                "error": f"unknown setup input(s) {unknown} for workflow '{workflow}' "
+                f"(defined: {tpl.input_keys() or 'none'})"
+            }
         if not new:
             dup = find_recent_duplicate(workspace, workflow, tables)
             if dup:
                 s = _session(dup)
+                if provided:
+                    s.set_setup_inputs(provided, actor="agent")
                 return {
                     "reused_existing": True,
                     "session": s.summary(),
                     "checkpoints": s.checkpoints(),
+                    "setup_inputs": s.setup_inputs(),
                     "note": f"an identical session '{dup}' was created moments ago and "
                     "has no work yet — continuing with it. Pass new=true to force "
                     "a separate one.",
@@ -132,6 +145,8 @@ def build_server(workspace: Workspace) -> Any:
             strict_scope=strict_scope,
         )
         engine.seed_from_workflow(s, workspace.workflows_dir)
+        if provided:
+            s.set_setup_inputs(provided, actor="agent")
         snap = snapshot_metadata(s)
         current = {
             fq: info.get("last_altered")
@@ -147,6 +162,7 @@ def build_server(workspace: Workspace) -> Any:
             "session": s.summary(),
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "findings_schema": tpl.findings_schema,
+            "setup_inputs": provided,
             "view_coverage": registry.coverage_check(tables, current),
             "views_in_scope": enter_session_scope(registry, s, tables),
             "knowledge": facts,
@@ -154,6 +170,13 @@ def build_server(workspace: Workspace) -> Any:
             "external_checks": external,
         }
         hints = []
+        missing_inputs = tpl.missing_required_inputs(provided)
+        if missing_inputs:
+            hints.append(
+                f"required setup inputs not recorded: {', '.join(missing_inputs)} — "
+                "collect the user's answers and pass them via `inputs` at session "
+                "start, so the session itself records why it was started"
+            )
         if external["failing"]:
             ids = ", ".join(f["check_id"] for f in external["failing"])
             hints.append(

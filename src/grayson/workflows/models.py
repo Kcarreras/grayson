@@ -37,3 +37,16 @@ class WorkflowTemplate(BaseModel):
 
     def required_check_keys(self) -> list[str]:
         return [c.key for c in self.required_checks]
+
+    def input_keys(self) -> list[str]:
+        return [i.key for i in self.setup_inputs]
+
+    def unknown_input_keys(self, provided: dict) -> list[str]:
+        return sorted(set(provided) - set(self.input_keys()))
+
+    def missing_required_inputs(self, provided: dict) -> list[str]:
+        return [
+            i.key
+            for i in self.setup_inputs
+            if i.required and not str(provided.get(i.key) or "").strip()
+        ]

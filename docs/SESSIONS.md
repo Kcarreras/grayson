@@ -35,7 +35,8 @@ what needs attention; `latest` works anywhere a session id is expected.
 ## A typical session (driven by the agent)
 
 ```bash
-grayson session start --workflow bug-hunter --table ANALYTICS.WEB.PAGE_EVENTS
+grayson session start --workflow bug-hunter --table ANALYTICS.WEB.PAGE_EVENTS \
+  --input anomaly_description="revenue rows doubled since Tuesday"
 grayson query run <sid> --sql "SELECT ..." --label "why"  # guarded; cached as q_0001…
 grayson cache query <sid> -q "SELECT ... FROM q_0001"     # re-slice locally, no warehouse trip
 grayson chart add <sid> -a q_0001 -k line -x day -y null_rate --title "..."
@@ -44,6 +45,13 @@ grayson finding add <sid> --json '{...}'                  # schema + evidence va
 grayson ui serve                                          # the human console
 grayson session report <sid> --out report.md              # shareable report
 ```
+
+Each workflow defines **setup inputs** — the questions a human answers before
+analysis starts. The agent collects them in chat and records them with
+`--input key="answer"` (MCP: the `inputs` dict), so the session itself
+documents why it was started; they appear in the console and the report. A
+human driving a session by hand can instead pass `--interactive` to be walked
+through them as prompts (terminal only — agents never use it).
 
 Session start snapshots table metadata, loads the relevant knowledge, checks
 QA-view coverage, and surfaces failing external checks on the target tables as
