@@ -99,11 +99,12 @@ handles credentials.
 ```bash
 uv tool install git+https://github.com/Kcarreras/grayson
 cd your-data-repo
-grayson init .                    # scaffold a workspace
-grayson doctor                    # verify snow CLI + connection
-grayson user set <your-id>        # attribution for team-shared writes
-grayson harness init claude-code  # teach your agent the protocol (or cursor | codex)
+grayson setup                     # guided: workspace → connection → user id →
+                                  #   team library → harness → guard permissions
 ```
+
+Prefer flags? Every step is its own command — `grayson init .`, `doctor`,
+`user set <id>`, `library link <url>`, `harness init claude-code|cursor|codex`.
 
 No Snowflake yet? The sandbox is a full demo on a local mock warehouse,
 seeded with planted, workflow-matched bugs and a scoring answer key:

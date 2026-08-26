@@ -50,7 +50,10 @@ they are equivalent. Never query Snowflake except through grayson.
    check external deterministic checks (`grayson checks status --table ...`, echoed
    at session start): a failing Airflow/dbt check on a target table is a pre-vetted
    lead — replicate it with a guarded query first, then widen the investigation.
-2. Start: `grayson session start --workflow <name> --table DB.SCHEMA.TABLE ...`. Review
+2. Start: `grayson session start --workflow <name> --table DB.SCHEMA.TABLE ...`.
+   Record the user's answers to the workflow's setup inputs on the session with
+   `--input key="answer"` (repeatable; MCP: the `inputs` dict) — the session then
+   documents why it was started, not just the chat transcript. Review
    the returned view coverage — library views matching the targets are already in your
    query scope (`views_in_scope`), so query them directly; ask the user to create or
    refresh any the setup flags. Need another registered view later?

@@ -37,6 +37,14 @@ def session(workspace):
     return s
 
 
+def test_setup_inputs_render_on_session_page(client, session):
+    session.set_setup_inputs({"rule_statement": "every URL maps to exactly one category"})
+    page = client.get(f"/session/{session.id}", params={"t": TOKEN})
+    assert page.status_code == 200
+    assert "why this session was started" in page.text
+    assert "every URL maps to exactly one category" in page.text
+
+
 def test_token_required(client, session):
     assert client.get("/").status_code == 403
     assert client.get(f"/?t={TOKEN}").status_code == 200

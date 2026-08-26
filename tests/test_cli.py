@@ -100,6 +100,59 @@ def test_workflow_list_and_show(workspace):
     assert show["findings_schema"] == "bug_hunter_v1"
 
 
+def test_setup_requires_a_terminal(workspace):
+    result = runner.invoke(app, ["setup"])
+    assert result.exit_code == 1
+    assert "interactive" in result.output and "harness init" in result.output
+
+
+def test_session_start_records_setup_inputs(workspace, fake_snow_env):
+    out = invoke(
+        "session",
+        "start",
+        "--workflow",
+        "bug-hunter",
+        "--table",
+        "DB.S.T1",
+        "--input",
+        "anomaly_description=duplicate revenue rows",
+        "--input",
+        "example_locator=ORDER_ID 4711 appears twice",
+    )
+    assert out["setup_inputs"]["anomaly_description"] == "duplicate revenue rows"
+    assert out["setup_inputs_missing"] == ["expectation"]  # the third required input
+    sid = out["session"]["id"]
+    report = invoke("session", "report", sid)
+    assert report["setup_inputs"]["example_locator"] == "ORDER_ID 4711 appears twice"
+
+
+def test_session_start_rejects_unknown_inputs(workspace, fake_snow_env):
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "start",
+            "--workflow",
+            "bug-hunter",
+            "--table",
+            "DB.S.T1",
+            "--input",
+            "not_a_real_key=x",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "unknown setup input" in result.output
+
+
+def test_session_start_interactive_requires_terminal(workspace, fake_snow_env):
+    result = runner.invoke(
+        app,
+        ["session", "start", "--workflow", "bug-hunter", "--table", "DB.S.T1", "--interactive"],
+    )
+    assert result.exit_code == 1
+    assert "terminal" in result.output
+
+
 def test_workflow_lint_clean_and_broken(workspace):
     assert invoke("workflow", "lint")["ok"] is True
     (workspace.workflows_dir / "shadow.yaml").write_text(

@@ -643,6 +643,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         return {
             "nav": "sessions",
             "s": s.summary(),
+            "setup_inputs": s.setup_inputs(),
             "readiness": engine.readiness(s, workspace.workflows_dir),
             "checkpoints": s.checkpoints(),
             "findings": s.findings(),

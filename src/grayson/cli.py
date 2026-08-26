@@ -170,6 +170,135 @@ def init(path: Path = typer.Argument(Path("."), help="Directory to initialize.")
 @app.command()
 def doctor() -> None:
     """Check the environment: workspace, snow CLI, connection."""
+    emit(_doctor_report())
+
+
+@app.command()
+def setup() -> None:
+    """Interactive onboarding: workspace, user id, connection, team library,
+    harness, guard permissions — one guided pass over the same steps that exist
+    as individual commands (init, doctor, user set, library link, harness init),
+    which all remain the scriptable path."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        fail(
+            "grayson setup is interactive — run it in a terminal, or use the "
+            "individual commands: init, doctor, user set, library link, harness init"
+        )
+        return
+    from grayson.harness import generate_harness
+    from grayson.harness.permissions import GUARD_DENY_RULES, apply_guard, guard_status
+    from grayson.identity import get_user_id, set_user_id
+
+    done: dict = {}
+    say = typer.echo
+
+    # -- workspace -------------------------------------------------------
+    try:
+        ws = Workspace.find()
+        say(f"Workspace: {ws.root}")
+    except FileNotFoundError:
+        say("No workspace here. (For a no-Snowflake demo, use `grayson sandbox init` instead.)")
+        if not typer.confirm(f"Initialize a grayson workspace in {Path.cwd()}?", default=True):
+            fail("setup needs a workspace — cd to your data repo and run `grayson setup` again")
+            return
+        _refuse_nested_workspace(Path.cwd())
+        try:
+            ws = Workspace.init(Path.cwd())
+        except OSError as e:
+            fail(f"cannot create a workspace here: {e}")
+            return
+        say(f"Initialized workspace at {ws.root}")
+    done["workspace"] = str(ws.root)
+
+    # -- user id ---------------------------------------------------------
+    current_id = get_user_id()
+    say("\nYour user id stamps facts, records, and library commits for the team.")
+    answer = typer.prompt(
+        "User id (letters/digits/-/_; blank to skip)",
+        default=current_id or "",
+        show_default=bool(current_id),
+    ).strip()
+    if answer and answer != current_id:
+        try:
+            done["user_id"] = set_user_id(answer)
+        except ValueError as e:
+            say(f"  skipped: {e}")
+    elif current_id:
+        done["user_id"] = current_id
+
+    # -- connection ------------------------------------------------------
+    from grayson.config_edit import ConfigError, set_values
+
+    say("\ngrayson runs all warehouse access through the `snow` CLI's named connection.")
+    connection = typer.prompt("Snowflake connection name", default=ws.config.connection).strip()
+    if connection and connection != ws.config.connection:
+        try:
+            set_values(ws.root, {"connection.name": connection})
+            ws.reload_config()
+            done["connection"] = connection
+        except ConfigError as e:
+            say(f"  skipped: {e}")
+
+    # -- doctor ----------------------------------------------------------
+    if typer.confirm("Run environment checks now?", default=True):
+        report = _doctor_report()
+        for check in report["checks"]:
+            say(f"  {'ok  ' if check['ok'] else 'FAIL'} {check['check']}: {check['detail']}")
+        done["doctor_ok"] = report["ok"]
+
+    # -- team library ----------------------------------------------------
+    say("\nA team library (an ordinary git repo) shares knowledge, workflows, and records.")
+    source = typer.prompt(
+        "Team library git URL or local path (blank to skip)", default="", show_default=False
+    ).strip()
+    if source:
+        from grayson.library import link_library
+
+        auto_push = typer.confirm("Auto commit+push library writes?", default=False)
+        try:
+            done["library"] = link_library(ws, source, auto_push=auto_push)
+            ws.reload_config()
+        except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
+            say(f"  library link failed: {e} — retry later with `grayson library link`")
+
+    # -- harness ---------------------------------------------------------
+    say("\nThe protocol file teaches your agent how to drive grayson.")
+    harness = typer.prompt(
+        "Harness (claude-code | cursor | codex | skip)", default="claude-code"
+    ).strip()
+    if harness != "skip":
+        try:
+            done["harness"] = generate_harness(ws.root, harness)
+        except ValueError as e:
+            say(f"  skipped: {e}")
+            harness = "skip"
+    if harness != "skip":
+        status = guard_status(ws.root, harness)
+        if status.get("supported"):
+            say(
+                "\nGuard permissions add deny rules so the agent calling `snow` "
+                "directly, or reading .grayson/ state, hits a permission prompt:\n  "
+                + "\n  ".join(GUARD_DENY_RULES)
+            )
+            if typer.confirm("Apply guard permissions?", default=False):
+                try:
+                    done["guard_permissions"] = apply_guard(ws.root, harness)
+                except ValueError as e:
+                    say(f"  skipped: {e}")
+        else:
+            say("\nHarness guard setup for this harness (human-configured):")
+            say(status["guidance"])
+
+    done["next"] = [
+        "try the sandbox: grayson sandbox init my-demo (planted bugs + answer key)",
+        "start the console: grayson ui serve",
+        "then ask your agent to run a workflow — grayson enforces the rails",
+    ]
+    say("")
+    emit(done)
+
+
+def _doctor_report() -> dict:
     checks: list[dict] = []
     ws: Workspace | None = None
     try:
@@ -231,7 +360,7 @@ def doctor() -> None:
                 "detail": str(ws.config.library_path),
             }
         )
-    emit({"ok": all(c["ok"] for c in checks), "checks": checks})
+    return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
 
 @app.command()
@@ -344,6 +473,19 @@ def session_start(
     new: bool = typer.Option(
         False, "--new", help="Start even if an identical just-created session exists."
     ),
+    inputs: list[str] = typer.Option(
+        [],
+        "--input",
+        "-I",
+        help='Workflow setup input as key="value" (repeatable) — recorded on the '
+        "session so it says why it was started, not just the chat transcript.",
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        help="Walk the workflow's setup inputs as prompts (terminal only — for a "
+        "human driving the session by hand; agents pass --input instead).",
+    ),
 ) -> None:
     """Start a QA session. Guard profile is resolved then per-setting overrides apply."""
     ws = _workspace()
@@ -352,17 +494,48 @@ def session_start(
     except WorkflowNotFound as e:
         fail(str(e.args[0] if e.args else e))
         return
+    provided: dict[str, str] = {}
+    for item in inputs:
+        if "=" not in item:
+            fail(f"--input expects key=value, got {item!r}")
+            return
+        key, value = item.split("=", 1)
+        provided[key.strip()] = value.strip()
+    unknown = tpl.unknown_input_keys(provided)
+    if unknown:
+        fail(
+            f"unknown setup input(s) {unknown} for workflow '{workflow}' "
+            f"(defined: {tpl.input_keys() or 'none'})"
+        )
+        return
+    if interactive:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            fail("--interactive needs a terminal — pass --input key=value instead")
+            return
+        for setup_input in tpl.setup_inputs:
+            if str(provided.get(setup_input.key) or "").strip():
+                continue
+            prompt = f"{setup_input.key} — {setup_input.prompt.strip()}"
+            if setup_input.required:
+                provided[setup_input.key] = typer.prompt(prompt)
+            else:
+                answer = typer.prompt(f"{prompt} (blank to skip)", default="", show_default=False)
+                if answer.strip():
+                    provided[setup_input.key] = answer
     # Re-running session start moments later (lost output, shell retry) reuses
     # the fresh session instead of littering the workspace with twins.
     if not new:
         dup = find_recent_duplicate(ws, workflow, tables)
         if dup:
             s = Session(ws, dup)
+            if provided:
+                s.set_setup_inputs(provided)
             emit(
                 {
                     "reused_existing": True,
                     "session": s.summary(),
                     "checkpoints": s.checkpoints(),
+                    "setup_inputs": s.setup_inputs(),
                     "note": f"an identical session '{dup}' was created moments ago and has "
                     "no work yet — continuing with it. Pass --new to force a separate one.",
                 }
@@ -399,6 +572,8 @@ def session_start(
         strict_scope=strict_scope,
     )
     engine.seed_from_workflow(session, ws.workflows_dir)
+    if provided:
+        session.set_setup_inputs(provided)
     result = {
         "session": session.summary(),
         "guard_profile_source": (
@@ -411,7 +586,11 @@ def session_start(
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "findings_schema": tpl.findings_schema,
         },
+        "setup_inputs": provided,
     }
+    missing_inputs = tpl.missing_required_inputs(provided)
+    if missing_inputs:
+        result["setup_inputs_missing"] = missing_inputs
     if not skip_snapshot:
         snap = snapshot_metadata(session)
         result["metadata_snapshot"] = snap

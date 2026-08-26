@@ -54,6 +54,17 @@
   <div class="item"><b>Created</b> <span class="mono">{{ s.created_at }}</span></div>
 </div>
 
+{% if setup_inputs %}
+<div class="card">
+  <div class="overline" style="margin-bottom: 6px;">Setup inputs — why this session was started</div>
+  <dl class="props">
+    {% for key, value in setup_inputs.items() %}
+    <dt>{{ key | replace("_", " ") }}</dt><dd>{{ value }}</dd>
+    {% endfor %}
+  </dl>
+</div>
+{% endif %}
+
 {% if open_iv %}
 <h2>Needs your input {{ help("interventions") }}</h2>
 {% for iv in open_iv %}

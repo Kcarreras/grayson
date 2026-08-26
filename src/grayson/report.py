@@ -19,6 +19,7 @@ def build_report(session: Session, overrides_dir: Path | None = None) -> dict:
     return {
         "generated_at": utcnow(),
         "session": session.summary(),
+        "setup_inputs": session.setup_inputs(),
         "readiness": engine.readiness(session, overrides_dir),
         "checkpoints": session.checkpoints(),
         "findings": session.findings(),
@@ -46,6 +47,12 @@ def render_markdown(report: dict) -> str:
         f"- **Created:** {s['created_at']}",
         f"- **Generated:** {report['generated_at']}",
         "",
+    ]
+    if report.get("setup_inputs"):
+        lines += ["## Setup inputs", ""]
+        lines += [f"- **{k}:** {v}" for k, v in report["setup_inputs"].items()]
+        lines += [""]
+    lines += [
         "## Queries",
         "",
         f"- Total: {stats['total']} "
