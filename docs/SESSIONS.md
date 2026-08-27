@@ -63,6 +63,42 @@ validate against the workflow's schema; the human accepts or rejects each one,
 approves proposed fixes, and the agent proves an applied fix with a
 deterministic before/after comparison of re-run queries.
 
+## Honest endings
+
+Two things a gate must allow, or it starts manufacturing the evidence it exists
+to demand.
+
+**A check that does not apply.** Freshness on a static reference table, error
+patterns when there were no errors — the agent's only other route past the gate
+is a query picked to satisfy the relevance test rather than to learn anything.
+So a checkpoint can be **waived**: the agent files an intervention saying why it
+does not apply, and a human waives it with a reason on the record. Waived is not
+complete — it shows as its own status, with its reason and the name of whoever
+granted it, everywhere checkpoints are reported.
+
+```bash
+grayson checkpoint waive <sid> freshness --reason "static reference table"
+```
+
+**A run that finds nothing.** Every stage from `fixes` onward needs an accepted
+finding, which is right for a session that found something and wrong for one
+that did not — it leaves "invent a finding" as the only way to finish. A clean
+run instead closes as a **clean outcome**: required checks cleared, nothing
+accepted, nothing left for the user to judge. `grayson session readiness <sid>`
+reports when that is the available route (`clean_close_available`,
+`next_action`), and the console offers the button.
+
+```bash
+grayson session close <sid> --clean --note "all four checks came back sound"
+```
+
+Closing a session, waiving a check, and forcing a gate are all **user** actions.
+The agent asks; the human decides. Because the CLI is genuinely both interfaces,
+these commands require an interactive terminal, and the audit trail attributes
+stage changes to whoever actually made them rather than assuming the human.
+Recording a clean result is the point of the ceremony: "we looked and it was
+fine" is knowledge the next session should start with.
+
 ## Analysis charts
 
 Agents chart cached query results as they work — `grayson chart add` (MCP:

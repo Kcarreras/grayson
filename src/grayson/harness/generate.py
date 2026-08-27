@@ -36,6 +36,13 @@ they are equivalent. Never query Snowflake except through grayson.
   or reconfigure it yourself.
 - When a judgement needs a human (semantic correctness, ambiguous rules), file an
   intervention and wait for the answer instead of guessing.
+- **Finding nothing is a result.** If the checks clear and nothing is worth acting on,
+  do not manufacture a finding to get past a gate: ask the user to close the session as
+  a *clean* result (`session readiness` tells you when that is the available route).
+  Likewise, if a required checkpoint genuinely does not apply to this target, do not
+  close it with a query picked to satisfy the evidence test — file an intervention
+  asking the user to **waive** it, and say why. Closing sessions and waiving checks are
+  user actions; you ask, they decide.
 
 ## Workflow
 1. Discover: `grayson workflow list`; read the knowledge library for the target tables
@@ -101,6 +108,11 @@ they are equivalent. Never query Snowflake except through grayson.
    console's stage strip tracks your progress. Your first executed query moves
    setup to analysis automatically; every later transition is yours to declare,
    and gates enforce that evidence exists before review/fixes.
+9. Close: the user closes the session, from the console or their own terminal —
+   either on accepted findings, or as a **clean** result when the checks cleared and
+   nothing turned up. `grayson session readiness <sid>` reports which route applies
+   (`clean_close_available`, `next_action`); tell the user what you found, or that you
+   found nothing, and let them close it.
 
 Run `grayson --help` (and `grayson <group> --help`) for the full command surface.
 """

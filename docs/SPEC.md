@@ -170,7 +170,11 @@ setup → analysis → synthesis → review → fixes → verification → close
    executed; the pass/fail verdict rides on that evidence (`verified` /
    `verification_failed`).
 7. **closed** — session summary generated; durable learnings promoted to the knowledge
-   library (user-confirmed facts marked as such).
+   library (user-confirmed facts marked as such). Closing records an **outcome**:
+   `findings` (closed on accepted findings) or `clean` (required checks cleared and
+   nothing found worth acting on). A clean close is a user action — a human vouching
+   for a negative result — and exists so that a run which finds nothing has a way to
+   finish that is not "invent a finding". A forced close records no outcome at all.
 
 Any stage can loop back (verification failure → fixes/analysis). All transitions are
 recorded in the event log with actor (user / agent worker id) and timestamp.
@@ -318,6 +322,11 @@ every other workflow.
 
 **Checkpoints** close only via `grayson checkpoint complete <name> --evidence q_017,q_023`
 — grayson verifies the cited queries exist, succeeded, and touched relevant objects.
+A check that genuinely does not apply to the target is **waived** by a user with a
+mandatory reason (agents request one via an intervention); waived satisfies the gate but
+is reported as its own status, never as complete. Without that exit, an inapplicable
+required check leaves the agent only one route past the gate — a query chosen to satisfy
+the relevance test — which is precisely the laundering the gate exists to stop.
 **Findings** are pydantic-validated documents: summary, severity, affected objects,
 evidence (query ids), reproduction, proposed remediation, confidence + open questions.
 

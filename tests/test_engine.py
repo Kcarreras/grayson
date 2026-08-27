@@ -137,3 +137,139 @@ def test_readiness_report(session):
     r = engine.readiness(session)
     assert set(r["open_checks"]) == set(r["required_checks"])
     assert not r["checks_complete"]
+
+
+# -- waiving inapplicable checks ------------------------------------------
+
+
+def _clear_all_checks(session, waive_last=False):
+    """Close every required check with real evidence (optionally waiving one)."""
+    qids = _run(session, 1)
+    keys = engine.workflow_for(session).required_check_keys()
+    for key in keys[:-1] if waive_last else keys:
+        engine.complete_checkpoint(session, key, qids, "done")
+    if waive_last:
+        engine.waive_checkpoint(session, keys[-1], "no lineage upstream of this table")
+    return qids
+
+
+def test_agent_cannot_waive_its_own_gate(session):
+    with pytest.raises(EnforcementError, match="user action"):
+        engine.waive_checkpoint(session, "upstream_trace", "does not apply", actor="agent")
+    assert session.checkpoint("upstream_trace")["status"] == "open"
+
+
+def test_waive_requires_a_reason(session):
+    with pytest.raises(EnforcementError, match="requires a reason"):
+        engine.waive_checkpoint(session, "upstream_trace", "   ")
+
+
+def test_waive_unknown_checkpoint_rejected(session):
+    with pytest.raises(EnforcementError, match="unknown checkpoint"):
+        engine.waive_checkpoint(session, "not_a_check", "n/a")
+
+
+def test_waived_check_satisfies_the_gate_but_stays_visible(session):
+    _clear_all_checks(session, waive_last=True)
+    ready = engine.readiness(session)
+    assert ready["checks_complete"] is True
+    assert ready["open_checks"] == []
+    # a waived gate never reads as a closed one
+    waived = ready["waived_checks"]
+    assert [w["key"] for w in waived] == ["rule_out_alternatives"]
+    assert waived[0]["reason"] == "no lineage upstream of this table"
+    assert waived[0]["by"] == "user"
+    assert session.checkpoint("rule_out_alternatives")["evidence"] == []
+    engine.advance_stage(session, "review", actor="user")
+    assert session.stage == "review"
+
+
+def test_reopening_a_waived_check_reimposes_the_gate(session):
+    _clear_all_checks(session, waive_last=True)
+    session.reopen_checkpoint("rule_out_alternatives")
+    ready = engine.readiness(session)
+    assert ready["open_checks"] == ["rule_out_alternatives"]
+    assert ready["waived_checks"] == []
+
+
+# -- clean close ----------------------------------------------------------
+
+
+def test_clean_run_can_close_without_inventing_a_finding(session):
+    _clear_all_checks(session)
+    ready = engine.readiness(session)
+    assert ready["clean_close_available"] is True
+    assert "clean result" in ready["next_action"]
+    out = engine.close_session(session, actor="user", note="nothing anomalous")
+    assert session.stage == "closed"
+    assert session.outcome == "clean"
+    assert out["outcome"] == "clean"
+
+
+def test_clean_close_is_a_user_action(session):
+    _clear_all_checks(session)
+    with pytest.raises(EnforcementError, match="user action"):
+        engine.close_session(session, actor="agent")
+    assert session.stage != "closed"
+
+
+def test_clean_close_blocked_while_checks_are_open(session):
+    with pytest.raises(EnforcementError, match="checkpoints still open"):
+        engine.close_session(session, actor="user")
+
+
+def test_clean_close_blocked_while_a_finding_awaits_judgement(session):
+    qids = _clear_all_checks(session)
+    engine.record_finding(session, _finding(qids))
+    ready = engine.readiness(session)
+    assert ready["clean_close_available"] is False
+    with pytest.raises(EnforcementError, match="awaiting the user"):
+        engine.close_session(session, actor="user")
+
+
+def test_rejected_findings_do_not_block_a_clean_close(session):
+    qids = _clear_all_checks(session)
+    got = engine.record_finding(session, _finding(qids))
+    session.reject_finding(got["fid"], "that spike is a known backfill")
+    # the user has already said it was not real — that is itself a clean result
+    assert engine.readiness(session)["clean_close_available"] is True
+    engine.close_session(session, actor="user")
+    assert session.outcome == "clean"
+
+
+def test_advance_to_closed_names_the_clean_route_instead_of_dead_ending(session):
+    _clear_all_checks(session)
+    with pytest.raises(EnforcementError, match="closes as one"):
+        engine.advance_stage(session, "closed", actor="agent")
+
+
+def test_session_with_accepted_findings_closes_as_findings(session):
+    qids = _clear_all_checks(session)
+    got = engine.record_finding(session, _finding(qids))
+    session.accept_finding(got["fid"])
+    assert engine.readiness(session)["clean_close_available"] is False
+    engine.close_session(session, actor="user")
+    assert session.stage == "closed"
+    assert session.outcome == "findings"
+
+
+def _finding(qids: list[str]) -> dict:
+    return {
+        "title": "Duplicate order ids",
+        "severity": "high",
+        "confidence": "high",
+        "summary": "Order ids repeat after the promo join.",
+        "evidence": qids,
+        "extra": {
+            "root_cause": "non-unique promo codes",
+            "blast_radius": "412 rows",
+            "alternatives_tested": "source duplication ruled out",
+        },
+    }
+
+
+def test_forced_close_is_not_recorded_as_clean(session):
+    # a bypass is not a human vouching that the data was sound
+    engine.advance_stage(session, "closed", actor="user", force=True)
+    assert session.stage == "closed"
+    assert session.outcome == ""

@@ -777,6 +777,37 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             )
         return _redirect(f"/session/{sid}")
 
+    @app.post("/session/{sid}/checkpoint/{key}/waive")
+    async def waive_checkpoint(request: Request, sid: str, key: str) -> Any:
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        reason = str(form.get("reason", "")).strip()
+        try:
+            engine.waive_checkpoint(s, key, reason, "user", workspace.workflows_dir)
+        except EnforcementError as e:
+            return templates.TemplateResponse(
+                request, "session.html", _session_context(s, str(e)), status_code=400
+            )
+        return _redirect(f"/session/{sid}")
+
+    @app.post("/session/{sid}/close-clean")
+    async def close_clean(request: Request, sid: str) -> Any:
+        """The human boundary on a negative result: someone vouches that the run
+        cleared its checks and genuinely found nothing, so 'we looked and it was
+        fine' enters the record as a result rather than an abandoned session."""
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        note = str(form.get("note", "")).strip()
+        try:
+            engine.close_session(s, "user", note, workspace.workflows_dir)
+        except EnforcementError as e:
+            return templates.TemplateResponse(
+                request, "session.html", _session_context(s, str(e)), status_code=400
+            )
+        return _redirect(f"/session/{sid}")
+
     @app.post("/session/{sid}/proposal/{pid}/{decision}")
     def decide_proposal(request: Request, sid: str, pid: str, decision: str) -> Any:
         _check(request)

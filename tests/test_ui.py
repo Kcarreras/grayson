@@ -230,3 +230,70 @@ def test_proposal_approve_via_ui(client, session):
     )
     assert r.status_code == 303
     assert session.proposal(p["pid"])["status"] == "approved"
+
+
+# -- honest outcomes: waive and clean close in the console ----------------
+
+
+def _clear_checks(session, waive: str | None = None) -> list[str]:
+    out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
+    keys = engine.workflow_for(session).required_check_keys()
+    for key in keys:
+        if key == waive:
+            continue
+        engine.complete_checkpoint(session, key, [out["qid"]], "done")
+    return [out["qid"]]
+
+
+def test_clean_close_card_appears_only_when_the_run_is_clean(client, session):
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Close as clean" not in page
+    _clear_checks(session)
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "This run came back clean" in page
+    assert "Close as clean" in page
+
+
+def test_close_clean_records_the_outcome(client, session):
+    _clear_checks(session)
+    r = client.post(
+        f"/session/{session.id}/close-clean?t={TOKEN}",
+        data={"note": "coverage and labels both sound"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert session.stage == "closed"
+    assert session.outcome == "clean"
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "closed clean" in page
+    assert "coverage and labels both sound" in page
+
+
+def test_close_clean_refused_with_work_outstanding(client, session):
+    r = client.post(f"/session/{session.id}/close-clean?t={TOKEN}", data={"note": ""})
+    assert r.status_code == 400
+    assert "checkpoints still open" in r.text
+    assert session.stage != "closed"
+
+
+def test_waive_from_the_console(client, session):
+    _clear_checks(session, waive="error_pattern_analysis")
+    r = client.post(
+        f"/session/{session.id}/checkpoint/error_pattern_analysis/waive?t={TOKEN}",
+        data={"reason": "no misassignments to pattern-match"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert session.checkpoint("error_pattern_analysis")["status"] == "waived"
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "waived" in page
+    assert "no misassignments to pattern-match" in page
+
+
+def test_waive_without_a_reason_is_refused(client, session):
+    r = client.post(
+        f"/session/{session.id}/checkpoint/rule_coverage/waive?t={TOKEN}", data={"reason": "  "}
+    )
+    assert r.status_code == 400
+    assert "requires a reason" in r.text
+    assert session.checkpoint("rule_coverage")["status"] == "open"

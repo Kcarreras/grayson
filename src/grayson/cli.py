@@ -104,6 +104,42 @@ def fail(message: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def _stdin_is_tty() -> bool:
+    """Whether a human is at the other end. One place, so it can be exercised."""
+    return sys.stdin.isatty()
+
+
+def default_actor() -> str:
+    """Who is driving the CLI right now.
+
+    The CLI is genuinely both interfaces — the human's and the agent's — and it
+    cannot ask its caller which one it is. An interactive terminal is the one
+    signal it does have, so attribution follows it: a person at a prompt is
+    'user', a non-interactive shell-out is 'agent'. This is why `session close`
+    used to record an agent's bypass under the human's name.
+    """
+    return "user" if _stdin_is_tty() else "agent"
+
+
+def require_interactive(action: str, confirm: str = "") -> None:
+    """Gate a user-only escape hatch on an interactive terminal.
+
+    Friction, not containment — grayson's stated posture for every guard rail
+    that an agent with shell access could route around. An agent shelling out
+    non-interactively cannot claim the user's authority here, and the harness
+    deny rules can pattern-match the same flags as a second layer. A human who
+    genuinely needs this in a script has the console.
+    """
+    if not _stdin_is_tty():
+        fail(
+            f"{action} is a user action and needs an interactive terminal. "
+            "If you are an agent: ask the user to do this in the console or at their "
+            "own prompt — do not retry with a different actor or flag."
+        )
+    if confirm and not typer.confirm(confirm):
+        fail("cancelled")
+
+
 def _workspace() -> Workspace:
     try:
         return Workspace.find()
@@ -668,13 +704,24 @@ def session_status(session_id: str) -> None:
 def session_advance(
     session_id: str,
     stage: str = typer.Option(..., "--to", help=f"One of: {', '.join(STAGES)}"),
-    actor: str = typer.Option("user", "--actor"),
-    force: bool = typer.Option(False, "--force", help="Override evidence gates (audited)."),
+    actor: str = typer.Option(None, "--actor", help="Defaults to the caller (TTY = user)."),
+    force: bool = typer.Option(False, "--force", help="Override evidence gates (user, TTY only)."),
 ) -> None:
     """Advance the stage. Evidence gates block review/fixes unless satisfied or forced."""
     s = _session(session_id)
+    who = actor or default_actor()
+    if force:
+        # `--force` is honored only for the 'user' actor, but before this the CLI
+        # both defaulted --actor to "user" and let anyone pass it, so `advance
+        # --force` cleared every gate from a shell-out. The terminal is the check
+        # the actor string never was.
+        require_interactive(
+            "forcing an evidence gate",
+            f"Force the gate and advance {session_id} to '{stage}' without the evidence?",
+        )
+        who = "user"
     try:
-        result = engine.advance_stage(s, stage, actor, force, _workspace().workflows_dir)
+        result = engine.advance_stage(s, stage, who, force, _workspace().workflows_dir)
     except EnforcementError as e:
         fail(str(e))
         return
@@ -728,10 +775,33 @@ def session_scrub(session_id: str) -> None:
 
 
 @session_app.command("close")
-def session_close(session_id: str) -> None:
+def session_close(
+    session_id: str,
+    clean: bool = typer.Option(
+        False, "--clean", help="Close as a clean result: checks cleared, nothing found."
+    ),
+    note: str = typer.Option("", "--note", help="What was checked and found sound."),
+) -> None:
+    """Close a session — with accepted findings, or as a confirmed clean result.
+
+    A user action either way (the last of grayson's human boundaries), so it needs
+    an interactive terminal. Agents ask the user; they do not close their own
+    sessions, and they never invent a finding to get a clean run over the line.
+    """
     s = _session(session_id)
-    s.set_stage("closed")
-    emit({"id": session_id, "stage": "closed"})
+    workflows_dir = _workspace().workflows_dir
+    if clean and engine.readiness(s, workflows_dir)["findings_accepted"]:
+        fail(
+            "this session has accepted findings, so it does not close clean — close it "
+            "without --clean and it will be recorded as a findings outcome"
+        )
+    require_interactive("closing a session")
+    try:
+        result = engine.close_session(s, "user", note, workflows_dir)
+    except EnforcementError as e:
+        fail(str(e))
+        return
+    emit({"id": session_id, "stage": s.stage, "outcome": s.outcome, "readiness": result})
 
 
 @session_app.command("report")
@@ -1094,12 +1164,39 @@ def checkpoint_complete(
     key: str,
     evidence: list[str] = typer.Option([], "--evidence", "-e", help="Executed query ids."),
     note: str = typer.Option("", "--note"),
-    actor: str = typer.Option("agent", "--actor"),
+    actor: str = typer.Option(None, "--actor", help="Defaults to the caller (TTY = user)."),
 ) -> None:
     """Close a checkpoint — requires evidence (executed query ids) that exist."""
     s = _session(session_id)
     try:
-        cp = engine.complete_checkpoint(s, key, evidence, note, actor, _workspace().workflows_dir)
+        cp = engine.complete_checkpoint(
+            s, key, evidence, note, actor or default_actor(), _workspace().workflows_dir
+        )
+    except EnforcementError as e:
+        fail(str(e))
+        return
+    emit(cp)
+
+
+@checkpoint_app.command("waive")
+def checkpoint_waive(
+    session_id: str,
+    key: str,
+    reason: str = typer.Option(..., "--reason", help="Why this check does not apply here."),
+) -> None:
+    """Mark a checkpoint not-applicable, with the reason on the record.
+
+    A user action: agents ask for a waive via an intervention, saying why the
+    check does not apply. The alternative — an unwaivable gate on an irrelevant
+    check — just teaches agents to find a query that satisfies the scope test.
+    """
+    s = _session(session_id)
+    require_interactive(
+        "waiving a checkpoint",
+        f"Waive '{key}' on {session_id} as not applicable?",
+    )
+    try:
+        cp = engine.waive_checkpoint(s, key, reason, "user", _workspace().workflows_dir)
     except EnforcementError as e:
         fail(str(e))
         return
@@ -1108,8 +1205,9 @@ def checkpoint_complete(
 
 @checkpoint_app.command("reopen")
 def checkpoint_reopen(session_id: str, key: str) -> None:
+    """Reopen a closed or waived checkpoint. Not a bypass — it re-imposes the gate."""
     s = _session(session_id)
-    s.reopen_checkpoint(key)
+    s.reopen_checkpoint(key, default_actor())
     emit(s.checkpoint(key))
 
 

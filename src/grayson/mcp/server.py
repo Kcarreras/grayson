@@ -32,6 +32,10 @@ run guarded queries (only SELECT/SHOW/DESCRIBE/EXPLAIN survive), close each requ
 checkpoint citing executed query ids as evidence, record findings against the schema,
 request human interventions when judgment is needed, then propose fixes and verify them
 with before/after evidence. grayson enforces the rails; you supply the analysis.
+Finding nothing is a valid result: if the checks clear and nothing is worth acting on,
+ask the user to close the session as a clean result — never invent a finding, or close a
+checkpoint with a query picked to pass the evidence test, in order to clear a gate. A
+check that does not apply is waived by the user on your request, not worked around.
 Failing external checks returned at session start (external_checks) are pre-vetted
 leads — replicate them first. Narrate the investigation visually: chart_add builds
 bar/line/scatter charts from cached artifacts that render live in the user's console,
@@ -240,7 +244,13 @@ def build_server(workspace: Workspace) -> Any:
         except (FileNotFoundError, ValueError) as e:
             return _err(e)
 
-    @mcp.tool(description="What still blocks the next gated stage transition.")
+    @mcp.tool(
+        description="What still blocks the next gated stage transition. Reports open "
+        "checkpoints, waived ones (and why), findings awaiting the user, and a "
+        "`next_action` sentence. When `clean_close_available` is true the run found "
+        "nothing worth acting on — ask the user to close it as a clean result; never "
+        "record a finding you do not believe in order to clear a gate."
+    )
     def session_readiness(session_id: str) -> dict:
         try:
             return engine.readiness(_session(session_id), workspace.workflows_dir)
@@ -334,7 +344,10 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="Complete a checkpoint. Requires evidence: executed query ids that "
-        "exist and succeeded."
+        "exist and succeeded. If a required checkpoint genuinely does not apply to this "
+        "target (freshness on a static dimension table, say), do NOT satisfy it with a "
+        "query chosen to pass the scope test — file an intervention asking the user to "
+        "waive it, and say why."
     )
     def checkpoint_complete(session_id: str, key: str, evidence: list[str], note: str = "") -> dict:
         try:

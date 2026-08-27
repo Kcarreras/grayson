@@ -12,7 +12,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from grayson.core.session import STAGES, Session
+from grayson.core.session import OUTCOMES, STAGES, Session
 from grayson.findings.schemas import validate_finding
 from grayson.workflows import WorkflowTemplate, get_workflow
 
@@ -77,6 +77,39 @@ def complete_checkpoint(
     return session.checkpoint(key)
 
 
+def waive_checkpoint(
+    session: Session,
+    key: str,
+    reason: str,
+    actor: str = "user",
+    overrides_dir: Path | None = None,
+) -> dict:
+    """Mark a checkpoint not-applicable. A user action, with a mandatory reason.
+
+    An unwaivable gate on a genuinely inapplicable check manufactures the exact
+    evidence-laundering the rail exists to prevent — the agent's only way through
+    is a query chosen to satisfy the scope test rather than to learn anything. So
+    the gap gets an honest, named, audited exit instead. Agents may *ask* for one
+    (file an intervention); only a human grants it.
+    """
+    tpl = workflow_for(session, overrides_dir)
+    if actor != "user":
+        raise EnforcementError(
+            "waiving a checkpoint is a user action; agents cannot waive their own gates. "
+            "File an intervention asking the user to waive it, and say why it does not apply."
+        )
+    if tpl.check(key) is None and session.checkpoint(key) is None:
+        known = ", ".join(tpl.required_check_keys())
+        raise EnforcementError(
+            f"unknown checkpoint '{key}' for workflow '{tpl.name}' (checks: {known})"
+        )
+    try:
+        session.waive_checkpoint(key, reason, actor)
+    except ValueError as e:
+        raise EnforcementError(str(e.args[0] if e.args else e)) from e
+    return session.checkpoint(key)
+
+
 def record_finding(
     session: Session,
     payload: dict,
@@ -124,20 +157,44 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
     """Report what still blocks the next stage transition."""
     tpl = workflow_for(session, overrides_dir)
     checkpoints = {c["key"]: c for c in session.checkpoints()}
+    keys = tpl.required_check_keys()
+    # a waived check satisfies the gate but never masquerades as a closed one:
+    # it is reported separately, with its reason, everywhere readiness is shown
     open_checks = [
-        k for k in tpl.required_check_keys() if checkpoints.get(k, {}).get("status") != "complete"
+        k for k in keys if checkpoints.get(k, {}).get("status") not in ("complete", "waived")
+    ]
+    waived_checks = [
+        {
+            "key": k,
+            "reason": checkpoints[k].get("note") or "",
+            "by": checkpoints[k].get("completed_by"),
+        }
+        for k in keys
+        if checkpoints.get(k, {}).get("status") == "waived"
     ]
     findings = session.findings()
     # a superseded finding was replaced by a corrected one: it no longer counts
     # as accepted for any gate, however it got there
     unaccepted = [f["fid"] for f in findings if not f["accepted"] or f.get("superseded_by")]
-    return {
+    # a finding the user has neither accepted nor rejected is still theirs to
+    # judge — it blocks a clean close, where a rejected one does not
+    pending = [
+        f["fid"]
+        for f in findings
+        if not f["accepted"] and not f.get("rejected") and not f.get("superseded_by")
+    ]
+    accepted_count = len(findings) - len(unaccepted)
+    out = {
         "stage": session.stage,
+        "outcome": session.outcome,
         "workflow": tpl.name,
-        "required_checks": tpl.required_check_keys(),
+        "required_checks": keys,
         "open_checks": open_checks,
+        "waived_checks": waived_checks,
         "checks_complete": not open_checks,
         "findings_total": len(findings),
+        "findings_accepted": accepted_count,
+        "findings_pending": pending,
         "findings_unaccepted": unaccepted,
         "findings_superseded": [
             {"fid": f["fid"], "by": f["superseded_by"]} for f in findings if f.get("superseded_by")
@@ -146,6 +203,56 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
             {"fid": f["fid"], "reason": f["rejected_reason"]} for f in findings if f.get("rejected")
         ],
     }
+    out["clean_close_available"] = clean_close_blockers(out) == []
+    out["next_action"] = _next_action(out)
+    return out
+
+
+def clean_close_blockers(ready: dict) -> list[str]:
+    """What stands between this session and a confirmed clean close.
+
+    Clean means: every required check cleared (closed with evidence or waived),
+    nothing accepted as a finding, and nothing still awaiting the user's
+    judgement. Findings the user *rejected* do not block — the user has already
+    said they were not real, which is itself a clean result.
+    """
+    blockers = []
+    if ready["open_checks"]:
+        blockers.append(f"required checkpoints still open: {ready['open_checks']}")
+    if ready["findings_accepted"]:
+        blockers.append(
+            f"{ready['findings_accepted']} accepted finding(s) — this run found something, "
+            "so it closes through fixes/verification, not clean"
+        )
+    if ready["findings_pending"]:
+        blockers.append(f"findings awaiting the user's accept/reject: {ready['findings_pending']}")
+    return blockers
+
+
+def _next_action(ready: dict) -> str:
+    """One sentence telling the agent what to do next. Readiness is the tool
+    agents poll when stuck; a bare list of blockers leaves them guessing."""
+    if ready["stage"] == "closed":
+        return "session is closed"
+    if ready["open_checks"]:
+        return (
+            f"close the remaining checkpoints with evidence: {', '.join(ready['open_checks'])}"
+            " — or, if one genuinely does not apply, ask the user to waive it (an"
+            " intervention explaining why); agents cannot waive their own gates"
+        )
+    if ready["findings_pending"]:
+        return (
+            f"findings {ready['findings_pending']} are waiting on the user to accept or "
+            "reject in the console"
+        )
+    if ready["findings_accepted"]:
+        return "accepted findings exist — advance to fixes and propose remediation"
+    return (
+        "checks are clear and nothing was found worth acting on — ask the user to close "
+        "this session as a clean result (console button, or `grayson session close "
+        "<sid> --clean`). A clean run is a real outcome; do not manufacture a finding "
+        "to close it."
+    )
 
 
 #: stages at or beyond this index require all checkpoints complete
@@ -186,17 +293,68 @@ def advance_stage(
             f"{ready['open_checks']}. Complete them with evidence first."
         )
     # Gate: reaching fixes or later requires at least one user-accepted finding.
-    # (readiness already counted findings; accepted = total - unaccepted)
-    if target_idx >= _FIXES_IDX and not force:
-        accepted_count = ready["findings_total"] - len(ready["findings_unaccepted"])
-        if accepted_count == 0:
+    if target_idx >= _FIXES_IDX and not force and ready["findings_accepted"] == 0:
+        # A run that found nothing is not an unfinished run. Rather than dead-end
+        # it against a gate it can never satisfy, name the route that does apply.
+        if to_stage == "closed" and ready["clean_close_available"]:
             raise EnforcementError(
-                f"cannot reach '{to_stage}': no user-accepted finding. Findings must be "
-                "recorded and accepted by the user (in the console) before fixes."
+                "nothing was found worth acting on, so there is no accepted finding to "
+                "advance on — this is a clean run, and it closes as one. Ask the user to "
+                "close it clean (console, or `grayson session close <sid> --clean`). Do "
+                "not record a finding you do not believe in order to clear this gate."
             )
+        raise EnforcementError(
+            f"cannot reach '{to_stage}': no user-accepted finding. Findings must be "
+            "recorded and accepted by the user (in the console) before fixes."
+        )
     session.set_stage(to_stage, actor)
+    if to_stage == "closed" and not session.outcome:
+        # 'clean' means a human vouched for a negative result, so a forced close
+        # never earns it — it leaves the outcome blank rather than overstating it
+        if ready["findings_accepted"]:
+            session.set_outcome("findings", actor)
+        elif not force:
+            session.set_outcome("clean", actor)
     if force:
         session.log_event(
             actor, "stage_gate_forced", {"stage": to_stage, "open_checks": ready["open_checks"]}
         )
+    return readiness(session, overrides_dir)
+
+
+def close_session(
+    session: Session,
+    actor: str = "user",
+    note: str = "",
+    overrides_dir: Path | None = None,
+) -> dict:
+    """Close a session through the gates, recording *how* it ended.
+
+    Two legitimate endings, and both are real results:
+    - `findings` — at least one accepted finding; the ordinary route, and it must
+      still satisfy every gate `advance_stage` applies.
+    - `clean` — the required checks cleared and nothing was found worth acting on.
+
+    Closing is a user action either way: it is the last of grayson's human
+    boundaries, and a clean close in particular is a human vouching for a
+    negative result. Agents ask; they do not self-certify.
+    """
+    if actor != "user":
+        raise EnforcementError(
+            "closing a session is a user action. Ask the user to close it (console, or "
+            "`grayson session close`); report what you found — or that you found nothing."
+        )
+    ready = readiness(session, overrides_dir)
+    if ready["findings_accepted"]:
+        # a run with accepted findings closes on the normal gated path
+        advance_stage(session, "closed", actor, False, overrides_dir)
+        return readiness(session, overrides_dir)
+    blockers = clean_close_blockers(ready)
+    if blockers:
+        raise EnforcementError(
+            "cannot close: " + "; ".join(blockers) + ". A session closes either with "
+            "accepted findings or as a confirmed clean result — not with work still open."
+        )
+    session.set_outcome(OUTCOMES[0], actor, note)
+    session.set_stage("closed", actor)
     return readiness(session, overrides_dir)

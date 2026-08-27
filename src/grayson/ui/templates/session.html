@@ -39,13 +39,42 @@
   <div class="tile"><div class="num">{{ s.queries_executed }}</div><div class="lbl">Queries run</div></div>
   <div class="tile">
     <div class="num {{ 'ok' if readiness.checks_complete }}">{{ checkpoints | selectattr("status","equalto","complete") | list | length }}/{{ checkpoints | length }}</div>
-    <div class="lbl">Checkpoints</div></div>
+    <div class="lbl">Checkpoints{% if readiness.waived_checks %},
+      {{ readiness.waived_checks | length }} waived{% endif %}</div></div>
   <div class="tile"><div class="num">{{ findings | length }}</div>
     <div class="lbl">Findings ({{ findings | selectattr("accepted") | rejectattr("superseded_by") | list | length }} accepted)</div></div>
   {% set open_iv = interventions | selectattr("status","equalto","open") | list %}
   <div class="tile"><div class="num {{ 'attn' if open_iv }}">{{ open_iv | length }}</div>
     <div class="lbl">Awaiting your input</div></div>
 </div>
+
+{% if s.stage == "closed" and s.outcome %}
+<div class="card" style="margin: 12px 0;">
+  <div class="row" style="gap: 8px; align-items: baseline;">
+    {% if s.outcome == "clean" %}<span class="badge ok">closed clean</span>
+    <span class="muted small">Checks cleared and nothing was found worth acting on —
+      confirmed by you, and recorded as a result in its own right.</span>
+    {% else %}<span class="badge plain">closed on findings</span>
+    <span class="muted small">Closed with accepted findings.</span>{% endif %}
+  </div>
+  {% if s.outcome_note %}<div class="muted small" style="margin-top: 6px;">{{ s.outcome_note }}</div>{% endif %}
+</div>
+{% elif readiness.clean_close_available and s.stage != "closed" %}
+<div class="card" style="margin: 12px 0;">
+  <div class="overline" style="margin-bottom: 6px;">This run came back clean</div>
+  <div class="muted small" style="margin-bottom: 10px;">
+    Every required checkpoint is cleared and there is nothing outstanding to judge — the
+    agent found nothing worth acting on. That is a result, not an unfinished session, but
+    it is yours to confirm: closing clean records "we looked and it was fine" so the next
+    session starts knowing it.
+  </div>
+  <form class="row" method="post" action="/session/{{ s.id }}/close-clean?t={{ token }}">
+    <input type="text" name="note" placeholder="what you checked and found sound (optional)"
+           style="width: auto; flex: 1 1 280px;">
+    <button class="btn sm" type="submit">Close as clean</button>
+  </form>
+</div>
+{% endif %}
 
 <div class="kv" style="margin: 12px 0;">
   <div class="item"><b>Target tables</b> {{ s.targets | join(", ") or "—" }} {{ help("target_tables") }}</div>
@@ -135,9 +164,24 @@
 <tr>
   <td>{{ c.title }}<div class="faint mono small">{{ c.key }}</div></td>
   <td>{% if c.status == "complete" %}<span class="badge ok">complete</span>
+      {% elif c.status == "waived" %}<span class="badge attn">waived</span>
       {% else %}<span class="badge todo">open</span>{% endif %}</td>
-  <td>{% for q in c.evidence %}{{ qc(q) }} {% endfor %}</td>
-  <td class="muted small">{{ c.note or "" }}</td>
+  <td>{% if c.status == "waived" %}<span class="muted small">not applicable</span>
+      {% else %}{% for q in c.evidence %}{{ qc(q) }} {% endfor %}{% endif %}</td>
+  <td class="muted small">
+    {{ c.note or "" }}
+    {% if c.status == "open" and s.stage != "closed" %}
+    {# a check that genuinely does not apply gets an honest exit — otherwise the
+       only way past the gate is a query chosen to satisfy it #}
+    <form class="row" method="post"
+          action="/session/{{ s.id }}/checkpoint/{{ c.key }}/waive?t={{ token }}"
+          style="margin-top: 6px; gap: 4px;">
+      <input type="text" name="reason" placeholder="why it does not apply" required
+             style="width: auto; flex: 1 1 180px;">
+      <button class="btn secondary sm" type="submit">Waive</button>
+    </form>
+    {% endif %}
+  </td>
 </tr>
 {% endfor %}
 {% if not checkpoints %}<tr><td colspan="4" class="muted">No checkpoints.</td></tr>{% endif %}

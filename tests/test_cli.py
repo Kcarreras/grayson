@@ -18,6 +18,27 @@ def invoke(*args):
     return json.loads(result.output)
 
 
+def invoke_err(*args) -> dict:
+    """Invoke expecting the CLI to refuse; returns the error payload."""
+    result = runner.invoke(app, list(args))
+    assert result.exit_code != 0, result.output
+    return json.loads(result.stderr or result.output)
+
+
+@pytest.fixture
+def at_a_terminal(monkeypatch):
+    """Pretend the CLI is being driven by a human at a prompt.
+
+    User-only actions (close, waive, --force) are gated on an interactive
+    terminal, since the CLI cannot otherwise tell its caller from an agent
+    shelling out. Tests that exercise those paths opt in here.
+    """
+    import grayson.cli as cli
+
+    monkeypatch.setattr(cli, "_stdin_is_tty", lambda: True)
+    monkeypatch.setattr(cli.typer, "confirm", lambda *a, **k: True)
+
+
 @pytest.fixture
 def sid(workspace, fake_snow_env) -> str:
     out = invoke(
@@ -64,8 +85,8 @@ def test_full_flow(workspace, fake_snow_env, sid):
     assert any(e["qid"] == run["qid"] for e in log)
 
     invoke("session", "advance", sid, "--to", "analysis")
-    invoke("session", "close", sid)
-    assert invoke("session", "status", sid)["stage"] == "closed"
+    # closing is a user action; an agent shelling out is refused outright
+    assert "interactive terminal" in invoke_err("session", "close", sid)["error"]
 
 
 def test_rejected_query_exit_zero_with_verdict(workspace, fake_snow_env, sid):
@@ -302,3 +323,72 @@ def test_upgrade_without_uv_fails(monkeypatch):
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)
     result = runner.invoke(app, ["upgrade"])
     assert result.exit_code == 1
+
+
+# -- user-only actions are gated on an interactive terminal ---------------
+
+
+def _clear_checks(sid_) -> list[str]:
+    run = invoke("query", "run", sid_, "-q", "SELECT * FROM DB.S.T1")
+    for key in invoke("workflow", "show", "table-health")["required_checks"]:
+        invoke("checkpoint", "complete", sid_, key["key"], "-e", run["qid"])
+    return [run["qid"]]
+
+
+def test_force_cannot_be_claimed_by_a_shell_out(workspace, fake_snow_env, sid):
+    # the old hole: --actor defaulted to "user" and --force was honored for it,
+    # so a non-interactive `advance --force` cleared every gate
+    err = invoke_err("session", "advance", sid, "--to", "review", "--force")
+    assert "interactive terminal" in err["error"]
+    err = invoke_err("session", "advance", sid, "--to", "review", "--force", "--actor", "user")
+    assert "interactive terminal" in err["error"]
+    assert invoke("session", "status", sid)["stage"] != "review"
+
+
+def test_force_works_for_a_human_at_a_prompt(workspace, fake_snow_env, sid, at_a_terminal):
+    invoke("session", "advance", sid, "--to", "review", "--force")
+    assert invoke("session", "status", sid)["stage"] == "review"
+
+
+def test_agent_stage_changes_are_attributed_to_the_agent(workspace, fake_snow_env, sid):
+    invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    invoke("session", "advance", sid, "--to", "synthesis")
+    from grayson.core.session import Session
+    from grayson.workspace import Workspace
+
+    s = Session(Workspace.find(), sid)
+    # the setup -> analysis hop is grayson's own; the declared one is the agent's,
+    # and used to be recorded under the human's name
+    declared = [e for e in s.events(50) if e["type"] == "stage_changed" and e["actor"] != "system"]
+    assert declared and all(e["actor"] == "agent" for e in declared)
+
+
+def test_clean_close_flow(workspace, fake_snow_env, sid, at_a_terminal):
+    _clear_checks(sid)
+    ready = invoke("session", "readiness", sid)
+    assert ready["clean_close_available"] is True
+    out = invoke("session", "close", sid, "--clean", "--note", "all four checks came back sound")
+    assert out["stage"] == "closed"
+    assert out["outcome"] == "clean"
+    assert invoke("session", "status", sid)["outcome_note"] == "all four checks came back sound"
+
+
+def test_clean_close_refused_while_checks_are_open(workspace, fake_snow_env, sid, at_a_terminal):
+    assert "checkpoints still open" in invoke_err("session", "close", sid)["error"]
+
+
+def test_waive_is_recorded_with_its_reason(workspace, fake_snow_env, sid, at_a_terminal):
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    for key in ("grain_uniqueness", "null_completeness", "distributions"):
+        invoke("checkpoint", "complete", sid, key, "-e", run["qid"])
+    cp = invoke("checkpoint", "waive", sid, "freshness", "--reason", "static reference table")
+    assert cp["status"] == "waived"
+    assert cp["note"] == "static reference table"
+    ready = invoke("session", "readiness", sid)
+    assert ready["checks_complete"] is True
+    assert ready["waived_checks"][0]["key"] == "freshness"
+
+
+def test_waive_refused_without_a_terminal(workspace, fake_snow_env, sid):
+    err = invoke_err("checkpoint", "waive", sid, "freshness", "--reason", "static table")
+    assert "interactive terminal" in err["error"]
