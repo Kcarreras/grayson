@@ -201,3 +201,18 @@ def test_reconcile_refuses_sandbox(tmp_path, monkeypatch):
     cfg = ws.root / "grayson.toml"
     cfg.write_text(cfg.read_text().replace('name = "default"', 'name = "sandbox"'))
     assert "error" in reconcile(Workspace(ws.root))
+
+
+def test_guard_covers_the_credentials_not_just_the_binary():
+    """Denying `snow` while leaving its credentials readable is a half-measure:
+    connection details plus a key file are all an agent needs to reach the
+    warehouse through the Python connector, with no `snow` call to match on."""
+    assert "Bash(snow:*)" in GUARD_DENY_RULES
+    assert any("snowflake" in r for r in GUARD_DENY_RULES if r.startswith("Read("))
+
+
+def test_manual_and_cursor_guidance_name_the_credentials_path():
+    from grayson.harness.permissions import MANUAL_GUIDANCE, harness_guidance
+
+    assert ".snowflake" in MANUAL_GUIDANCE
+    assert ".snowflake" in harness_guidance("cursor")

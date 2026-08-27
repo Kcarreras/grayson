@@ -2,7 +2,8 @@
 
 The query guard is airtight only for statements that pass through grayson; an
 agent with arbitrary shell access could call `snow` directly with the user's
-own credentials, or read `.grayson/` state files. Where the harness has a
+own credentials, read those credentials and connect without `snow` at all, or
+read `.grayson/` state files. Where the harness has a
 machine-readable permission config (Claude Code's `.claude/settings.json`),
 grayson can write deny rules that turn "please don't" into a permission
 prompt a human sees.
@@ -23,6 +24,12 @@ from pathlib import Path
 #: user-authored rules in the same file are never touched).
 GUARD_DENY_RULES = [
     "Bash(snow:*)",  # direct Snowflake CLI use — all warehouse access goes through grayson
+    # Blocking the `snow` binary while leaving its credentials readable is a
+    # half-measure: the connection details (and any key-pair private key stored
+    # beside them) are all an agent needs to reach the warehouse through the
+    # Python connector or the REST API, with no `snow` invocation to match on.
+    "Read(~/.snowflake/**)",
+    "Read(~/.snowsql/**)",  # the legacy snowsql client's config lives here too
     "Read(.grayson/**)",  # session state, cache, audit — read via grayson tools only
     "Edit(.grayson/**)",
     "Write(.grayson/**)",
@@ -37,9 +44,12 @@ HARNESS_GUIDANCE = {
         "to the command denylist so it is never auto-run: any direct warehouse "
         "call surfaces as a prompt a human sees.\n"
         "2. Hooks (where available) — a `beforeShellExecution` hook in "
-        ".cursor/hooks.json can hard-deny commands matching `snow` or paths "
-        "under .grayson/; see Cursor's hooks documentation for the exact hook "
-        "script contract.\n"
+        ".cursor/hooks.json can hard-deny commands matching `snow`, reads of "
+        "~/.snowflake/ (the connection details are all an agent needs to reach "
+        "the warehouse without `snow` at all), or paths under .grayson/; see "
+        "Cursor's hooks documentation for the exact hook script contract. A hook "
+        "beats a denylist here because it can default-deny and normalize the "
+        "command rather than matching one literal string.\n"
         "Note the denylist and hooks govern the IDE agent; `cursor-agent` (the "
         "Cursor CLI) has its own permission config, set separately — for "
         "CLI-driven use, lean on the MCP server as the interface and configure "
@@ -69,8 +79,10 @@ HARNESS_GUIDANCE = {
 MANUAL_GUIDANCE = (
     "this harness has no machine-writable permission config grayson knows; "
     "configure its command allowlist to deny `snow` (and warehouse SDK "
-    "invocations) for agent sessions, and pair it with a read-only Snowflake "
-    "role — that role is the control that holds even without harness support"
+    "invocations) for agent sessions, deny reads of ~/.snowflake/ so the "
+    "credentials cannot simply be used without `snow`, and pair it with a "
+    "read-only Snowflake role — that role is the control that holds even "
+    "without harness support"
 )
 
 
@@ -138,7 +150,10 @@ def apply_guard(root: Path, harness: str = "claude-code") -> dict:
         "added": added,
         "rules": GUARD_DENY_RULES,
         "note": "friction + visibility, not containment — pair with a read-only "
-        "Snowflake role for the guarantee that survives a bypass",
+        "Snowflake role for the guarantee that survives a bypass. These rules match "
+        "tool calls and command strings, so they stop the direct path, not a determined "
+        "one; a key-pair private key stored outside ~/.snowflake is not covered and "
+        "cannot be, since its location is yours to choose.",
     }
 
 

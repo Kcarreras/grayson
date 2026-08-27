@@ -109,6 +109,23 @@ finding. The pressure that creates — invent a finding or abandon the session �
 pointed the wrong way, so a clean run now closes as a first-class `clean` outcome
 that a human confirms. A *forced* close never earns that label.
 
+### 2026-08-27 — Guard rules covered the binary, not the credentials
+
+`grayson harness guard apply` denied `Bash(snow:*)` and reads of `.grayson/**`,
+but nothing covered `~/.snowflake/` — where the `snow` CLI keeps connection
+details and, under key-pair auth, the private key beside them. An agent with
+shell did not need to evade the `snow` pattern at all: read the connection
+file, connect with the Python connector or the SQL REST API, and no matched
+command ever appears. The deny set now includes `Read(~/.snowflake/**)` and
+`Read(~/.snowsql/**)`, and the Cursor and manual guidance name the same path.
+
+Workspaces guarded before this ship will show the new rules as missing in
+`grayson harness guard status`; re-running `apply` adds them.
+
+A private key stored somewhere other than `~/.snowflake` is still uncovered and
+cannot be covered — its location is the user's to choose. This is the ordinary
+shape of the layer: it stops the direct path, not a determined one.
+
 ## Residual risks (accepted)
 
 - A pre-existing malicious UDF with an external-access integration could exfiltrate
