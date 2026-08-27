@@ -21,7 +21,13 @@ def main() -> int:
         if "FAIL_TIMEOUT" in upper:
             sys.stderr.write("Statement reached its statement or warehouse timeout")
             return 1
-        if "INFORMATION_SCHEMA.TABLES" in upper:
+        # a timeout ALTER SESSION may be prepended, so match anywhere
+        if "DESCRIBE TABLE" in upper:
+            rows = [
+                {"name": "ID", "type": "NUMBER", "kind": "COLUMN", "null?": "N"},
+                {"name": "VAL", "type": "VARCHAR", "kind": "COLUMN", "null?": "Y"},
+            ]
+        elif "INFORMATION_SCHEMA.TABLES" in upper:
             rows = [
                 {
                     "TABLE_CATALOG": "DB",

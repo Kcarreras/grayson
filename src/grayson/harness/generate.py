@@ -66,6 +66,14 @@ they are equivalent. Never query Snowflake except through grayson.
    refresh any the setup flags. Need another registered view later?
    `grayson views use <sid> <name>` brings it into scope. Note the session id; use it
    in every later command.
+2b. Profile first: `grayson profile table <sid> DB.SCHEMA.TABLE` returns a table's
+   whole descriptive battery — per-column nulls, cardinality, ranges, key candidates,
+   value frequencies — in three or four guarded queries whose ids are evidence. Do
+   NOT hand-roll forty single-column queries; it burns the budget and produces ids
+   that differ every run. Its `observations` are leads, not verdicts. For quantiles
+   and correlations use `grayson profile stats|correlate <sid> <sample-qid>`: those
+   compute locally over the cached sample, so cite the sample's qid AND say the
+   statistic was computed locally rather than verified by the warehouse.
 3. Analyze: run guarded queries (`grayson query run <sid> --sql "..." --label "why"`).
    Always pass `--label`: a short purpose note ("replicate: dup order ids") that shows
    up in the console's query log and the audit trail. Before querying,

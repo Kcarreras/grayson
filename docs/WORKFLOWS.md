@@ -29,7 +29,7 @@ prevent. So checkpoints come in two kinds, with an escape for the third case.
 
 ## The core templates
 
-Six ship built-in:
+Seven ship built-in:
 
 | Workflow | Purpose |
 |---|---|
@@ -39,6 +39,18 @@ Six ship built-in:
 | `semantic-rule-qa` | Test stated business rules against the data |
 | `migration-parity` | Old-vs-new parity: schemas, counts, keys, values, null semantics |
 | `table-onboarding` | Build the base descriptor for an undocumented table |
+| `feature-readiness` | Assess a feature table / training set before it feeds a model |
+
+`feature-readiness` is the ML-prep workflow, and it is deliberately **not** a
+generic "EDA" workflow. Descriptive profiling of one table already lives in
+`table-health` and `table-onboarding`; a third workflow doing the same
+statistics differently would be a junk drawer. What was actually missing is the
+*decision*: is this set safe to train on? So its checkpoints are the things that
+sink a model — population and grain, label distribution and base rate,
+missingness **mechanism** rather than rate, redundancy, and the one nobody runs
+by hand: leakage and point-in-time correctness. Its schema requires a
+`leakage_assessment` that says what was tested, because "not assessed" is how
+that check gets skipped.
 
 `bug-hunter` opens by checking the *expectation* itself — a large share of
 reported anomalies are misunderstandings of the grain or of a deliberate rule,

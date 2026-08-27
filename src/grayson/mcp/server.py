@@ -37,7 +37,11 @@ ask the user to close the session as a clean result — never invent a finding, 
 checkpoint with a query picked to pass the evidence test, in order to clear a gate. A
 check that does not apply is waived by the user on your request, not worked around.
 Failing external checks returned at session start (external_checks) are pre-vetted
-leads — replicate them first. Narrate the investigation visually: chart_add builds
+leads — replicate them first.
+Profile before hand-rolling: profile_table covers a table's descriptive battery
+(nulls, cardinality, ranges, key candidates, frequencies) in three or four guarded
+queries whose ids are evidence — do not write forty single-column queries yourself.
+Narrate the investigation visually: chart_add builds
 bar/line/scatter charts from cached artifacts that render live in the user's console,
 each traceable to its executed query.
 If a target table has no recorded knowledge, settle grain/semantics with the user early
@@ -342,6 +346,80 @@ def build_server(workspace: Workspace) -> Any:
             "row_count": len(data),
             "rows": [dict(zip(columns, r, strict=True)) for r in data],
         }
+
+    # -- profiling -----------------------------------------------------
+
+    @mcp.tool(
+        description="Profile a table in a handful of guarded queries: per-column nulls, "
+        "cardinality, ranges, key candidates, and value frequencies for low-cardinality "
+        "columns. Every statement runs the ordinary guarded path, so the returned query "
+        "ids are evidence you can close checkpoints with — do NOT hand-roll the same "
+        "battery one column at a time. `observations` are mechanical leads, not verdicts."
+    )
+    def profile_table(
+        session_id: str,
+        table: str,
+        sample_rows: int = 5000,
+        frequencies: bool = True,
+        sample: bool = True,
+    ) -> dict:
+        from grayson.profile import ProfileError
+        from grayson.profile import profile_table as _profile
+
+        try:
+            return _profile(
+                _session(session_id),
+                table,
+                sample_rows=sample_rows,
+                frequencies=frequencies,
+                sample=sample,
+            )
+        except (ProfileError, FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Numeric summaries (mean, stdev, quantiles) over a cached artifact — "
+        "typically a profile's sample. Computed LOCALLY, not by the warehouse: cite the "
+        "artifact's query id and say the statistic was computed locally."
+    )
+    def profile_stats(session_id: str, qid: str) -> dict:
+        from grayson.profile import summarize
+
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        columns, rows = s.cache.rows(qid)
+        if not columns:
+            return {"error": f"no cached artifact '{qid}'"}
+        return {
+            "qid": qid,
+            "sample_rows": len(rows),
+            "summaries": summarize(columns, rows),
+            "computed": "local",
+        }
+
+    @mcp.tool(
+        description="Pairwise correlation (pearson|spearman) over a cached artifact. Local "
+        "by design — pairwise over N columns is quadratic and would cost hundreds of "
+        "warehouse queries. The statistic itself is therefore unaudited: the response "
+        "carries a caveat and a confidence ceiling, and you must pass both on in any "
+        "finding that rests on it."
+    )
+    def profile_correlate(session_id: str, qid: str, method: str = "pearson") -> dict:
+        from grayson.profile import correlations
+
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        columns, rows = s.cache.rows(qid)
+        if not columns:
+            return {"error": f"no cached artifact '{qid}'"}
+        try:
+            return {"qid": qid, **correlations(columns, rows, method)}
+        except ValueError as e:
+            return _err(e)
 
     # -- checkpoints & findings ---------------------------------------
 

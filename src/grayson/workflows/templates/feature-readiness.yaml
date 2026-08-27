@@ -1,0 +1,121 @@
+name: feature-readiness
+title: Feature / Training-Set Readiness
+description: >
+  Assess a feature table or training set before it is fed to a model. Profiles
+  the label and the features, characterises missingness, finds redundancy, and —
+  the check nobody does by hand — tests for leakage and point-in-time
+  correctness. Use this when preparing data for an ML or AI pipeline, not to
+  QA a table in general (that is table-health) and not to diagnose a reported
+  defect (that is bug-hunter).
+suggested_guard_profile: moderate
+setup_inputs:
+  - key: dataset
+    prompt: The fully-qualified feature table or training set.
+    required: true
+  - key: label_column
+    prompt: >
+      Which column is the target/label, and what does a row mean — one row per
+      what, observed at what moment?
+    required: true
+  - key: prediction_time
+    prompt: >
+      At the moment a prediction is made in production, which columns are
+      actually known? Name the timestamp that defines "now" for a row.
+    required: true
+  - key: intended_use
+    prompt: >
+      What is the model meant to predict, for whom, and how will train/test be
+      split (random, by time, by entity)?
+    required: false
+required_checks:
+  - key: population_defined
+    title: Establish the row population and grain
+    description: >
+      Confirm one row per what, over what period, and which rows were filtered
+      out to build this set. A sample whose population nobody can state cannot
+      be reasoned about — every later number inherits its selection bias, and
+      "we trained on the rows that happened to be in the table" is the most
+      common unstated bias there is.
+    uses_inputs: [dataset, label_column]
+  - key: label_profiled
+    title: Profile the label
+    description: >
+      Distribution of the target: class balance for classification, range and
+      skew for regression, and the rate of missing or unlabelled rows. Say what
+      the base rate is — the number every model metric has to beat.
+    uses_inputs: [label_column]
+    depends_on: [population_defined]
+  - key: feature_profiled
+    title: Profile the features
+    description: >
+      Per-column completeness, cardinality, ranges, and constants. `grayson
+      profile table` produces this in a few guarded queries — use it rather than
+      hand-rolling. Flag features that are constant, near-constant, or so
+      high-cardinality that they are identifiers rather than features.
+    uses_inputs: [dataset]
+    depends_on: [population_defined]
+  - key: missingness_characterized
+    title: Characterize missingness, do not just count it
+    description: >
+      For every feature with material nulls, test whether the missingness is
+      related to something: a date range, a source system, a segment, or the
+      label itself. Missing-at-random can be imputed; missingness that tracks
+      the label is a signal the model will learn and production will not
+      reproduce. The rate alone cannot tell those apart.
+    depends_on: [feature_profiled]
+  - key: leakage_assessed
+    title: Test for leakage and point-in-time correctness
+    description: >
+      The check that most often invalidates a model and least often gets run.
+      For each feature, establish that its value was knowable at prediction
+      time: compare the feature's own timestamp against the label event, look
+      for features that are functions of the outcome (a status set after the
+      fact, an aggregate computed over a window that includes the label),
+      and check that identical or near-identical entities do not appear on both
+      sides of the intended split. A suspiciously strong single-feature
+      relationship to the label is a leakage hypothesis, not a lucky break.
+    uses_inputs: [prediction_time, label_column]
+    depends_on: [label_profiled, feature_profiled]
+  - key: redundancy_assessed
+    title: Find redundant and collinear features
+    description: >
+      Identify features that duplicate each other — the same quantity under two
+      names, a unit conversion, a near-perfect correlation. `profile correlate`
+      computes this over a cached sample; say so when you cite it, since the
+      statistic is computed locally rather than verified by the warehouse.
+    depends_on: [feature_profiled]
+suggested_checks:
+  - key: split_integrity
+    title: Check the train/test split holds
+    description: >
+      For a temporal split, confirm no training row post-dates a test row. For
+      an entity split, confirm no entity spans both sides. Contamination here
+      inflates every metric downstream and is invisible in the model itself.
+  - key: label_drift
+    title: Check the label over time
+    description: >
+      Base rate by period. A target whose prevalence shifts means a model
+      trained on the whole history is fitted to a world that no longer exists.
+  - key: feature_drift
+    title: Compare feature distributions across periods
+    description: >
+      Features whose distribution moves between the training window and the most
+      recent data will degrade in production regardless of validation scores.
+  - key: outlier_scan
+    title: Look for outliers and impossible values
+    description: >
+      Values outside plausible bounds, sentinel encodings (-1, 9999,
+      1970-01-01) that models read as real magnitudes, and extreme tails that
+      will dominate an unscaled feature.
+  - key: duplicate_rows
+    title: Check for duplicated observations
+    description: >
+      Exact or near-duplicate rows inflate effective sample size and leak across
+      any random split. Quantify them at the declared grain.
+  - key: category_stability
+    title: Check categorical levels are stable and bounded
+    description: >
+      Rare levels, levels present in training but not recent data, and free-text
+      creeping into a categorical column. Each becomes an encoding failure at
+      serving time.
+findings_schema: feature_readiness_v1

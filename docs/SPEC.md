@@ -323,7 +323,7 @@ can name thirty fundamentals without demanding all thirty close with evidence on
 five-column lookup table. `depends_on` expresses the rare genuine ordering.
 
 v1 templates: `bug-hunter`, `pipeline-qa`, `table-health`, `semantic-rule-qa`,
-`migration-parity`. Each defines setup inputs, required checks, intervention patterns,
+`migration-parity`, `table-onboarding`, `feature-readiness`. Each defines setup inputs, required checks, intervention patterns,
 and a findings schema. `migration-parity` doubles as the built-in verification stage for
 every other workflow.
 
@@ -336,6 +336,23 @@ required check leaves the agent only one route past the gate — a query chosen 
 the relevance test — which is precisely the laundering the gate exists to stop.
 **Findings** are pydantic-validated documents: summary, severity, affected objects,
 evidence (query ids), reproduction, proposed remediation, confidence + open questions.
+
+## 9b. Profiling primitive
+
+The descriptive battery is identical on every table, so it is generated rather than
+hand-written: `grayson profile table` emits DESCRIBE, one wide aggregate SELECT per
+batch of columns, one UNION ALL of value frequencies for low-cardinality columns, and
+one sample — three or four statements where the naive shape is one query per column
+per statistic. Everything runs the ordinary guarded path, so the artifacts are evidence
+and their query ids close checkpoints; grayson computes the numbers and states flat
+`observations`, and interprets nothing.
+
+Quantiles and pairwise correlation are computed locally over a cached sample instead
+(`profile stats`, `profile correlate`): portable SQL cannot express them, and pairwise
+over N columns is quadratic in warehouse cost. The trade is explicit in the response —
+`computed: "local"`, a confidence ceiling, and a caveat — because the sample's query id
+is audited evidence while the statistic derived from it is not, and a correlation looks
+like a measurement of the table when it is a measurement of the sample.
 
 ## 9a. QA view library
 

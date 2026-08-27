@@ -40,6 +40,9 @@ worker_app = typer.Typer(help="Parallel worker registration.", no_args_is_help=T
 guard_app = typer.Typer(help="Statement validation.", no_args_is_help=True)
 workflow_app = typer.Typer(help="Workflow templates.", no_args_is_help=True)
 checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_help=True)
+profile_app = typer.Typer(
+    help="Deterministic table profiling (citable evidence).", no_args_is_help=True
+)
 finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_args_is_help=True)
 intervention_app = typer.Typer(help="Human-in-the-loop tasks.", no_args_is_help=True)
 proposal_app = typer.Typer(help="Fix proposals and verification.", no_args_is_help=True)
@@ -77,6 +80,7 @@ app.add_typer(worker_app, name="worker")
 app.add_typer(guard_app, name="guard")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(checkpoint_app, name="checkpoint")
+app.add_typer(profile_app, name="profile")
 app.add_typer(finding_app, name="finding")
 app.add_typer(intervention_app, name="intervention")
 app.add_typer(proposal_app, name="proposal")
@@ -1210,6 +1214,91 @@ def checkpoint_reopen(session_id: str, key: str) -> None:
     s = _session(session_id)
     s.reopen_checkpoint(key, default_actor())
     emit(s.checkpoint(key))
+
+
+# -- profiling -----------------------------------------------------------
+
+
+@profile_app.command("table")
+def profile_table_cmd(
+    session_id: str,
+    table: str,
+    sample_rows: int = typer.Option(5000, "--sample-rows", help="Rows pulled for local stats."),
+    no_frequencies: bool = typer.Option(False, "--no-frequencies"),
+    no_sample: bool = typer.Option(False, "--no-sample"),
+) -> None:
+    """Profile a table in a handful of guarded queries.
+
+    Every statement runs the ordinary guarded path, so the artifacts are evidence
+    like any other and the returned query ids close checkpoints directly. Nulls,
+    cardinality, ranges, value frequencies and key candidates come back as facts —
+    what they mean is yours to work out.
+    """
+    from grayson.profile import ProfileError, profile_table
+
+    s = _session(session_id)
+    try:
+        emit(
+            profile_table(
+                s,
+                table,
+                sample_rows=sample_rows,
+                frequencies=not no_frequencies,
+                sample=not no_sample,
+            )
+        )
+    except ProfileError as e:
+        fail(str(e.args[0] if e.args else e))
+
+
+@profile_app.command("stats")
+def profile_stats_cmd(session_id: str, qid: str) -> None:
+    """Numeric summaries (mean, stdev, quantiles) over a cached artifact.
+
+    Computed locally, not by the warehouse — cite the artifact's query id and say
+    so. See `profile correlate` for the same caveat spelled out.
+    """
+    from grayson.profile import summarize
+
+    s = _session(session_id)
+    columns, rows = s.cache.rows(qid)
+    if not columns:
+        fail(f"no cached artifact '{qid}'")
+        return
+    emit(
+        {
+            "qid": qid,
+            "sample_rows": len(rows),
+            "summaries": summarize(columns, rows),
+            "computed": "local",
+        }
+    )
+
+
+@profile_app.command("correlate")
+def profile_correlate_cmd(
+    session_id: str,
+    qid: str,
+    method: str = typer.Option("pearson", "--method", help="pearson | spearman"),
+) -> None:
+    """Pairwise correlation over a cached artifact.
+
+    Local by design: pairwise correlation over N columns is quadratic, and doing
+    it in the warehouse would cost hundreds of queries to answer a question a
+    single cached sample already contains. The trade is that the statistic itself
+    is unaudited — the response carries the caveat; pass it on.
+    """
+    from grayson.profile import correlations
+
+    s = _session(session_id)
+    columns, rows = s.cache.rows(qid)
+    if not columns:
+        fail(f"no cached artifact '{qid}'")
+        return
+    try:
+        emit({"qid": qid, **correlations(columns, rows, method)})
+    except ValueError as e:
+        fail(str(e.args[0] if e.args else e))
 
 
 # -- findings ------------------------------------------------------------

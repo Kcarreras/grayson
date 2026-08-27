@@ -99,6 +99,45 @@ stage changes to whoever actually made them rather than assuming the human.
 Recording a clean result is the point of the ceremony: "we looked and it was
 fine" is knowledge the next session should start with.
 
+## Profiling
+
+The descriptive battery — per-column nulls, cardinality, ranges, key candidates,
+value frequencies — is the same on every table, and hand-rolling it is both
+expensive and unreproducible: forty single-column queries burn the budget, and
+their ids differ every run.
+
+```bash
+grayson profile table <sid> DB.SCHEMA.TABLE
+```
+
+Aggregates compose, so this costs three or four statements rather than forty:
+one `DESCRIBE`, one wide `SELECT` carrying every column's aggregates, one
+`UNION ALL` of value frequencies for the low-cardinality columns, and one
+sample. Each runs the ordinary guarded path, so the returned `q_XXXX` ids are
+evidence like any other and close checkpoints directly. The response's
+`observations` are mechanical leads — "nearly unique but not quite, 3 rows
+beyond the distinct count", "null in 8.6% of rows" — never verdicts. Whether a
+sparse column is a defect depends on what it is for, which grayson does not know
+and will not guess.
+
+Two statistics do not fit in portable SQL, and one of them is quadratic:
+
+```bash
+grayson profile stats <sid> <sample-qid>       # mean, stdev, quantiles
+grayson profile correlate <sid> <sample-qid>   # pairwise, pearson | spearman
+```
+
+Both compute locally over a cached artifact, which is why they are cheap:
+pairwise correlation across 30 columns is 435 pairs, and asking the warehouse
+would cost hundreds of queries to answer what one cached sample already
+contains. **The evidence chain is weaker here and says so.** A warehouse query
+is audited end to end; a local statistic is "this artifact, plus arithmetic
+grayson did afterwards", and it describes the sample rather than the table. Both
+responses carry `computed: "local"`, a confidence ceiling, and a caveat to pass
+on — cite the sample's query id, say the number was computed locally, and
+confirm anything decisive against the warehouse before resting a
+high-confidence finding on it.
+
 ## Analysis charts
 
 Agents chart cached query results as they work — `grayson chart add` (MCP:

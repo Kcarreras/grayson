@@ -178,3 +178,25 @@ def test_table_onboarding_covers_everything_base_complete_requires():
     prose = " ".join(c.description.lower() for c in tpl.required_checks)
     for field in ("grain", "column", "relationship", "freshness", "definition_files", "owners"):
         assert field.replace("_", " ") in prose or field in prose, field
+
+
+def test_feature_readiness_gates_on_leakage():
+    """The check that most often invalidates a model — it has to be required,
+    and its schema field must not be satisfiable by silence."""
+    tpl = get_workflow("feature-readiness", None)
+    assert "leakage_assessed" in tpl.required_check_keys()
+    assert tpl.check("leakage_assessed").depends_on == ["label_profiled", "feature_profiled"]
+
+    from grayson.findings.schemas import FINDINGS_SCHEMAS
+
+    required = dict(FINDINGS_SCHEMAS["feature_readiness_v1"]["required_extra"])
+    assert "leakage_assessment" in required
+    assert "readiness_verdict" in required
+
+
+def test_feature_readiness_is_distinct_from_table_health():
+    """Split by decision, not technique: if these two overlap on checkpoints,
+    one of them is a junk drawer."""
+    fr = set(get_workflow("feature-readiness", None).required_check_keys())
+    th = set(get_workflow("table-health", None).required_check_keys())
+    assert not (fr & th)

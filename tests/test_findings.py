@@ -142,3 +142,43 @@ def test_unknown_resolution_rejected():
             },
             "bug_hunter_v1",
         )
+
+
+def test_feature_readiness_requires_saying_what_leakage_testing_found():
+    with pytest.raises(ValueError, match="leakage_assessment"):
+        validate_finding(
+            {
+                "title": "Training set is fine",
+                "severity": "info",
+                "confidence": "high",
+                "summary": "Looks usable for the churn model.",
+                "evidence": ["q_0001"],
+                "extra": {
+                    "row_grain": "one row per customer-month",
+                    "label_definition": "churned within 30 days",
+                    "readiness_verdict": "ready",
+                },
+            },
+            "feature_readiness_v1",
+        )
+
+
+def test_feature_readiness_accepts_a_complete_assessment():
+    f = validate_finding(
+        {
+            "title": "Leakage via post-hoc status column",
+            "severity": "critical",
+            "confidence": "high",
+            "summary": "ACCOUNT_STATUS is written after the churn event it predicts.",
+            "evidence": ["q_0001"],
+            "extra": {
+                "row_grain": "one row per customer-month, 2024-01 to 2026-06",
+                "label_definition": "churned within 30 days of the month end",
+                "leakage_assessment": "ACCOUNT_STATUS updated after the label event; "
+                "no entity overlap across the temporal split",
+                "readiness_verdict": "not_ready",
+            },
+        },
+        "feature_readiness_v1",
+    )
+    assert f.extra["readiness_verdict"] == "not_ready"

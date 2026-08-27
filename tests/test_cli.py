@@ -394,3 +394,30 @@ def test_waive_is_recorded_with_its_reason(workspace, fake_snow_env, sid, at_a_t
 def test_waive_refused_without_a_terminal(workspace, fake_snow_env, sid):
     err = invoke_err("checkpoint", "waive", sid, "freshness", "--reason", "static table")
     assert "interactive terminal" in err["error"]
+
+
+# -- profiling ------------------------------------------------------------
+
+
+def test_profile_command_returns_citable_evidence(workspace, fake_snow_env, sid):
+    doc = invoke("profile", "table", sid, "DB.S.T1")
+    assert doc["queries_run"] <= 5
+    log = {e["qid"] for e in invoke("query", "log", sid)}
+    assert set(doc["evidence"]) <= log
+    # the profile's own ids close a checkpoint — no hand-rolled battery needed
+    args = [a for q in doc["evidence"] for a in ("-e", q)]
+    cp = invoke("checkpoint", "complete", sid, "null_completeness", *args)
+    assert cp["status"] == "complete"
+
+
+def test_profile_stats_and_correlate_over_the_sample(workspace, fake_snow_env, sid):
+    doc = invoke("profile", "table", sid, "DB.S.T1")
+    stats = invoke("profile", "stats", sid, doc["sample_qid"])
+    assert stats["computed"] == "local"
+    corr = invoke("profile", "correlate", sid, doc["sample_qid"])
+    assert corr["confidence_ceiling"] == "medium"
+    assert "not by the warehouse" in corr["caveat"]
+
+
+def test_profile_stats_on_a_missing_artifact_fails_clearly(workspace, fake_snow_env, sid):
+    assert "no cached artifact" in invoke_err("profile", "stats", sid, "q_9999")["error"]

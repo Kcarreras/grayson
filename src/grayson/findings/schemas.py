@@ -72,6 +72,22 @@ FINDINGS_SCHEMAS: dict[str, dict] = {
             ],
         },
     },
+    "feature_readiness_v1": {
+        "required_extra": [
+            ("row_grain", "One row per what, over what population and period."),
+            ("label_definition", "The target column and what it means at prediction time."),
+            (
+                "leakage_assessment",
+                "What was checked for leakage and point-in-time correctness, and what "
+                "was found. 'not assessed' is not an acceptable value — say what you "
+                "tested, even if the answer is that nothing leaked.",
+            ),
+            (
+                "readiness_verdict",
+                "ready | ready_with_caveats | not_ready, with the reason.",
+            ),
+        ]
+    },
     "parity_v1": {
         "required_extra": [
             ("old_object", "Baseline object compared."),
