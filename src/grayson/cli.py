@@ -569,7 +569,7 @@ def session_start(
         if dup:
             s = Session(ws, dup)
             if provided:
-                s.set_setup_inputs(provided)
+                s.set_setup_inputs(provided, actor=default_actor())
             emit(
                 {
                     "reused_existing": True,
@@ -610,10 +610,11 @@ def session_start(
         title=title,
         workers=workers,
         strict_scope=strict_scope,
+        actor=default_actor(),
     )
     engine.seed_from_workflow(session, ws.workflows_dir)
     if provided:
-        session.set_setup_inputs(provided)
+        session.set_setup_inputs(provided, actor=default_actor())
     result = {
         "session": session.summary(),
         "guard_profile_source": (

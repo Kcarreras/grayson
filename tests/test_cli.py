@@ -353,6 +353,17 @@ def test_force_works_for_a_human_at_a_prompt(workspace, fake_snow_env, sid, at_a
     assert invoke("session", "status", sid)["stage"] == "review"
 
 
+def test_agent_started_sessions_are_not_recorded_under_the_human(workspace, fake_snow_env, sid):
+    from grayson.core.session import Session
+    from grayson.workspace import Workspace
+
+    s = Session(Workspace.find(), sid)
+    started = [e for e in s.events(50) if e["type"] == "session_created"]
+    assert started and started[0]["actor"] == "agent"
+    inputs = [e for e in s.events(50) if e["type"] == "setup_inputs_recorded"]
+    assert all(e["actor"] == "agent" for e in inputs)
+
+
 def test_agent_stage_changes_are_attributed_to_the_agent(workspace, fake_snow_env, sid):
     invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
     invoke("session", "advance", sid, "--to", "synthesis")

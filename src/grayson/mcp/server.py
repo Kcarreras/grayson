@@ -152,6 +152,7 @@ def build_server(workspace: Workspace) -> Any:
             guard_profile=chosen,
             title=title,
             strict_scope=strict_scope,
+            actor="agent",
         )
         engine.seed_from_workflow(s, workspace.workflows_dir)
         if provided:

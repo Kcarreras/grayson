@@ -156,6 +156,7 @@ class Session:
         workers: int = 1,
         strict_scope: bool | None = None,
         connection: str | None = None,
+        actor: str = "user",
     ) -> Session:
         session_id = new_session_id()
         sdir = workspace.session_dir(session_id)
@@ -186,7 +187,10 @@ class Session:
         finally:
             con.close()
         session = cls(workspace, session_id)
-        session.log_event("user", "session_created", {"workflow": workflow, "targets": targets})
+        # attributed to whoever actually started it: an agent-started session used to
+        # be recorded under the human's name, same class of misattribution the stage
+        # and close paths carried
+        session.log_event(actor, "session_created", {"workflow": workflow, "targets": targets})
         return session
 
     def close_db(self) -> None:  # placeholder for symmetry; connections are per-call
