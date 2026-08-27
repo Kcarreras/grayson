@@ -346,3 +346,15 @@ def test_severity_scale_is_explained_where_findings_are_judged(client, session):
     they need to know what the agent's label was supposed to mean."""
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
     assert "wrong data is already being used" in page.lower()
+
+
+def test_closed_sessions_list_shows_the_outcome(client, session):
+    from grayson.core.run import run_statement
+
+    out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
+    for key in engine.workflow_for(session).required_check_keys():
+        engine.complete_checkpoint(session, key, [out["qid"]], "checked")
+    engine.close_session(session, "user", "nothing to act on")
+    page = client.get(f"/?t={TOKEN}").text
+    assert "Closed sessions" in page
+    assert "clean" in page

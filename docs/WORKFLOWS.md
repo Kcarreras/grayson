@@ -69,7 +69,7 @@ only with a grayson release. Customization forks under a new name.
 ## Findings schemas and severity
 
 Each workflow validates its claims against a closed-ended schema, and the schema
-is the only enforceable quality lever on the open-ended end of the range. Five
+is the only enforceable quality lever on the open-ended end of the range. Six
 ship: `standard_v1`, `bug_hunter_v1`, `parity_v1`, `pipeline_qa_v1`,
 `rule_qa_v1`, `feature_readiness_v1`. Two use a discriminator to keep their
 demands honest — `bug_hunter_v1` asks for a `resolution` (`root_caused` or

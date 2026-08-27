@@ -42,7 +42,7 @@ def render_markdown(report: dict) -> str:
         "",
         f"- **Title:** {s['title'] or '(untitled)'}",
         f"- **Workflow:** {s['workflow']}",
-        f"- **Stage:** {s['stage']}",
+        f"- **Stage:** {s['stage']}" + (f" ({_outcome_line(s)})" if s.get("outcome") else ""),
         f"- **Targets:** {', '.join(s['targets']) or '(none)'}",
         f"- **Created:** {s['created_at']}",
         f"- **Generated:** {report['generated_at']}",
@@ -64,10 +64,14 @@ def render_markdown(report: dict) -> str:
         "",
     ]
     for c in report["checkpoints"]:
-        mark = "x" if c["status"] == "complete" else " "
+        # a waived check is cleared, not open — rendering it unticked would read as
+        # unfinished work, and rendering it ticked would hide that it was skipped
+        waived = c["status"] == "waived"
+        mark = "x" if c["status"] == "complete" else "~" if waived else " "
         evidence = f" — evidence: {', '.join(c['evidence'])}" if c["evidence"] else ""
         note = f" ({c['note']})" if c.get("note") else ""
-        lines.append(f"- [{mark}] **{c['key']}** — {c['title']}{evidence}{note}")
+        suffix = f" — **waived**{note}" if waived else f"{evidence}{note}"
+        lines.append(f"- [{mark}] **{c['key']}** — {c['title']}{suffix}")
     if not report["checkpoints"]:
         lines.append("- (none)")
     lines += ["", "## Findings", ""]
@@ -108,3 +112,20 @@ def render_markdown(report: dict) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _outcome_line(summary: dict) -> str:
+    """How a closed session ended, for the shareable report.
+
+    A clean run has no findings, so without this the report of a genuine
+    all-clear is indistinguishable from the report of a session that gave up.
+    """
+    outcome = summary.get("outcome")
+    note = (summary.get("outcome_note") or "").strip()
+    if outcome == "clean":
+        text = "clean — checks cleared, nothing found worth acting on"
+    elif outcome == "findings":
+        text = "closed on accepted findings"
+    else:
+        return outcome or ""
+    return f"{text}{': ' + note if note else ''}"
