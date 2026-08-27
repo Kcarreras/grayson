@@ -136,7 +136,7 @@ Recipes, the Docker image, and the trust model of each:
 | Doc | What's in it |
 |---|---|
 | [docs/SESSIONS.md](docs/SESSIONS.md) | Running sessions: harness setup, the loop in detail, charts, guard profiles and settings |
-| [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | Workflow templates: the core six, forking and ownership, lint, the Workflows tab |
+| [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | Workflow templates: the core seven, required vs suggested checks, forking and ownership, lint |
 | [docs/LIBRARY.md](docs/LIBRARY.md) | The team library: knowledge provenance, user ids, records that compound, knowledge-only access |
 | [docs/CHECKS.md](docs/CHECKS.md) | Feeding external checks (dbt, Airflow, …) in as pre-vetted leads |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment recipes: solo, knowledge appliance, credential-isolated server |
