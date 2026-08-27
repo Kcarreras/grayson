@@ -446,8 +446,22 @@ def build_server(workspace: Workspace) -> Any:
             return _err(e)
 
     @mcp.tool(
+        description="The severity/confidence scale findings are calibrated against, and "
+        "which parts of it grayson enforces. Read it before assigning a severity: with "
+        "no shared scale everything drifts to 'high', and a queue where everything is "
+        "high has no priority in it."
+    )
+    def finding_rubric() -> dict:
+        from grayson.findings.schemas import rubric
+
+        return rubric()
+
+    @mcp.tool(
         description="Record a finding. Validated against the workflow's findings schema; "
-        "must cite executed query evidence. Pass the finding as a dict."
+        "must cite executed query evidence. Pass the finding as a dict. Calibrate "
+        "severity against `finding_rubric` — two rungs are enforced: confidence 'high' "
+        "requires a `reproduction`, and severity 'critical'/'high' requires "
+        "`affected_objects`."
     )
     def finding_add(session_id: str, finding: dict, worker: str | None = None) -> dict:
         try:

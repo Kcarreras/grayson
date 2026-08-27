@@ -78,6 +78,8 @@ def test_finding_requires_valid_schema_and_evidence(session):
                 "title": "Anomaly found",
                 "severity": "high",
                 "confidence": "high",
+                "affected_objects": ["DB.S.T1"],
+                "reproduction": "re-run the cited query",
                 "summary": "Something is off in the data pipeline output.",
                 "evidence": qids,
             },
@@ -92,6 +94,8 @@ def test_finding_recorded(session):
             "title": "Fan-out duplicates",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Join fan-out creates duplicate rows in the output.",
             "evidence": qids,
             "extra": {
@@ -259,6 +263,8 @@ def _finding(qids: list[str]) -> dict:
         "title": "Duplicate order ids",
         "severity": "high",
         "confidence": "high",
+        "affected_objects": ["DB.S.T1"],
+        "reproduction": "re-run the cited query",
         "summary": "Order ids repeat after the promo join.",
         "evidence": qids,
         "extra": {

@@ -253,6 +253,8 @@ def test_checkpoint_and_findings_flow(workspace, fake_snow_env):
         "title": "Fan-out duplicates in output",
         "severity": "high",
         "confidence": "high",
+        "affected_objects": ["DB.S.T1"],
+        "reproduction": "re-run the cited query",
         "summary": "A one-to-many join duplicates rows in the final table.",
         "evidence": [qid],
         "extra": {
@@ -421,3 +423,26 @@ def test_profile_stats_and_correlate_over_the_sample(workspace, fake_snow_env, s
 
 def test_profile_stats_on_a_missing_artifact_fails_clearly(workspace, fake_snow_env, sid):
     assert "no cached artifact" in invoke_err("profile", "stats", sid, "q_9999")["error"]
+
+
+def test_finding_rubric_is_discoverable(workspace):
+    scale = invoke("finding", "rubric")
+    assert set(scale["severity"]) == {"critical", "high", "medium", "low", "info"}
+    assert scale["enforced"]
+
+
+def test_calibration_gates_apply_through_the_cli(workspace, fake_snow_env, sid):
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    payload = {
+        "title": "Nulls in a required column",
+        "severity": "high",
+        "confidence": "high",
+        "summary": "EMAIL is null for a material share of rows.",
+        "evidence": [run["qid"]],
+    }
+    err = invoke_err("finding", "add", sid, "--json", json.dumps(payload))["error"]
+    # both gaps in one message — one round trip, not two
+    assert "affected_objects" in err and "reproduction" in err
+    payload["affected_objects"] = ["DB.S.T1"]
+    payload["reproduction"] = "SELECT COUNT(*) FROM DB.S.T1 WHERE EMAIL IS NULL"
+    assert invoke("finding", "add", sid, "--json", json.dumps(payload))["severity"] == "high"

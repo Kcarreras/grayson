@@ -75,4 +75,4 @@ suggested_checks:
       For incremental loads, verify no gap or overlap at the watermark: rows
       either side of the last-run boundary, and whether any were processed twice
       or not at all.
-findings_schema: standard_v1
+findings_schema: pipeline_qa_v1

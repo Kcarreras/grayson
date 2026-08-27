@@ -121,6 +121,8 @@ def test_fixes_requires_accepted_not_just_recorded(session):
             "title": "Dup rows",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Duplicate rows appear in the output.",
             "evidence": [qid],
             "extra": {
@@ -150,6 +152,8 @@ def test_verify_requires_approval(session):
             "title": "Dup rows in output",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "duplicate rows in output table",
             "evidence": [qid],
             "extra": {
@@ -175,6 +179,8 @@ def test_verify_rejects_same_before_after(session):
             "title": "Dup rows in output",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "duplicate rows in output table",
             "evidence": [qid],
             "extra": {

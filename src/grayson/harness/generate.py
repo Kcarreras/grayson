@@ -101,7 +101,13 @@ they are equivalent. Never query Snowflake except through grayson.
    which in your findings. Required checks may declare `depends_on`: close them in
    that order, it is part of the method.
 5. Findings: record them against the workflow schema, each citing evidence:
-   `grayson finding add <sid> --json '{...}'`. Findings are immutable — never try
+   `grayson finding add <sid> --json '{...}'`. Calibrate severity against
+   `grayson finding rubric` — critical means wrong data is already being used for
+   decisions, info means it is not a defect at all. Two rungs cost specificity and
+   are enforced: `confidence: high` needs a `reproduction` (if nobody else can go
+   and see it, it is not high confidence), and `severity: critical|high` needs
+   `affected_objects`. Downgrading to dodge those is worse than either — say what
+   you found and let the user judge. Findings are immutable — never try
    to edit one. If an accepted finding turns out to be wrong, record a corrected
    finding with `"supersedes": "f_00X"` in the payload: that is a proposal, and
    the old finding is replaced only if the user accepts the new one. If the user

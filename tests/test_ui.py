@@ -83,8 +83,16 @@ def test_records_show_renamed_session_title(client, session):
             "title": "Wrong buckets",
             "severity": "low",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Some URLs land in the wrong category bucket.",
             "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs land in the wrong bucket",
+                "expected_behaviour": "match the documented taxonomy",
+            },
         },
     )["fid"]
     client.post(
@@ -182,8 +190,16 @@ def test_accept_finding_via_ui(client, session):
             "title": "Miscategorized URLs",
             "severity": "medium",
             "confidence": "medium",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "About 8% of URLs fall into the wrong category bucket.",
             "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs land in the wrong bucket",
+                "expected_behaviour": "match the documented taxonomy",
+            },
         },
     )
     r = client.post(
@@ -210,8 +226,16 @@ def test_proposal_approve_via_ui(client, session):
             "title": "Bad categories",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Categories are wrong for a meaningful fraction of URLs.",
             "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs land in the wrong bucket",
+                "expected_behaviour": "match the documented taxonomy",
+            },
         },
     )["fid"]
     p = proposals.record_proposal(
@@ -315,3 +339,10 @@ def test_taking_up_a_suggested_check_records_it_as_a_checkpoint(client, session)
     assert "rule_drift" not in ready["required_checks"]
     assert next(c for c in ready["suggested_checks"] if c["key"] == "rule_drift")["done"]
     assert ready["checks_complete"] is False
+
+
+def test_severity_scale_is_explained_where_findings_are_judged(client, session):
+    """The user accepting or rejecting is the one calibration check that matters;
+    they need to know what the agent's label was supposed to mean."""
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "wrong data is already being used" in page.lower()

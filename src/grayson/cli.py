@@ -1304,6 +1304,20 @@ def profile_correlate_cmd(
 # -- findings ------------------------------------------------------------
 
 
+@finding_app.command("rubric")
+def finding_rubric() -> None:
+    """The severity and confidence scale, and which parts of it are enforced.
+
+    grayson does not judge whether a severity is right — that is the user's call
+    when they accept or reject. It publishes the scale, because with no shared
+    one every finding drifts to high and a queue where everything is high has no
+    priority in it.
+    """
+    from grayson.findings.schemas import rubric
+
+    emit(rubric())
+
+
 @finding_app.command("add")
 def finding_add(
     session_id: str,

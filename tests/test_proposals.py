@@ -31,6 +31,8 @@ def _finding(session):
             "title": "Dup rows",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Duplicate rows appear in the output table.",
             "evidence": [qid],
             "extra": {

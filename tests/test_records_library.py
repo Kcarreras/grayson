@@ -39,6 +39,8 @@ def _finding(session, title="Dup rows"):
             "title": title,
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Duplicate rows appear in the output table.",
             "evidence": [qid],
             "extra": {
@@ -95,6 +97,8 @@ def test_supersession_republishes_old_finding(workspace, session):
             "title": "Corrected read",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "The first finding misread the grain.",
             "evidence": [qid],
             "supersedes": f1,

@@ -35,8 +35,16 @@ def _finding(session, qid, title="Wrong buckets", supersedes=None):
         "title": title,
         "severity": "medium",
         "confidence": "high",
+        "affected_objects": ["DB.S.T1"],
+        "reproduction": "re-run the cited query",
         "summary": "Some URLs land in the wrong category bucket for this rule.",
         "evidence": [qid],
+        "extra": {
+            "finding_kind": "rule_defect",
+            "rule_location": "categorize_url()",
+            "observed_behaviour": "some URLs land in the wrong bucket",
+            "expected_behaviour": "match the documented taxonomy",
+        },
     }
     if supersedes:
         payload["supersedes"] = supersedes
@@ -148,9 +156,19 @@ def test_finding_with_list_extra_renders(workspace, session, qid):
         "title": "Fan-out with list extras",
         "severity": "medium",
         "confidence": "high",
+        "affected_objects": ["DB.S.T1"],
+        "reproduction": "re-run the cited query",
         "summary": "The join fans out; details in extra.",
         "evidence": [qid],
-        "extra": {"codes": ["SUMMER25", "FLASH5"], "counts": {"rows": 396}},
+        "extra": {
+            "finding_kind": "rule_defect",
+            "rule_location": "categorize_url()",
+            "observed_behaviour": "some URLs land in the wrong bucket",
+            "expected_behaviour": "match the documented taxonomy",
+            # arbitrary JSON alongside the schema's own fields — the field crash
+            "codes": ["SUMMER25", "FLASH5"],
+            "counts": {"rows": 396},
+        },
     }
     engine.record_finding(session, payload)
     client = TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1")

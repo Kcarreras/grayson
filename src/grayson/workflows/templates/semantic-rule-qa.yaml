@@ -74,4 +74,4 @@ suggested_checks:
       Categories with zero or near-zero assignment usually mean a shadowed
       branch or a condition that can no longer be met — a bug in the rule that
       accuracy on the assigned rows will never reveal.
-findings_schema: standard_v1
+findings_schema: rule_qa_v1

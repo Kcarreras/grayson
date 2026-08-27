@@ -202,7 +202,7 @@
 </div>
 {% endif %}
 
-<h2>Findings {{ help("findings") }}</h2>
+<h2>Findings {{ help("findings") }}{{ help("severity") }}</h2>
 {% for f in findings %}
 {# newest three stay open; older and superseded findings collapse to their
    title row. A manual toggle is remembered per finding in localStorage. #}

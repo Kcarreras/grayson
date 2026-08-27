@@ -66,6 +66,29 @@ Core templates are **canonical**: a library file cannot shadow a core name (a
 collision is rejected and reported, never merged), so core behavior changes
 only with a grayson release. Customization forks under a new name.
 
+## Findings schemas and severity
+
+Each workflow validates its claims against a closed-ended schema, and the schema
+is the only enforceable quality lever on the open-ended end of the range. Five
+ship: `standard_v1`, `bug_hunter_v1`, `parity_v1`, `pipeline_qa_v1`,
+`rule_qa_v1`, `feature_readiness_v1`. Two use a discriminator to keep their
+demands honest — `bug_hunter_v1` asks for a `resolution` (`root_caused` or
+`inconclusive`, the latter needing `remaining_hypotheses`), and `rule_qa_v1` asks
+for a `finding_kind`, because an accuracy estimate must carry its sample size and
+sampling frame while an unreachable-category defect has no sample behind it at
+all.
+
+Severity has a published scale (`grayson finding rubric`, MCP `finding_rubric`),
+because without a shared one every finding drifts to "high" and a queue where
+everything is high has no priority in it. grayson does not judge whether a
+severity is *right* — that is what accepting and rejecting are for. It makes the
+top two rungs cost the specificity a real severe finding already has:
+
+- `confidence: high` requires a `reproduction`. If nobody else can go and see it,
+  it is not high confidence.
+- `severity: critical` or `high` requires `affected_objects`. A severe finding
+  nobody can locate cannot be acted on.
+
 ## Team workflows: fork, edit, share
 
 The library's `workflows/` directory extends the catalog with the team's own

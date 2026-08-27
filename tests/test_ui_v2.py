@@ -53,8 +53,16 @@ def rich_session(workspace):
             "title": "Duplicate rows in output",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "WHY THIS MATTERS: totals are inflated. BLAST RADIUS: 396 rows affected.",
             "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs land in the wrong bucket",
+                "expected_behaviour": "match the documented taxonomy",
+            },
         },
     )
     proposals.record_proposal(
