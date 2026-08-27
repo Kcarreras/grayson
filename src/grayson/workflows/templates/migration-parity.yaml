@@ -24,20 +24,57 @@ required_checks:
   - key: schema_parity
     title: Compare schemas
     description: Column names, types, and nullability; flag additions, drops, and type changes.
+    uses_inputs: [old_table, new_table]
   - key: rowcount_parity
     title: Compare row counts and key sets
     description: >
       Total counts and the set of keys present in each; quantify keys only in
-      old, only in new, and in both.
+      old, only in new, and in both. Check key uniqueness on the new side while
+      you are here — offsetting gains and losses can leave the totals matching
+      while the grain has broken.
+    uses_inputs: [old_table, new_table, key_columns]
   - key: value_parity
     title: Compare values on shared keys
     description: >
       For keys in both, compare column values and quantify mismatches per
-      column, separating expected changes from regressions.
+      column, separating expected changes from regressions. Watch precision and
+      rounding on numerics: a cast that truncates matches on row count and key
+      set and fails only here.
+    uses_inputs: [key_columns, expected_differences]
+  - key: null_semantics_parity
+    title: Compare how absence is represented
+    description: >
+      NULL, empty string, zero, and sentinel values ('N/A', '1970-01-01') are
+      distinct, and migrations routinely swap one for another — a rewrite in a
+      new engine, a changed default, a coalesce added in the new definition.
+      Compare per column how often each form of absence occurs on each side.
+      Value comparison usually treats NULL != NULL and misses it entirely.
+    uses_inputs: [old_table, new_table]
   - key: aggregate_parity
     title: Compare key aggregates
     description: >
       Compare sums/averages/distinct-counts of important measures to catch
       drift that row sampling could miss.
-open_stages: [analysis]
+    uses_inputs: [old_table, new_table]
+  - key: classify_differences
+    title: Separate intended change from regression
+    description: >
+      Take every difference found above and place it on one side of the line:
+      it is either the intent of the change or a regression. Unclassified
+      differences are the whole point of the exercise — if the intent was not
+      stated at setup, get it from the user before calling parity pass or fail.
+    uses_inputs: [expected_differences]
+suggested_checks:
+  - key: distribution_parity
+    title: Compare distributions, not just totals
+    description: >
+      Compare per-column histograms or quantiles between the two. Totals can
+      match while the shape shifts — a reallocation between categories nets to
+      zero in a sum.
+  - key: ordering_and_ties
+    title: Check anything order-dependent
+    description: >
+      Where the new definition uses row_number, first_value, or a dedup that
+      keeps "the latest", confirm ties break the same way. Non-deterministic
+      ordering produces parity that passes today and fails tomorrow.
 findings_schema: parity_v1

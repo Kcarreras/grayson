@@ -297,3 +297,21 @@ def test_waive_without_a_reason_is_refused(client, session):
     assert r.status_code == 400
     assert "requires a reason" in r.text
     assert session.checkpoint("rule_coverage")["status"] == "open"
+
+
+def test_suggested_checks_show_as_breadth_not_gates(client, session):
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Suggested — not gates" in page
+    # they must not count against the checkpoint gate
+    assert engine.readiness(session)["required_checks"] == [c["key"] for c in session.checkpoints()]
+
+
+def test_taking_up_a_suggested_check_records_it_as_a_checkpoint(client, session):
+    out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
+    engine.complete_checkpoint(session, "rule_drift", [out["qid"]], "accuracy is flat")
+    assert session.checkpoint("rule_drift")["status"] == "complete"
+    ready = engine.readiness(session)
+    # closed, but it never becomes a gate
+    assert "rule_drift" not in ready["required_checks"]
+    assert next(c for c in ready["suggested_checks"] if c["key"] == "rule_drift")["done"]
+    assert ready["checks_complete"] is False

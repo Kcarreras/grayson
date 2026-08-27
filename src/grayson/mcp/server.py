@@ -79,6 +79,7 @@ def build_server(workspace: Workspace) -> Any:
                     "title": t.title,
                     "description": t.description.strip(),
                     "required_checks": t.required_check_keys(),
+                    "suggested_checks": t.suggested_check_keys(),
                     "suggested_guard_profile": t.suggested_guard_profile,
                 }
                 for t in list_workflows(workspace.workflows_dir)
@@ -165,6 +166,7 @@ def build_server(workspace: Workspace) -> Any:
         out = {
             "session": s.summary(),
             "required_checks": [c.model_dump() for c in tpl.required_checks],
+            "suggested_checks": [c.model_dump() for c in tpl.suggested_checks],
             "findings_schema": tpl.findings_schema,
             "setup_inputs": provided,
             "view_coverage": registry.coverage_check(tables, current),
@@ -188,6 +190,14 @@ def build_server(workspace: Workspace) -> Any:
                 f"on the target tables ({ids}) — pre-vetted leads: replicate each with a "
                 "guarded query first (their sql/details are in external_checks.failing), "
                 "then widen the investigation"
+            )
+        if tpl.suggested_checks:
+            hints.append(
+                f"{len(tpl.suggested_checks)} suggested check(s) are available beyond the "
+                "required ones (see suggested_checks) — they do not gate anything, but they "
+                "are the fundamentals this workflow expects you to consider. Do the ones "
+                "that apply to these tables and close them like any other checkpoint; skip "
+                "the ones that do not, and say which in your findings"
             )
         if gaps:
             hints.append(

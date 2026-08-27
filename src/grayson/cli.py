@@ -1062,6 +1062,7 @@ def workflow_list() -> None:
                 "name": t.name,
                 "title": t.title,
                 "description": t.description.strip(),
+                "suggested_checks": t.suggested_check_keys(),
                 "suggested_guard_profile": t.suggested_guard_profile,
                 "required_checks": t.required_check_keys(),
                 "findings_schema": t.findings_schema,

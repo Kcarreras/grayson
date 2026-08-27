@@ -86,6 +86,12 @@ they are equivalent. Never query Snowflake except through grayson.
    (its grain, a semantic rule, an expectation), persist it for future sessions:
    `grayson knowledge add <table> --fact "..." --evidence <iid>` — the user confirms it
    from the console later.
+4b. Breadth: `workflow show <name>` lists **suggested checks** alongside the required
+   ones. They gate nothing — they are the fundamentals the workflow expects you to
+   consider. Do the ones that apply to these tables and close them like any other
+   checkpoint (`checkpoint complete` accepts them by key); skip the rest and say
+   which in your findings. Required checks may declare `depends_on`: close them in
+   that order, it is part of the method.
 5. Findings: record them against the workflow schema, each citing evidence:
    `grayson finding add <sid> --json '{...}'`. Findings are immutable — never try
    to edit one. If an accepted finding turns out to be wrong, record a corrected

@@ -310,10 +310,17 @@ required_checks:            # checkpoints that must close WITH evidence
   - replicate_anomaly       # reproduce the phenomenon in a query
   - scope_blast_radius      # how widespread; which partitions/dates/keys
   - upstream_trace          # walk lineage until source isolated
+    depends_on: [replicate_anomaly]   # no cause-hunting until it reproduces
   - rule_out_alternatives   # ≥2 competing explanations tested
-open_stages: [analysis]     # unconstrained agent work happens here
+suggested_checks:           # breadth, surfaced but never gated
+  - onset_dating            # when the anomaly first appears
 findings_schema: bug_hunter_v1   # closed-ended output structure
 ```
+
+Analysis is the open stage: beyond the required checks, agents are unconstrained.
+Required checks gate; **suggested checks** carry breadth without gating, so a workflow
+can name thirty fundamentals without demanding all thirty close with evidence on a
+five-column lookup table. `depends_on` expresses the rare genuine ordering.
 
 v1 templates: `bug-hunter`, `pipeline-qa`, `table-health`, `semantic-rule-qa`,
 `migration-parity`. Each defines setup inputs, required checks, intervention patterns,

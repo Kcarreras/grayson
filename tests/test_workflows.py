@@ -142,3 +142,39 @@ def test_lint_clean_library_is_ok(workspace):
     assert report["errors"] == []
     assert report["warnings"] == []
     assert report["checked"] == ["good.yaml"]
+
+
+# -- core templates are grayson's to keep clean ---------------------------
+
+
+def test_core_templates_pass_the_same_lint_as_library_ones():
+    """Core templates are canonical and non-editable, so a semantic regression in
+    one ships with the release. Library files get linted; these never were."""
+    from grayson.workflows.lint import lint_template
+
+    problems = {t.name: lint_template(t) for t in list_workflows(None) if lint_template(t)}
+    assert not problems, problems
+
+
+def test_core_templates_declare_their_shape():
+    for tpl in list_workflows(None):
+        assert tpl.description.strip(), f"{tpl.name} has no description"
+        assert tpl.required_checks, f"{tpl.name} has no required checks"
+        assert tpl.suggested_checks, f"{tpl.name} offers no suggested breadth"
+        for check in tpl.required_checks + tpl.suggested_checks:
+            assert check.description.strip(), f"{tpl.name}:{check.key} has no description"
+
+
+def test_bug_hunter_orders_cause_hunting_after_replication():
+    tpl = get_workflow("bug-hunter", None)
+    for key in ("scope_blast_radius", "upstream_trace", "rule_out_alternatives"):
+        assert tpl.check(key).depends_on == ["replicate_anomaly"], key
+
+
+def test_table_onboarding_covers_everything_base_complete_requires():
+    """The workflow's stated goal state is base_complete; its checkpoints have to
+    actually reach it, or agents are asked to guess the rest."""
+    tpl = get_workflow("table-onboarding", None)
+    prose = " ".join(c.description.lower() for c in tpl.required_checks)
+    for field in ("grain", "column", "relationship", "freshness", "definition_files", "owners"):
+        assert field.replace("_", " ") in prose or field in prose, field

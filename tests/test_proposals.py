@@ -34,6 +34,7 @@ def _finding(session):
             "summary": "Duplicate rows appear in the output table.",
             "evidence": [qid],
             "extra": {
+                "resolution": "root_caused",
                 "root_cause": "join fan-out",
                 "blast_radius": "1000 rows",
                 "alternatives_tested": "two ruled out",

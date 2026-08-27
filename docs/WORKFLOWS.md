@@ -5,6 +5,28 @@ human provides, the evidence-gated checkpoints a session must clear, and the
 findings schema every claim validates against. Templates are YAML data — small
 files an analyst can read, fork, and share.
 
+## Required, suggested, waived
+
+A workflow has to be complete without being universal, and those pull against
+each other: a check that is mandatory everywhere gets closed hollow where it
+does not apply, which is precisely the evidence-laundering the gate exists to
+prevent. So checkpoints come in two kinds, with an escape for the third case.
+
+- **`required_checks`** gate. Keep them to the handful without which the
+  investigation is meaningless — four to six is the shape of the core set.
+  `depends_on` expresses the rare genuine ordering (bug-hunter will not let you
+  hunt a cause before the anomaly reproduces). `uses_inputs` names which of the
+  user's setup answers a check works from — it tells the agent what the check is
+  testing, and lint uses it to catch a required input no checkpoint ever reads.
+- **`suggested_checks`** carry breadth and gate nothing. They are surfaced at
+  session start and in the console; an agent does the ones that fit the tables
+  in front of it and closes those like any other checkpoint. This is how a
+  workflow names thirty fundamentals without demanding all thirty on a
+  five-column lookup table.
+- **Waiving** handles the last case: a *required* check that genuinely does not
+  apply here. The agent asks (an intervention saying why); a human waives it
+  with a reason. Waived satisfies the gate and never renders as complete.
+
 ## The core templates
 
 Six ship built-in:
@@ -13,10 +35,18 @@ Six ship built-in:
 |---|---|
 | `bug-hunter` | Replicate a reported anomaly and isolate its source |
 | `pipeline-qa` | Validate a transform/pipeline stage end to end |
-| `table-health` | Single-table health: nulls, duplicates, drift, distributions |
+| `table-health` | Single-table health: grain, nulls, distributions, domain validity, freshness |
 | `semantic-rule-qa` | Test stated business rules against the data |
-| `migration-parity` | Old-vs-new parity: schemas, counts, keys, values |
+| `migration-parity` | Old-vs-new parity: schemas, counts, keys, values, null semantics |
 | `table-onboarding` | Build the base descriptor for an undocumented table |
+
+`bug-hunter` opens by checking the *expectation* itself — a large share of
+reported anomalies are misunderstandings of the grain or of a deliberate rule,
+and finding that out costs one query here and a day of lineage walking later.
+Its findings schema takes a `resolution`: `root_caused`, or `inconclusive` with
+what is still open. An investigation that reproduces and bounds an anomaly
+without isolating it is a real result, and a schema that accepts only a
+confident answer will be given one.
 
 `migration-parity` doubles as the verification stage for every other workflow.
 
@@ -52,7 +82,12 @@ Errors (non-zero exit, CI-friendly for the qa-library repo): YAML that does
 not parse or validate, core-name shadowing, duplicate workflow names,
 duplicate checkpoint keys, unknown findings schemas. Warnings: missing
 descriptions (agents pick workflows by description), workflows with no
-checkpoints, file/name mismatches. A file that fails to load is reported
+checkpoints, file/name mismatches, a `depends_on` naming a check the workflow
+does not define, a `uses_inputs` naming an input it does not have, and a
+required setup input no checkpoint works from — a question asked of the user and
+then ignored. The same semantic rules run over the **core** templates in the
+test suite: they are canonical and non-editable, so their quality is grayson's
+to keep rather than a reviewer's to notice. A file that fails to load is reported
 everywhere workflows are listed — CLI, MCP (`workflow_list.library_problems`),
 and red-badged in the console — never silently skipped: **loadable means
 runnable**.

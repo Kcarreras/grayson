@@ -23,25 +23,67 @@ required_checks:
     description: >
       Columns, types, row count, null rates, cardinalities, and value samples —
       the factual baseline every hypothesis rests on.
+    uses_inputs: [table, prior_context]
   - key: grain_established
     title: Establish the grain
     description: >
       Hypothesize the grain from uniqueness evidence, then confirm it with the
       user via an intervention. If the data and the user's expectation
       disagree, record the discrepancy as a finding, not a silent resolution.
+    depends_on: [structure_profiled]
+    uses_inputs: [table]
   - key: relationships_mapped
     title: Map relationships
     description: >
       Identify candidate join keys to sibling tables and validate them with
       match-rate evidence (orphans, fan-out). Record confirmed relationships
       and ruled-out candidates alike.
+    depends_on: [structure_profiled]
+  - key: sensitivity_classified
+    title: Classify sensitive columns
+    description: >
+      Identify columns carrying personal, financial, or otherwise restricted
+      data, and record the classification on the descriptor. This is the
+      workflow that admits an undocumented table into a git-shared team
+      library — sampling values into shared knowledge, and pointing later
+      sessions at the table, both happen here. "None found" is a valid answer;
+      not having looked is not.
+    depends_on: [structure_profiled]
+  - key: definitions_located
+    title: Locate the definition and the owner
+    description: >
+      Find where this table is actually defined — the dbt model, the DDL, the
+      ingest job — and who owns it, and record them as definition_files and
+      owners. A descriptor without them cannot reach base_complete, and the
+      next investigation has nowhere to look when the data disagrees with the
+      documentation. Record what you searched and found nothing as an open
+      question rather than leaving it blank.
   - key: semantics_recorded
     title: Record semantics as knowledge
     description: >
       Save the structured base descriptor (grain, column definitions,
-      relationships, freshness) with `knowledge set`, one-off facts with
-      `knowledge add`, and every unresolved question under open_questions —
-      then check the completeness report in `knowledge show`. The goal state
-      is base_complete, with unknowns recorded rather than guessed.
-open_stages: [analysis]
+      relationships, freshness cadence, owners, definition files) with
+      `knowledge set`, one-off facts with `knowledge add`, and every unresolved
+      question under open_questions — then check the completeness report in
+      `knowledge show`. The goal state is base_complete, with unknowns recorded
+      rather than guessed.
+    depends_on: [grain_established, relationships_mapped, definitions_located]
+suggested_checks:
+  - key: freshness_cadence
+    title: Establish the update cadence
+    description: >
+      Rows per day/partition and the gap to the newest row, so the descriptor's
+      freshness expectation is measured rather than assumed — later health
+      checks are judged against it.
+  - key: column_semantics_sampled
+    title: Pin down ambiguous columns
+    description: >
+      For columns whose meaning is not obvious from name and type — status
+      codes, flags, unexplained enums — sample the distinct values and get the
+      user to say what they mean. These are what the next agent will misread.
+  - key: usage_evidence
+    title: Check who and what already depends on this
+    description: >
+      Look for downstream consumers (`records search`, sibling definitions).
+      Existing dependants are the fastest route to what the table actually means.
 findings_schema: standard_v1

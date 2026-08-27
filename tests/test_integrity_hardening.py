@@ -123,7 +123,12 @@ def test_fixes_requires_accepted_not_just_recorded(session):
             "confidence": "high",
             "summary": "Duplicate rows appear in the output.",
             "evidence": [qid],
-            "extra": {"root_cause": "join", "blast_radius": "1000", "alternatives_tested": "two"},
+            "extra": {
+                "resolution": "root_caused",
+                "root_cause": "join",
+                "blast_radius": "1000",
+                "alternatives_tested": "two",
+            },
         },
     )
     with pytest.raises(EnforcementError, match="no user-accepted finding"):
@@ -147,7 +152,12 @@ def test_verify_requires_approval(session):
             "confidence": "high",
             "summary": "duplicate rows in output table",
             "evidence": [qid],
-            "extra": {"root_cause": "j", "blast_radius": "1", "alternatives_tested": "t"},
+            "extra": {
+                "resolution": "root_caused",
+                "root_cause": "j",
+                "blast_radius": "1",
+                "alternatives_tested": "t",
+            },
         },
     )["fid"]
     p = proposals.record_proposal(session, "ddl_snippet", "fix", {"ddl": "SELECT 1"}, fid)
@@ -167,7 +177,12 @@ def test_verify_rejects_same_before_after(session):
             "confidence": "high",
             "summary": "duplicate rows in output table",
             "evidence": [qid],
-            "extra": {"root_cause": "j", "blast_radius": "1", "alternatives_tested": "t"},
+            "extra": {
+                "resolution": "root_caused",
+                "root_cause": "j",
+                "blast_radius": "1",
+                "alternatives_tested": "t",
+            },
         },
     )["fid"]
     p = proposals.record_proposal(session, "ddl_snippet", "fix", {"ddl": "SELECT 1"}, fid)

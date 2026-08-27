@@ -102,8 +102,13 @@ def test_table_onboarding_workflow_registered(workspace):
         "structure_profiled",
         "grain_established",
         "relationships_mapped",
+        "sensitivity_classified",
+        "definitions_located",
         "semantics_recorded",
     }
+    # recording semantics is the last step, not a thing to do first
+    recorded = next(c for c in show["required_checks"] if c["key"] == "semantics_recorded")
+    assert "grain_established" in recorded["depends_on"]
 
 
 def test_session_delete_requires_confirmation(workspace, fake_snow_env, sid):

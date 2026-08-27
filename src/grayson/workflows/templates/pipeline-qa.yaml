@@ -24,20 +24,55 @@ required_checks:
       Account for the row-count delta between each pair of adjacent stages.
       Every drop or gain must be explained by a known filter/join/dedup, not
       left as a mystery.
+    uses_inputs: [pipeline_stages, transform_intent]
   - key: key_integrity
     title: Check key integrity
     description: >
       Verify grain and key uniqueness at each stage; check for unexpected
       duplicates, nulls in keys, and orphaned keys across joins.
+    uses_inputs: [pipeline_stages, grain]
+  - key: measure_conservation
+    title: Reconcile the measures, not just the rows
+    description: >
+      Sum the money and the quantities at each stage and account for the
+      difference. Row counts can reconcile perfectly while amounts do not —
+      a truncating cast, a currency mixed in, a join multiplying a measure it
+      should have carried through. This is the check that catches silent
+      corruption of the numbers people actually use.
+    uses_inputs: [pipeline_stages, transform_intent]
   - key: transform_logic
     title: Validate transform logic
     description: >
       Spot-check that the declared transform intent matches reality: sample
       records through the transform and confirm values are derived correctly.
+    uses_inputs: [transform_intent]
   - key: boundary_values
     title: Check boundaries and edge partitions
     description: >
       Inspect nulls, zeros, negatives, extreme dates, and the newest/oldest
-      partitions where transform bugs concentrate.
-open_stages: [analysis]
+      partitions where transform bugs concentrate. Include null handling through
+      joins and filters — a NULL that silently fails a predicate is the most
+      common way rows disappear without anyone deciding they should.
+    uses_inputs: [pipeline_stages]
+suggested_checks:
+  - key: rerun_idempotency
+    title: Check the pipeline is safe to re-run
+    description: >
+      Look for evidence that re-running a load duplicates or mutates rows:
+      the same natural key at multiple load timestamps, counts that grew without
+      new source data, non-deterministic dedup (which of the duplicate rows
+      survives changing between runs). Incremental pipelines fail here far more
+      often than they fail their transform logic.
+  - key: late_arriving_data
+    title: Check how late data is handled
+    description: >
+      Compare event time against load time. Records arriving after their
+      partition closed are either reprocessed into the right partition, wrongly
+      filed in the current one, or dropped — establish which.
+  - key: watermark_completeness
+    title: Check the incremental boundary
+    description: >
+      For incremental loads, verify no gap or overlap at the watermark: rows
+      either side of the last-run boundary, and whether any were processed twice
+      or not at all.
 findings_schema: standard_v1

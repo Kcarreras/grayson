@@ -256,6 +256,7 @@ def test_checkpoint_and_findings_flow(workspace, fake_snow_env):
         "summary": "A one-to-many join duplicates rows in the final table.",
         "evidence": [qid],
         "extra": {
+            "resolution": "root_caused",
             "root_cause": "join fan-out on non-unique key",
             "blast_radius": "1200 rows since 2026-08-01",
             "alternatives_tested": "source dup and dedup bug both ruled out",
@@ -379,8 +380,9 @@ def test_clean_close_refused_while_checks_are_open(workspace, fake_snow_env, sid
 
 def test_waive_is_recorded_with_its_reason(workspace, fake_snow_env, sid, at_a_terminal):
     run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
-    for key in ("grain_uniqueness", "null_completeness", "distributions"):
-        invoke("checkpoint", "complete", sid, key, "-e", run["qid"])
+    for key in invoke("workflow", "show", "table-health")["required_checks"]:
+        if key["key"] != "freshness":
+            invoke("checkpoint", "complete", sid, key["key"], "-e", run["qid"])
     cp = invoke("checkpoint", "waive", sid, "freshness", "--reason", "static reference table")
     assert cp["status"] == "waived"
     assert cp["note"] == "static reference table"

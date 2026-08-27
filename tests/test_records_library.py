@@ -42,6 +42,7 @@ def _finding(session, title="Dup rows"):
             "summary": "Duplicate rows appear in the output table.",
             "evidence": [qid],
             "extra": {
+                "resolution": "root_caused",
                 "root_cause": "join fan-out",
                 "blast_radius": "1000 rows",
                 "alternatives_tested": "two ruled out",
@@ -98,6 +99,7 @@ def test_supersession_republishes_old_finding(workspace, session):
             "evidence": [qid],
             "supersedes": f1,
             "extra": {
+                "resolution": "root_caused",
                 "root_cause": "grain misread",
                 "blast_radius": "same rows",
                 "alternatives_tested": "one ruled out",

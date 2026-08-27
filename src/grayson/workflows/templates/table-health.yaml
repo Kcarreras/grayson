@@ -1,8 +1,9 @@
 name: table-health
 title: Single-Table Health Check
 description: >
-  Validate one table's health: nulls, duplicates, distributions, freshness,
-  schema drift, and orphaned keys. A fast baseline for a new or existing table.
+  Validate one table's health: grain and duplicates, nulls, distributions,
+  value validity, freshness, schema drift, and orphaned keys. A fast baseline
+  for a new or existing table.
 suggested_guard_profile: moderate
 setup_inputs:
   - key: table
@@ -20,20 +21,51 @@ required_checks:
   - key: grain_uniqueness
     title: Verify grain and uniqueness
     description: Confirm the key is unique at the declared grain; quantify any duplicates.
+    uses_inputs: [table, grain]
   - key: null_completeness
     title: Check nulls and completeness
     description: >
       Null rates per column; flag columns expected non-null that are not, and
-      unexpected all-null or constant columns.
+      unexpected all-null or constant columns. Where a null rate is material,
+      check whether it correlates with a date, source, or segment — a null rate
+      that starts on a particular day is a regression, not a property.
+    uses_inputs: [table]
   - key: distributions
     title: Profile distributions
     description: >
       Cardinality and value distribution of key dimensions; surface outliers,
       unexpected categories, and suspicious spikes.
+    uses_inputs: [table]
+  - key: domain_validity
+    title: Check values against their domain
+    description: >
+      Test values for being possible, not merely present: future dates in
+      historical columns, negative quantities, out-of-range percentages, amounts
+      outside plausible bounds, categories outside the declared set. Distribution
+      profiling shows the shape; this asks whether the values are legal at all.
+    uses_inputs: [table]
   - key: freshness
     title: Check freshness
     description: >
       Confirm the newest data matches the expected cadence and there are no
-      gaps or stale partitions.
-open_stages: [analysis]
+      gaps or stale partitions. Waive this where the table has no cadence to
+      hold to (a static reference table) rather than closing it hollow.
+    uses_inputs: [table]
+suggested_checks:
+  - key: referential_integrity
+    title: Check keys against their parents
+    description: >
+      For foreign keys, quantify orphans — rows whose parent key is missing —
+      and any fan-out on the join. Skip where the table has no foreign keys.
+  - key: schema_drift
+    title: Compare the schema against what is expected
+    description: >
+      Diff current columns, types, and nullability against the recorded
+      knowledge descriptor (or the definition file). Columns silently added,
+      dropped, or retyped break downstream consumers before anyone notices.
+  - key: volume_trend
+    title: Check row volume over time
+    description: >
+      Rows per day/partition against recent history. A collapse or a doubling is
+      usually an upstream incident, and it shows here before it shows anywhere else.
 findings_schema: standard_v1

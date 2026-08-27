@@ -19,26 +19,58 @@ setup_inputs:
     prompt: What did you expect to see instead, and what rule makes you expect it?
     required: true
 required_checks:
+  - key: validate_expectation
+    title: Check the expectation itself
+    description: >
+      Before hunting a cause, establish that the reported behaviour really is
+      wrong. Check the stated rule against recorded knowledge, the table's
+      definition, and the data's own semantics. A large share of reported bugs
+      are misunderstandings of the grain or of a deliberate rule — finding that
+      out here costs one query, and finding it out after a lineage walk costs a
+      day. If the expectation does not hold, that is the finding.
+    uses_inputs: [expectation, anomaly_description]
   - key: replicate_anomaly
     title: Reproduce the anomaly in a query
     description: >
       Produce a query whose result set demonstrates the reported anomaly. This
       is the anchor for everything else — no cause-hunting until it reproduces.
+    uses_inputs: [example_locator, anomaly_description]
   - key: scope_blast_radius
     title: Bound the blast radius
     description: >
       Quantify how widespread the anomaly is — how many rows/keys/partitions,
       over what time range, since when. Distinguishes a one-off from systemic.
+      This is the `blast_radius` your finding must carry.
+    depends_on: [replicate_anomaly]
   - key: upstream_trace
     title: Trace toward the source
     description: >
       Walk the lineage from the symptom toward its origin, checking at each
       stage whether the anomaly is already present. Isolate the earliest stage
-      that exhibits it.
+      that exhibits it. Probing tables outside the session's targets is expected
+      here — cite those queries as evidence like any other.
+    depends_on: [replicate_anomaly]
   - key: rule_out_alternatives
     title: Test competing explanations
     description: >
       Enumerate at least two plausible causes and test each with evidence.
-      A single unfalsified hypothesis is not a conclusion.
-open_stages: [analysis]
+      A single unfalsified hypothesis is not a conclusion. What survives — and
+      what you eliminated — is the `alternatives_tested` your finding must carry.
+    depends_on: [replicate_anomaly]
+suggested_checks:
+  - key: onset_dating
+    title: Date the onset
+    description: >
+      Find when the anomaly first appears. A sharp start date usually names the
+      change that caused it; a gradual ramp usually means something else.
+  - key: correlate_dimensions
+    title: Correlate against dimensions
+    description: >
+      Check whether affected rows cluster by source system, region, ingest
+      batch, or any other dimension. A clean split is often the cause itself.
+  - key: recurrence_check
+    title: Check whether this has happened before
+    description: >
+      Search past sessions (`records search`) and the table's history for the
+      same signature. A recurrence changes the fix from a patch to a control.
 findings_schema: bug_hunter_v1

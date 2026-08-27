@@ -47,15 +47,30 @@ class Finding(BaseModel):
         return v
 
 
+#: `bug_hunter_v1` resolutions. An investigation that reproduces an anomaly,
+#: bounds it, and honestly cannot isolate a cause is a real result — and it used
+#: to have no valid output here, because `root_cause` was unconditionally
+#: required. A schema that only accepts a confident answer will get one invented.
+BUG_HUNTER_RESOLUTIONS = ["root_caused", "inconclusive"]
+
 # Schema-specific required fields (beyond the base), enforced against `extra`.
 FINDINGS_SCHEMAS: dict[str, dict] = {
     "standard_v1": {"required_extra": []},
     "bug_hunter_v1": {
         "required_extra": [
-            ("root_cause", "The isolated cause of the anomaly."),
+            ("resolution", f"One of: {' | '.join(BUG_HUNTER_RESOLUTIONS)}."),
             ("blast_radius", "Quantified scope: rows/keys/partitions affected."),
             ("alternatives_tested", "Competing explanations tested and ruled out."),
-        ]
+        ],
+        "conditional_extra": {
+            "root_caused": [("root_cause", "The isolated cause of the anomaly.")],
+            "inconclusive": [
+                (
+                    "remaining_hypotheses",
+                    "What is still open, and what evidence would settle it.",
+                )
+            ],
+        },
     },
     "parity_v1": {
         "required_extra": [
@@ -75,11 +90,28 @@ def validate_finding(payload: dict, schema_name: str) -> Finding:
     data = dict(payload)
     data["schema_name"] = schema_name
     finding = Finding.model_validate(data)
-    missing = [
-        f"{key} ({desc})"
-        for key, desc in FINDINGS_SCHEMAS[schema_name]["required_extra"]
-        if not finding.extra.get(key)
-    ]
+    spec = FINDINGS_SCHEMAS[schema_name]
+    required = list(spec["required_extra"])
+    conditional = spec.get("conditional_extra") or {}
+    if conditional:
+        # the discriminator picks which extra fields apply; validate it first so
+        # the error names the real problem instead of cascading
+        resolution = str(finding.extra.get("resolution") or "").strip()
+        if not resolution:
+            raise ValueError(
+                f"findings schema '{schema_name}' requires extra.resolution: "
+                "'root_caused' if you isolated the cause, or 'inconclusive' if you "
+                "reproduced and bounded the anomaly but could not isolate it. "
+                "Inconclusive is a legitimate result — record it rather than "
+                "asserting a cause you cannot evidence."
+            )
+        if resolution not in conditional:
+            raise ValueError(
+                f"findings schema '{schema_name}': resolution must be one of "
+                f"{list(conditional)}, got '{resolution}'"
+            )
+        required += conditional[resolution]
+    missing = [f"{key} ({desc})" for key, desc in required if not finding.extra.get(key)]
     if missing:
         raise ValueError(
             f"findings schema '{schema_name}' requires these fields in `extra`: "

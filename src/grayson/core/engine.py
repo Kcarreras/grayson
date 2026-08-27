@@ -31,7 +31,8 @@ def seed_from_workflow(session: Session, overrides_dir: Path | None = None) -> l
     return session.checkpoints()
 
 
-def _validate_evidence(session: Session, evidence: list[str]) -> None:
+def _validate_evidence(session: Session, evidence: list[str]) -> list[str]:
+    """Check evidence exists, executed, and is relevant. Returns the off-scope ids."""
     if not evidence:
         raise EnforcementError(
             "evidence required: cite the executed query ids (q_XXXX) that support this"
@@ -46,16 +47,25 @@ def _validate_evidence(session: Session, evidence: list[str]) -> None:
     # Relevance: evidence must actually touch the tables under investigation, so a
     # trivial `SELECT 1` can't be laundered into evidence. Skipped only when the
     # session declared no targets (nothing to bind relevance to).
+    #
+    # Deliberately at-least-one, not all: `upstream_trace` exists to walk lineage
+    # through tables that are NOT declared targets, and those probes are legitimate
+    # evidence. Requiring every cited qid to touch scope would push agents to stuff
+    # a target table into each upstream query — a new laundering incentive in place
+    # of the old one. Instead the off-scope ids are reported, so a human reading the
+    # checkpoint sees "1 of 4 cited queries touched scope" and can judge it.
     scope = session.scope_tables
-    if scope:
-        tables_by_qid = session.query_tables_many(list(evidence))
-        touched = {t.upper() for tables in tables_by_qid.values() for t in tables}
-        if not (touched & scope):
-            raise EnforcementError(
-                "evidence does not touch any table under investigation "
-                f"(session scope: {sorted(scope)}). Cite queries that actually read the "
-                "target tables, not unrelated probes."
-            )
+    if not scope:
+        return []
+    tables_by_qid = session.query_tables_many(list(evidence))
+    in_scope = [q for q in evidence if {t.upper() for t in tables_by_qid.get(q, [])} & scope]
+    if not in_scope:
+        raise EnforcementError(
+            "evidence does not touch any table under investigation "
+            f"(session scope: {sorted(scope)}). Cite queries that actually read the "
+            "target tables, not unrelated probes."
+        )
+    return [q for q in evidence if q not in in_scope]
 
 
 def complete_checkpoint(
@@ -68,13 +78,36 @@ def complete_checkpoint(
 ) -> dict:
     tpl = workflow_for(session, overrides_dir)
     if tpl.check(key) is None and session.checkpoint(key) is None:
-        known = ", ".join(tpl.required_check_keys())
+        known = ", ".join(tpl.required_check_keys() + tpl.suggested_check_keys())
         raise EnforcementError(
             f"unknown checkpoint '{key}' for workflow '{tpl.name}' (checks: {known})"
         )
-    _validate_evidence(session, evidence)
+    # Ordering, where a workflow declares it: bug-hunter's "no cause-hunting until
+    # it reproduces" was prose in a description and enforced by nothing.
+    cleared = {c["key"] for c in session.checkpoints() if c["status"] in ("complete", "waived")}
+    unmet = tpl.unmet_dependencies(key, cleared)
+    if unmet:
+        raise EnforcementError(
+            f"'{key}' depends on {unmet}, which {'is' if len(unmet) == 1 else 'are'} not "
+            "closed yet. Close them first (or have the user waive them) — the order is "
+            "part of the method, not bookkeeping."
+        )
+    off_scope = _validate_evidence(session, evidence)
+    if session.checkpoint(key) is None:
+        # a suggested check is not seeded up front (it would read as an open gate);
+        # it materializes the moment an agent decides to do it
+        defn = tpl.check(key)
+        session.seed_checkpoints([(key, defn.title if defn else key)])
     session.complete_checkpoint(key, evidence, note, actor)
-    return session.checkpoint(key)
+    out = session.checkpoint(key)
+    if off_scope:
+        # legitimate for lineage probes; surfaced so a human can tell the
+        # difference between walking upstream and padding the citation list
+        out["evidence_off_scope"] = off_scope
+        session.log_event(
+            actor, "evidence_off_scope", {"key": key, "qids": off_scope, "cited": len(evidence)}
+        )
+    return out
 
 
 def waive_checkpoint(
@@ -203,6 +236,10 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
             {"fid": f["fid"], "reason": f["rejected_reason"]} for f in findings if f.get("rejected")
         ],
     }
+    done = {c["key"] for c in session.checkpoints() if c["status"] == "complete"}
+    out["suggested_checks"] = [
+        {"key": c.key, "title": c.title, "done": c.key in done} for c in tpl.suggested_checks
+    ]
     out["clean_close_available"] = clean_close_blockers(out) == []
     out["next_action"] = _next_action(out)
     return out

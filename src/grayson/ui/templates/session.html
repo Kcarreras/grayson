@@ -188,6 +188,20 @@
 </table>
 </div>
 
+{% set open_suggested = readiness.suggested_checks | rejectattr("done") | list %}
+{% if open_suggested and s.stage != "closed" %}
+<div class="card" style="margin-top: 10px;">
+  <div class="overline" style="margin-bottom: 6px;">Suggested — not gates</div>
+  <div class="muted small" style="margin-bottom: 8px;">
+    Fundamentals this workflow expects the agent to consider where they apply. Nothing
+    blocks on them; ones the agent takes up appear above as ordinary checkpoints.
+  </div>
+  <div class="row" style="gap: 6px; flex-wrap: wrap;">
+    {% for c in open_suggested %}<span class="chip">{{ c.title }}</span>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <h2>Findings {{ help("findings") }}</h2>
 {% for f in findings %}
 {# newest three stay open; older and superseded findings collapse to their
