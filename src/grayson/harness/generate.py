@@ -2,7 +2,8 @@
 
 The session protocol lives in one canonical template so every harness stays in
 sync. `generate_harness` writes the harness-specific file (Cursor rule, CLAUDE.md
-section, or Codex AGENTS.md section) that teaches an agent how to drive grayson.
+section, Codex AGENTS.md section, or Copilot .github/copilot-instructions.md
+section) that teaches an agent how to drive grayson.
 """
 
 from __future__ import annotations
@@ -113,7 +114,7 @@ commands one-to-one. If it is configured, prefer the typed tools; the protocol i
 identical.
 """
 
-HARNESSES = {"cursor", "claude-code", "codex"}
+HARNESSES = {"cursor", "claude-code", "codex", "copilot"}
 
 
 def generate_harness(root: Path, harness: str, with_mcp: bool = True) -> dict:
@@ -132,10 +133,16 @@ def generate_harness(root: Path, harness: str, with_mcp: bool = True) -> dict:
         written.append(str(target.relative_to(root)))
     elif harness == "claude-code":
         target = root / "CLAUDE.md"
-        written.append(_append_section(target, body))
+        written.append(_append_section(target, body, root))
+    elif harness == "copilot":
+        # read by every Copilot surface: VS Code agent mode, Chat, coding
+        # agent, code review
+        target = root / ".github" / "copilot-instructions.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        written.append(_append_section(target, body, root))
     else:  # codex
         target = root / "AGENTS.md"
-        written.append(_append_section(target, body))
+        written.append(_append_section(target, body, root))
 
     # a standalone copy for reference regardless of harness
     ref = root / ".grayson" / "PROTOCOL.md"
@@ -149,7 +156,7 @@ _MARK_START = "<!-- grayson:start -->"
 _MARK_END = "<!-- grayson:end -->"
 
 
-def _append_section(target: Path, body: str) -> str:
+def _append_section(target: Path, body: str, root: Path) -> str:
     section = f"{_MARK_START}\n{body}\n{_MARK_END}\n"
     existing = target.read_text(encoding="utf-8") if target.is_file() else ""
     if _MARK_START in existing and _MARK_END in existing:
@@ -159,4 +166,4 @@ def _append_section(target: Path, body: str) -> str:
     else:
         joined = (existing.rstrip() + "\n\n" if existing.strip() else "") + section
         target.write_text(joined, encoding="utf-8")
-    return str(target.name)
+    return str(target.relative_to(root))

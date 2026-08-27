@@ -496,13 +496,16 @@ per-launch session token in the URL. v1 views:
 
 ## 13. Harness integration
 
-- `grayson harness init cursor|claude-code|codex` generates the skill/instruction files
-  (e.g. `.cursor/rules/`, `CLAUDE.md` section, or skills) that teach that harness the
+- `grayson harness init cursor|claude-code|codex|copilot` generates the skill/instruction
+  files (e.g. `.cursor/rules/`, `CLAUDE.md` section, `.github/copilot-instructions.md`
+  section, or skills) that teach that harness the
   session protocol: check knowledge → setup → cache-before-query → evidence discipline →
   interventions → findings → proposals. The protocol lives in one canonical template so
   all harnesses stay in sync.
 - MCP server (`grayson mcp serve`, stdio) for harnesses that prefer typed tools; tool set
-  mirrors the CLI 1:1.
+  mirrors the CLI 1:1. Where the harness keeps MCP config in a project file (Claude Code
+  `.mcp.json`, Cursor `.cursor/mcp.json`, Copilot `.vscode/mcp.json`), grayson can write
+  the server entry on explicit consent (`harness init` offer or `harness mcp apply`).
 - Everything an agent can do via MCP it can do via CLI — harnesses without MCP support
   lose nothing.
 
