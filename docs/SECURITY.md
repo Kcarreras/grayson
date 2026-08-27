@@ -101,6 +101,8 @@ residue from the fixes above (regressions in `tests/test_cli.py` and
 | 19 | medium | `session close` bypassed the engine entirely — it called `set_stage` directly, skipping both the checks-complete and accepted-finding gates, and logged the change under the default actor `user`, misattributing an agent's bypass to the human in the audit trail | Closing routes through `engine.close_session` and is a user action (interactive terminal). CLI actor now derives from whether a human is at the prompt, so agent-driven changes are recorded as the agent's |
 | 20 | medium | A required checkpoint that did not apply to the target had no honest exit, so the only route past the gate was a query chosen to satisfy the relevance test — the evidence-laundering the gate exists to prevent | Checkpoints can be **waived** by a user with a mandatory reason. Agents request via intervention; a waived gate is reported separately from a closed one everywhere |
 
+| 21 | high | The terminal gate covered `close`, `waive` and `--force`, but the other human boundaries were left open: `finding accept`, `proposal approve`/`reject`, `intervention respond` and `knowledge confirm` all ran fine from a non-interactive shell-out, so an agent could accept its own finding, approve its own fix, and answer its own intervention | Every command documented as a user action now requires an interactive terminal. `intervention respond` loses its non-interactive stdin path — an agent answering the question it asked defeats the reason for asking |
+
 A fourth issue was integrity-adjacent rather than a bypass: a session that found
 nothing could not close, because every stage from `fixes` on required an accepted
 finding. The pressure that creates — invent a finding or abandon the session —
@@ -114,7 +116,8 @@ that a human confirms. A *forced* close never earns that label.
   account setup that the guard already blocks; scope-limiting reduces blast radius. Use a
   read-only role for the strongest guarantee.
 - The interactive-terminal check on user-only actions (`--force`, `session close`,
-  `checkpoint waive`) is friction, not containment: an agent that can allocate a pty
+  `checkpoint waive`, `finding accept`, `proposal approve`/`reject`,
+  `intervention respond`, `knowledge confirm`) is friction, not containment: an agent that can allocate a pty
   can defeat it. It removes the accidental and the casual path, keeps the audit trail
   honest about who acted, and gives harness guard rules a stable pattern to deny. The
   console remains the surface where a human unambiguously is the human.

@@ -92,10 +92,13 @@ reports when that is the available route (`clean_close_available`,
 grayson session close <sid> --clean --note "all four checks came back sound"
 ```
 
-Closing a session, waiving a check, and forcing a gate are all **user** actions.
-The agent asks; the human decides. Because the CLI is genuinely both interfaces,
-these commands require an interactive terminal, and the audit trail attributes
-stage changes to whoever actually made them rather than assuming the human.
+Every human boundary is a **user** action: accepting or rejecting a finding,
+approving a fix, answering an intervention, confirming a knowledge fact, waiving
+a check, forcing a gate, and closing the session. The agent asks; the human
+decides. Because the CLI is genuinely both interfaces and cannot see who is
+calling it, all of these require an interactive terminal — an agent shelling out
+is refused by every one of them — and the audit trail attributes each action to
+whoever actually took it rather than assuming the human.
 Recording a clean result is the point of the ceremony: "we looked and it was
 fine" is knowledge the next session should start with.
 

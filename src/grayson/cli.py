@@ -1372,6 +1372,7 @@ def finding_show(session_id: str, fid: str) -> None:
 def finding_accept(session_id: str, fid: str) -> None:
     """Accept a finding (a user action in the review stage)."""
     s = _session(session_id)
+    require_interactive("accepting a finding")
     try:
         s.accept_finding(fid)
     except KeyError as e:
@@ -1474,15 +1475,19 @@ def intervention_respond(
     file: Path = typer.Option(None, "--file", "-f"),
     json_str: str = typer.Option(None, "--json"),
 ) -> None:
-    """Submit a response (normally done via the UI; provided for scripting/tests)."""
+    """Answer an intervention (normally done in the console).
+
+    The strictest of the human boundaries: an intervention exists precisely to
+    get a judgement the agent must not make for itself, so an agent answering
+    its own question would defeat the point of asking. Requires a terminal.
+    """
+    require_interactive("answering an intervention")
     if file:
         raw = file.read_text(encoding="utf-8") if file.is_file() else fail(f"no file: {file}")
     elif json_str:
         raw = json_str
-    elif not sys.stdin.isatty():
-        raw = sys.stdin.read()
     else:
-        fail("no response payload: use --file, --json, or stdin")
+        fail("no response payload: use --file or --json")
         return
     s = _session(session_id)
     item = s.intervention(iid)
@@ -1556,6 +1561,7 @@ def proposal_show(session_id: str, pid: str) -> None:
 @proposal_app.command("approve")
 def proposal_approve(session_id: str, pid: str) -> None:
     """Approve a proposal (a user action). The harness agent then applies it."""
+    require_interactive("approving a fix proposal")
     try:
         emit(proposals_engine.decide(_session(session_id), pid, approve=True))
     except ProposalError as e:
@@ -1564,6 +1570,8 @@ def proposal_approve(session_id: str, pid: str) -> None:
 
 @proposal_app.command("reject")
 def proposal_reject(session_id: str, pid: str) -> None:
+    """Reject a proposal (a user action)."""
+    require_interactive("rejecting a fix proposal")
     try:
         emit(proposals_engine.decide(_session(session_id), pid, approve=False))
     except ProposalError as e:
@@ -1758,6 +1766,7 @@ def knowledge_add(
 @knowledge_app.command("confirm")
 def knowledge_confirm(table: str, fact_id: str, by: str = typer.Option("user", "--by")) -> None:
     """Confirm a proposed/inferred fact (a user action)."""
+    require_interactive("confirming a knowledge fact")
     ws = _workspace()
     try:
         result = KnowledgeStore(ws.knowledge_dir).confirm_fact(table, fact_id, by)

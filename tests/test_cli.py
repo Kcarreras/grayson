@@ -211,7 +211,7 @@ def test_unknown_workflow_start_fails(workspace, fake_snow_env):
     assert result.exit_code == 1
 
 
-def test_checkpoint_and_findings_flow(workspace, fake_snow_env):
+def test_checkpoint_and_findings_flow(workspace, fake_snow_env, at_a_terminal):
     out = invoke(
         "session",
         "start",
@@ -457,3 +457,27 @@ def test_calibration_gates_apply_through_the_cli(workspace, fake_snow_env, sid):
     payload["affected_objects"] = ["DB.S.T1"]
     payload["reproduction"] = "SELECT COUNT(*) FROM DB.S.T1 WHERE EMAIL IS NULL"
     assert invoke("finding", "add", sid, "--json", json.dumps(payload))["severity"] == "high"
+
+
+@pytest.mark.parametrize(
+    ("args", "action"),
+    [
+        (("finding", "accept", "SID", "f_001"), "accepting a finding"),
+        (("proposal", "approve", "SID", "p_001"), "approving a fix proposal"),
+        (("proposal", "reject", "SID", "p_001"), "rejecting a fix proposal"),
+        (("intervention", "respond", "SID", "i_001", "--json", "{}"), "answering an intervention"),
+        (("checkpoint", "waive", "SID", "freshness", "--reason", "n/a"), "waiving a checkpoint"),
+        (("session", "close", "SID"), "closing a session"),
+    ],
+)
+def test_every_human_boundary_refuses_a_shell_out(workspace, fake_snow_env, sid, args, action):
+    """The whole point of a human boundary is that the agent cannot stand on both
+    sides of it. None of these are reachable without a terminal."""
+    err = invoke_err(*[sid if a == "SID" else a for a in args])["error"]
+    assert action in err
+    assert "interactive terminal" in err
+
+
+def test_knowledge_confirm_refuses_a_shell_out(workspace, fake_snow_env):
+    err = invoke_err("knowledge", "confirm", "DB.S.T1", "k_001")["error"]
+    assert "confirming a knowledge fact" in err
