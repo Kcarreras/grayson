@@ -127,9 +127,10 @@ Two deliberate design choices in support of this:
   the agent reads (past statements can carry sensitive literals). The
   reconciliation command has no MCP twin for the same reason; agents see only
   the ingested pass/warn verdict.
-- **Harness deny rules are consent-based.** They are offered during
-  `harness init` and managed by `harness guard status|apply|remove` — shown
-  before written, reversible after, never applied silently.
+- **Harness config writes are consent-based — all of them.** Deny rules and
+  MCP server entries alike are offered during `harness init` and managed by
+  `harness guard status|apply|remove` and `harness mcp status|apply|remove` —
+  shown before written, reversible after, never applied silently.
 
 Every supported harness has a real mechanism for blocking the bypass paths;
 they differ in who writes the config and how hard the wall is:
@@ -140,6 +141,8 @@ they differ in who writes the config and how hard the wall is:
 | Cursor (IDE agent) | Agent **command denylist** (direct `snow` never auto-runs — a human sees the prompt); where available, a `beforeShellExecution` **hook** in `.cursor/hooks.json` can hard-deny `snow` and `.grayson/` access | Human-configured; `harness init cursor` and `harness guard status --harness cursor` print the steps |
 | Cursor CLI (`cursor-agent`) | The IDE denylist/hooks do **not** apply; the CLI has its own permission config — set its allow/deny rules to block `snow`, and prefer MCP as the interface (the CLI shares the project's rules and MCP config) | Human-configured, separately from the IDE |
 | Codex | The **OS-level sandbox**: default `workspace-write` mode blocks network egress from shell commands, so direct `snow` cannot reach the warehouse at all. Register grayson as an MCP server in `~/.codex/config.toml` — MCP servers run outside the sandbox, so the guarded path works while the bypass path doesn't (this makes MCP, not the CLI, the warehouse path under Codex) | Human-configured; `harness init codex` and `harness guard status --harness codex` print the steps |
+| GitHub Copilot (VS Code agent mode) | Deny entries in `chat.tools.terminal.autoApprove` (`.vscode/settings.json`): `snow` and commands touching `.grayson/` are never auto-approved — a human sees the prompt. **Terminal only**: Copilot's file tools are not governed by this setting, so `.grayson/` reads via the editor rely on the protocol + audit reconciliation | grayson writes them on consent (`harness guard apply --harness copilot`) |
+| GitHub Copilot coding agent (cloud) | Runs in an ephemeral GitHub Actions environment behind a default-deny egress **firewall**: direct `snow` cannot reach the warehouse unless a human allowlists it. No local console for interventions — pair it with the served, knowledge-only deployment ([DEPLOYMENT.md](DEPLOYMENT.md)); its MCP config lives in the repo's Copilot settings on github.com, not a repo file | Human-configured on github.com |
 
 The recommended baseline for production use: a dedicated read-only role for
 agent connections, the harness guard configured per the table above, and

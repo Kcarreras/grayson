@@ -17,20 +17,35 @@ checkpoints. The page refreshes itself while agents work.*
 ## Teaching your harness the protocol
 
 ```bash
-grayson harness init cursor        # or claude-code | codex
+grayson harness init cursor        # or claude-code | codex | copilot
 ```
 
 This writes the protocol file for your harness (a Cursor rule, a `CLAUDE.md`
-section, or an `AGENTS.md` section) — and offers to also write harness
-**guard permissions**: deny rules so the agent calling `snow` directly, or
-reading `.grayson/` state, hits a permission prompt instead of silently
-working around the guard. Consent-based and reversible:
-`grayson harness guard status|apply|remove`.
+section, an `AGENTS.md` section, or a `.github/copilot-instructions.md`
+section) — and offers two more writes, each behind its own explicit yes:
 
-Harnesses that prefer typed tools use the MCP server instead — `grayson mcp
-serve` (stdio) mirrors the CLI one-to-one; the served variants are in
-[DEPLOYMENT.md](DEPLOYMENT.md). `grayson status` tells you where you are and
-what needs attention; `latest` works anywhere a session id is expected.
+- **Guard permissions** — deny rules so the agent calling `snow` directly, or
+  reading `.grayson/` state, hits a permission prompt instead of silently
+  working around the guard. Machine-written for Claude Code
+  (`.claude/settings.json`) and Copilot/VS Code (`.vscode/settings.json`);
+  concrete human steps printed for Cursor and Codex. Reversible:
+  `grayson harness guard status|apply|remove`.
+- **MCP config** — registers `grayson mcp serve` (stdio) in the harness's
+  project MCP file: `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor),
+  `.vscode/mcp.json` (Copilot). Codex keeps MCP config in the user-global
+  `~/.codex/config.toml`, so grayson prints the snippet instead of writing
+  it. Only the `grayson` entry is ever touched. Reversible:
+  `grayson harness mcp status|apply|remove`.
+
+Harnesses that prefer typed tools use the MCP server — it mirrors the CLI
+one-to-one; the served variants are in [DEPLOYMENT.md](DEPLOYMENT.md).
+`grayson status` tells you where you are and what needs attention; `latest`
+works anywhere a session id is expected.
+
+Note on Copilot: `harness init copilot` targets **VS Code agent mode**
+(local, human present). The cloud **Copilot coding agent** has no local
+console for interventions and holds no analyst credentials — point it at a
+served knowledge-only endpoint instead ([DEPLOYMENT.md](DEPLOYMENT.md)).
 
 ## A typical session (driven by the agent)
 

@@ -11,6 +11,7 @@ from grayson.audit import reconcile, reconcile_check_result
 from grayson.cli import app
 from grayson.executor.snow import ExecutionResult
 from grayson.harness.permissions import (
+    COPILOT_AUTOAPPROVE_RULES,
     GUARD_DENY_RULES,
     apply_guard,
     guard_status,
@@ -57,6 +58,53 @@ def test_user_settings_preserved(tmp_path):
     assert data["permissions"]["allow"] == ["Bash(ls:*)"]
 
 
+def test_copilot_apply_status_remove_roundtrip(tmp_path):
+    assert guard_status(tmp_path, harness="copilot")["applied"] is False
+    result = apply_guard(tmp_path, harness="copilot")
+    assert result["added"] == list(COPILOT_AUTOAPPROVE_RULES)
+    status = guard_status(tmp_path, harness="copilot")
+    assert status["applied"] is True and status["missing"] == []
+    assert apply_guard(tmp_path, harness="copilot")["added"] == []  # idempotent
+    assert remove_guard(tmp_path, harness="copilot")["removed"] == list(COPILOT_AUTOAPPROVE_RULES)
+    assert guard_status(tmp_path, harness="copilot")["applied"] is False
+
+
+def test_copilot_user_settings_preserved(tmp_path):
+    settings = tmp_path / ".vscode" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        json.dumps(
+            {
+                "editor.formatOnSave": True,
+                "chat.tools.terminal.autoApprove": {"rm": False, "ls": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    apply_guard(tmp_path, harness="copilot")
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert data["editor.formatOnSave"] is True
+    auto = data["chat.tools.terminal.autoApprove"]
+    assert auto["rm"] is False and auto["ls"] is True
+    assert auto["snow"] is False
+    remove_guard(tmp_path, harness="copilot")
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert data["chat.tools.terminal.autoApprove"] == {"rm": False, "ls": True}  # only ours removed
+
+
+def test_copilot_repointed_entry_is_kept(tmp_path):
+    # a user who flipped our entry to auto-approve owns it now: remove leaves it
+    apply_guard(tmp_path, harness="copilot")
+    settings = tmp_path / ".vscode" / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data["chat.tools.terminal.autoApprove"]["snow"] = True
+    settings.write_text(json.dumps(data), encoding="utf-8")
+    removed = remove_guard(tmp_path, harness="copilot")["removed"]
+    assert "snow" not in removed
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert data["chat.tools.terminal.autoApprove"]["snow"] is True
+
+
 def test_unwritable_harnesses_get_specific_guidance(tmp_path):
     cursor = apply_guard(tmp_path, harness="cursor")
     assert cursor["supported"] is False
@@ -101,8 +149,54 @@ def test_cli_harness_init_with_guard(tmp_path, monkeypatch):
     out = json.loads(result.output)
     assert "hint" not in out
     assert "workspace-write" in out["guard_guidance"]
+    assert "~/.codex/config.toml" in out["mcp_guidance"]  # MCP config is user-global
     result = runner.invoke(app, ["harness", "init", "cursor", "--path", str(tmp_path)])
     assert "command denylist" in json.loads(result.output)["guard_guidance"]
+
+
+def test_cli_harness_init_copilot_full(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "harness",
+            "init",
+            "copilot",
+            "--path",
+            str(tmp_path),
+            "--guard-permissions",
+            "--mcp-config",
+        ],
+    )
+    assert result.exit_code == 0
+    out = json.loads(result.output)
+    assert ".github/copilot-instructions.md" in out["written"]
+    assert out["guard_permissions"]["added"] == list(COPILOT_AUTOAPPROVE_RULES)
+    assert out["mcp_config"]["written"] is True
+    assert (tmp_path / ".vscode" / "settings.json").is_file()
+    assert (tmp_path / ".vscode" / "mcp.json").is_file()
+
+
+def test_cli_harness_init_writes_nothing_without_consent(tmp_path, monkeypatch):
+    # non-interactive, no flags: instruction file only — hints, no config writes
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["harness", "init", "copilot", "--path", str(tmp_path)])
+    out = json.loads(result.output)
+    assert "guard_permissions" not in out and "mcp_config" not in out
+    assert "hint" in out and "mcp_hint" in out
+    assert not (tmp_path / ".vscode").exists()
+
+
+def test_cli_harness_mcp(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["harness", "mcp", "apply", "--harness", "cursor"])
+    assert result.exit_code == 0
+    assert json.loads(result.output)["written"] is True
+    result = runner.invoke(app, ["harness", "mcp", "status", "--harness", "cursor"])
+    out = json.loads(result.output)
+    assert out["configured"] is True and out["matches"] is True
+    result = runner.invoke(app, ["harness", "mcp", "remove", "--harness", "cursor"])
+    assert json.loads(result.output)["removed"] is True
 
 
 # -- HTTP bearer wall ----------------------------------------------------

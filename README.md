@@ -104,7 +104,7 @@ grayson setup                     # guided: workspace → connection → user id
 ```
 
 Prefer flags? Every step is its own command — `grayson init .`, `doctor`,
-`user set <id>`, `library link <url>`, `harness init claude-code|cursor|codex`.
+`user set <id>`, `library link <url>`, `harness init claude-code|cursor|codex|copilot`.
 
 No Snowflake yet? The sandbox is a full demo on a local mock warehouse,
 seeded with planted, workflow-matched bugs and a scoring answer key:

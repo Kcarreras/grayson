@@ -176,7 +176,7 @@ def doctor() -> None:
 @app.command()
 def setup() -> None:
     """Interactive onboarding: workspace, user id, connection, team library,
-    harness, guard permissions — one guided pass over the same steps that exist
+    harness, guard permissions, MCP config — one guided pass over the same steps that exist
     as individual commands (init, doctor, user set, library link, harness init),
     which all remain the scriptable path."""
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -186,7 +186,8 @@ def setup() -> None:
         )
         return
     from grayson.harness import generate_harness
-    from grayson.harness.permissions import GUARD_DENY_RULES, apply_guard, guard_status
+    from grayson.harness.mcp import apply_mcp, mcp_status
+    from grayson.harness.permissions import apply_guard, guard_rules_display, guard_status
     from grayson.identity import get_user_id, set_user_id
 
     done: dict = {}
@@ -264,7 +265,7 @@ def setup() -> None:
     # -- harness ---------------------------------------------------------
     say("\nThe protocol file teaches your agent how to drive grayson.")
     harness = typer.prompt(
-        "Harness (claude-code | cursor | codex | skip)", default="claude-code"
+        "Harness (claude-code | cursor | codex | copilot | skip)", default="claude-code"
     ).strip()
     if harness != "skip":
         try:
@@ -278,7 +279,7 @@ def setup() -> None:
             say(
                 "\nGuard permissions add deny rules so the agent calling `snow` "
                 "directly, or reading .grayson/ state, hits a permission prompt:\n  "
-                + "\n  ".join(GUARD_DENY_RULES)
+                + "\n  ".join(guard_rules_display(harness))
             )
             if typer.confirm("Apply guard permissions?", default=False):
                 try:
@@ -288,6 +289,22 @@ def setup() -> None:
         else:
             say("\nHarness guard setup for this harness (human-configured):")
             say(status["guidance"])
+
+        mstat = mcp_status(ws.root, harness)
+        if mstat.get("supported"):
+            say(
+                "\ngrayson's MCP server mirrors the CLI one-to-one; its stdio "
+                f"entry can be written to {mstat['file']} (only the `grayson` "
+                "entry — other servers untouched)."
+            )
+            if typer.confirm("Register grayson's MCP server there?", default=False):
+                try:
+                    done["mcp_config"] = apply_mcp(ws.root, harness)
+                except ValueError as e:
+                    say(f"  skipped: {e}")
+        else:
+            say("\nMCP setup for this harness (human-configured):")
+            say(mstat["guidance"])
 
     done["next"] = [
         "try the sandbox: grayson sandbox init my-demo (planted bugs + answer key)",
@@ -1972,7 +1989,7 @@ def records_show_cmd(
 
 @harness_app.command("init")
 def harness_init(
-    harness: str = typer.Argument(..., help="cursor | claude-code | codex"),
+    harness: str = typer.Argument(..., help="cursor | claude-code | codex | copilot"),
     path: Path = typer.Option(Path("."), "--path", help="Repo root to write into."),
     no_mcp: bool = typer.Option(False, "--no-mcp", help="Omit the MCP note."),
     guard_permissions: bool = typer.Option(
@@ -1981,58 +1998,100 @@ def harness_init(
         help="Also write harness deny rules blocking direct `snow` use and "
         "`.grayson/` state access (asked interactively when unset).",
     ),
+    mcp_config: bool = typer.Option(
+        None,
+        "--mcp-config/--no-mcp-config",
+        help="Also register `grayson mcp serve` in the harness's project MCP "
+        "config file (asked interactively when unset).",
+    ),
 ) -> None:
     """Generate the skill/instruction file that teaches a harness the grayson protocol.
 
     Optionally also writes permission deny rules so the agent's bypass paths
     (direct snow CLI, .grayson state files) hit a human-visible permission
-    prompt instead of a paragraph of prose. Consent-based: never written
-    without a yes; `grayson harness guard` inspects and reverses it later."""
+    prompt instead of a paragraph of prose, and/or the harness's project MCP
+    config registering grayson's server. Both are consent-based: never written
+    without an explicit yes (a flag or an interactive confirm); `grayson
+    harness guard` and `grayson harness mcp` inspect and reverse them later."""
     from grayson.harness import generate_harness
-    from grayson.harness.permissions import GUARD_DENY_RULES, apply_guard, guard_status
+    from grayson.harness.mcp import apply_mcp, mcp_status
+    from grayson.harness.permissions import apply_guard, guard_rules_display, guard_status
 
+    root = path.resolve()
     try:
-        out = generate_harness(path.resolve(), harness, with_mcp=not no_mcp)
+        out = generate_harness(root, harness, with_mcp=not no_mcp)
     except ValueError as e:
         fail(str(e))
         return
-    status = guard_status(path.resolve(), harness)
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
+    # -- guard permissions (consent-gated) --------------------------------
+    status = guard_status(root, harness)
     if not status.get("supported"):
         # no machine-writable config for this harness — hand over the concrete
-        # per-harness setup (denylist/hooks for Cursor, sandbox + MCP for Codex)
+        # per-harness setup (denylist/hooks for Cursor, sandbox for Codex)
         out["guard_guidance"] = status["guidance"]
-        emit(out)
-        return
-    wants_guard = guard_permissions
-    if wants_guard is None and sys.stdin.isatty() and sys.stdout.isatty():
-        typer.echo(
-            "\nAlso block the agent's bypass paths via harness permissions?\n"
-            "This writes these deny rules to "
-            + status["file"]
-            + ":\n  "
-            + "\n  ".join(GUARD_DENY_RULES)
-            + "\n(friction + visibility, not containment — pair with a read-only "
-            "Snowflake role; reverse anytime with `grayson harness guard remove`)",
-            err=True,
-        )
-        wants_guard = typer.confirm("Apply guard permissions?", default=False)
-    if wants_guard:
-        try:
-            out["guard_permissions"] = apply_guard(path.resolve(), harness)
-        except ValueError as e:
-            out["guard_permissions"] = {"error": str(e)}
-    elif wants_guard is None:
-        out["hint"] = (
-            "consider `grayson harness guard apply` (or --guard-permissions): deny "
-            "rules that stop the agent calling `snow` around the guard"
-        )
+    else:
+        wants_guard = guard_permissions
+        if wants_guard is None and interactive:
+            typer.echo(
+                "\nAlso block the agent's bypass paths via harness permissions?\n"
+                "This writes these deny rules to "
+                + status["file"]
+                + ":\n  "
+                + "\n  ".join(guard_rules_display(harness))
+                + "\n(friction + visibility, not containment — pair with a read-only "
+                "Snowflake role; reverse anytime with `grayson harness guard remove`)",
+                err=True,
+            )
+            wants_guard = typer.confirm("Apply guard permissions?", default=False)
+        if wants_guard:
+            try:
+                out["guard_permissions"] = apply_guard(root, harness)
+            except ValueError as e:
+                out["guard_permissions"] = {"error": str(e)}
+        elif wants_guard is None:
+            out["hint"] = (
+                "consider `grayson harness guard apply` (or --guard-permissions): deny "
+                "rules that stop the agent calling `snow` around the guard"
+            )
+
+    # -- MCP config (consent-gated) ---------------------------------------
+    mstat = mcp_status(root, harness)
+    if not mstat.get("supported"):
+        # no project-level MCP file for this harness (Codex: user-global toml)
+        out["mcp_guidance"] = mstat["guidance"]
+    else:
+        wants_mcp = mcp_config
+        if wants_mcp is None and interactive:
+            typer.echo(
+                "\nAlso register grayson's MCP server in "
+                + mstat["file"]
+                + "?\n(writes only the `grayson` stdio entry — `grayson mcp serve` — "
+                "other servers untouched; reverse anytime with "
+                "`grayson harness mcp remove`)",
+                err=True,
+            )
+            wants_mcp = typer.confirm("Write MCP config?", default=False)
+        if wants_mcp:
+            try:
+                out["mcp_config"] = apply_mcp(root, harness)
+            except ValueError as e:
+                out["mcp_config"] = {"error": str(e)}
+        elif wants_mcp is None:
+            out["mcp_hint"] = (
+                "consider `grayson harness mcp apply` (or --mcp-config): registers "
+                "`grayson mcp serve` in the harness's project MCP config"
+            )
     emit(out)
 
 
 @harness_app.command("guard")
 def harness_guard(
     action: str = typer.Argument(..., help="status | apply | remove"),
-    harness: str = typer.Option("claude-code", "--harness"),
+    harness: str = typer.Option(
+        "claude-code", "--harness", help="claude-code | copilot (cursor/codex: prints the steps)"
+    ),
     path: Path = typer.Option(Path("."), "--path", help="Repo root holding the harness config."),
 ) -> None:
     """Inspect, apply, or remove grayson's harness deny rules (the 'no way but
@@ -2041,6 +2100,31 @@ def harness_guard(
     from grayson.harness.permissions import apply_guard, guard_status, remove_guard
 
     actions = {"status": guard_status, "apply": apply_guard, "remove": remove_guard}
+    if action not in actions:
+        fail("action must be status, apply, or remove")
+        return
+    try:
+        emit(actions[action](path.resolve(), harness))
+    except ValueError as e:
+        fail(str(e))
+
+
+@harness_app.command("mcp")
+def harness_mcp(
+    action: str = typer.Argument(..., help="status | apply | remove"),
+    harness: str = typer.Option(
+        "claude-code",
+        "--harness",
+        help="claude-code | cursor | copilot (codex: prints the steps)",
+    ),
+    path: Path = typer.Option(Path("."), "--path", help="Repo root holding the harness config."),
+) -> None:
+    """Inspect, write, or remove grayson's server entry in the harness's
+    project MCP config (`grayson mcp serve`, stdio). Only the `grayson` entry
+    is ever touched; user-authored servers in the same file are kept."""
+    from grayson.harness.mcp import apply_mcp, mcp_status, remove_mcp
+
+    actions = {"status": mcp_status, "apply": apply_mcp, "remove": remove_mcp}
     if action not in actions:
         fail("action must be status, apply, or remove")
         return

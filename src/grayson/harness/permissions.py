@@ -3,9 +3,10 @@
 The query guard is airtight only for statements that pass through grayson; an
 agent with arbitrary shell access could call `snow` directly with the user's
 own credentials, or read `.grayson/` state files. Where the harness has a
-machine-readable permission config (Claude Code's `.claude/settings.json`),
-grayson can write deny rules that turn "please don't" into a permission
-prompt a human sees.
+machine-readable permission config (Claude Code's `.claude/settings.json`,
+VS Code / Copilot's `chat.tools.terminal.autoApprove` in
+`.vscode/settings.json`), grayson can write deny rules that turn "please
+don't" into a permission prompt a human sees.
 
 Deliberately consent-based: nothing here runs automatically. `grayson harness
 init` OFFERS it, `grayson harness guard apply|remove|status` manages it, and
@@ -27,6 +28,16 @@ GUARD_DENY_RULES = [
     "Edit(.grayson/**)",
     "Write(.grayson/**)",
 ]
+
+#: VS Code / Copilot agent mode: entries grayson manages in
+#: `chat.tools.terminal.autoApprove` (.vscode/settings.json). `false` forces a
+#: human-visible approval prompt for matching terminal commands. This setting
+#: governs the terminal only — Copilot's own file tools can still read
+#: `.grayson/`, so that path stays prose-guarded (protocol) + audit-reconciled.
+COPILOT_AUTOAPPROVE_RULES: dict[str, bool] = {
+    "snow": False,  # direct Snowflake CLI use — never auto-approved
+    "/\\.grayson\\b/": False,  # shell commands touching session state/audit files
+}
 
 #: harnesses grayson cannot (yet) write config for get concrete, per-harness
 #: setup instructions naming their real enforcement mechanism — not a shrug.
@@ -78,8 +89,22 @@ def harness_guidance(harness: str) -> str:
     return HARNESS_GUIDANCE.get(harness, MANUAL_GUIDANCE)
 
 
+def guard_rules_display(harness: str) -> list[str]:
+    """The exact rules a guard apply would write, rendered for a consent prompt."""
+    if harness == "copilot":
+        return [
+            f'chat.tools.terminal.autoApprove  "{k}": {str(v).lower()}'
+            for k, v in COPILOT_AUTOAPPROVE_RULES.items()
+        ]
+    return list(GUARD_DENY_RULES)
+
+
 def _settings_path(root: Path) -> Path:
     return root / ".claude" / "settings.json"
+
+
+def _vscode_settings_path(root: Path) -> Path:
+    return root / ".vscode" / "settings.json"
 
 
 def _load(path: Path) -> dict:
@@ -94,8 +119,15 @@ def _load(path: Path) -> dict:
     return data
 
 
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def guard_status(root: Path, harness: str = "claude-code") -> dict:
     """Which of grayson's deny rules are present in the harness config."""
+    if harness == "copilot":
+        return _copilot_guard_status(root)
     if harness != "claude-code":
         return {"harness": harness, "supported": False, "guidance": harness_guidance(harness)}
     path = _settings_path(root)
@@ -117,6 +149,8 @@ def guard_status(root: Path, harness: str = "claude-code") -> dict:
 
 def apply_guard(root: Path, harness: str = "claude-code") -> dict:
     """Add grayson's deny rules (idempotent; other settings untouched)."""
+    if harness == "copilot":
+        return _copilot_apply_guard(root)
     if harness != "claude-code":
         return {"harness": harness, "supported": False, "guidance": harness_guidance(harness)}
     path = _settings_path(root)
@@ -144,6 +178,8 @@ def apply_guard(root: Path, harness: str = "claude-code") -> dict:
 
 def remove_guard(root: Path, harness: str = "claude-code") -> dict:
     """Remove exactly grayson's deny rules; user-authored rules are kept."""
+    if harness == "copilot":
+        return _copilot_remove_guard(root)
     if harness != "claude-code":
         return {"harness": harness, "supported": False, "guidance": harness_guidance(harness)}
     path = _settings_path(root)
@@ -156,3 +192,80 @@ def remove_guard(root: Path, harness: str = "claude-code") -> dict:
         data["permissions"]["deny"] = [r for r in deny if r not in GUARD_DENY_RULES]
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return {"harness": harness, "supported": True, "file": str(path), "removed": removed}
+
+
+# -- copilot (VS Code agent mode) -----------------------------------------
+#
+# `.vscode/settings.json` may legally contain comments (JSONC); grayson only
+# reads/writes plain JSON, so a commented file surfaces the parse error with
+# "fix it by hand first" rather than silently rewriting it.
+
+_AUTOAPPROVE_KEY = "chat.tools.terminal.autoApprove"
+
+_COPILOT_NOTE = (
+    "terminal commands only — Copilot's file tools are not governed by this "
+    "setting, and the cloud coding agent has its own environment; friction + "
+    "visibility, pair with a read-only Snowflake role for the guarantee that "
+    "survives a bypass"
+)
+
+
+def _copilot_guard_status(root: Path) -> dict:
+    path = _vscode_settings_path(root)
+    try:
+        auto = _load(path).get(_AUTOAPPROVE_KEY, {})
+    except ValueError as e:
+        return {"harness": "copilot", "supported": True, "file": str(path), "error": str(e)}
+    if not isinstance(auto, dict):
+        auto = {}
+    present = [k for k, v in COPILOT_AUTOAPPROVE_RULES.items() if auto.get(k) == v]
+    missing = [k for k in COPILOT_AUTOAPPROVE_RULES if k not in present]
+    return {
+        "harness": "copilot",
+        "supported": True,
+        "file": str(path),
+        "applied": not missing,
+        "present": present,
+        "missing": missing,
+    }
+
+
+def _copilot_apply_guard(root: Path) -> dict:
+    path = _vscode_settings_path(root)
+    data = _load(path)
+    auto = data.setdefault(_AUTOAPPROVE_KEY, {})
+    if not isinstance(auto, dict):
+        raise ValueError(f"{path}: '{_AUTOAPPROVE_KEY}' must be an object")
+    added = [k for k, v in COPILOT_AUTOAPPROVE_RULES.items() if auto.get(k) != v]
+    for k in added:
+        auto[k] = COPILOT_AUTOAPPROVE_RULES[k]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return {
+        "harness": "copilot",
+        "supported": True,
+        "file": str(path),
+        "added": added,
+        "rules": guard_rules_display("copilot"),
+        "note": _COPILOT_NOTE,
+    }
+
+
+def _copilot_remove_guard(root: Path) -> dict:
+    path = _vscode_settings_path(root)
+    if not path.is_file():
+        return {"harness": "copilot", "supported": True, "file": str(path), "removed": []}
+    data = _load(path)
+    auto = data.get(_AUTOAPPROVE_KEY, {})
+    if not isinstance(auto, dict):
+        return {"harness": "copilot", "supported": True, "file": str(path), "removed": []}
+    # exactly our key/value pairs: an entry the user re-pointed (e.g. flipped
+    # to true) is theirs now and stays
+    removed = [k for k, v in COPILOT_AUTOAPPROVE_RULES.items() if auto.get(k) == v]
+    if removed:
+        for k in removed:
+            del auto[k]
+        if not auto:
+            del data[_AUTOAPPROVE_KEY]
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return {"harness": "copilot", "supported": True, "file": str(path), "removed": removed}
