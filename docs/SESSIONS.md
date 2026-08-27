@@ -25,11 +25,14 @@ section, an `AGENTS.md` section, or a `.github/copilot-instructions.md`
 section) — and offers two more writes, each behind its own explicit yes:
 
 - **Guard permissions** — deny rules so the agent calling `snow` directly, or
-  reading `.grayson/` state, hits a permission prompt instead of silently
+  reading `.grayson/` state, is blocked or prompted instead of silently
   working around the guard. Machine-written for Claude Code
-  (`.claude/settings.json`) and Copilot/VS Code (`.vscode/settings.json`);
-  concrete human steps printed for Cursor and Codex. Reversible:
-  `grayson harness guard status|apply|remove`.
+  (`.claude/settings.json`), Copilot/VS Code (`.vscode/settings.json`), and
+  Cursor (a hard-deny hook: `.cursor/hooks.json` + an executable
+  `.cursor/hooks/grayson-guard.py`; recent Cursor IDE only) — declining the
+  Cursor write prints the manual command-denylist steps to copy/paste or
+  adapt instead. Codex gets human steps (its OS sandbox is the layer).
+  Reversible: `grayson harness guard status|apply|remove`.
 - **MCP config** — registers `grayson mcp serve` (stdio) in the harness's
   project MCP file: `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor),
   `.vscode/mcp.json` (Copilot). Codex keeps MCP config in the user-global

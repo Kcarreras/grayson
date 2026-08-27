@@ -187,7 +187,13 @@ def setup() -> None:
         return
     from grayson.harness import generate_harness
     from grayson.harness.mcp import apply_mcp, mcp_status
-    from grayson.harness.permissions import apply_guard, guard_rules_display, guard_status
+    from grayson.harness.permissions import (
+        HARNESS_GUIDANCE,
+        apply_guard,
+        guard_rules_display,
+        guard_status,
+        harness_guidance,
+    )
     from grayson.identity import get_user_id, set_user_id
 
     done: dict = {}
@@ -278,7 +284,7 @@ def setup() -> None:
         if status.get("supported"):
             say(
                 "\nGuard permissions add deny rules so the agent calling `snow` "
-                "directly, or reading .grayson/ state, hits a permission prompt:\n  "
+                "directly, or reading .grayson/ state, is blocked or prompted:\n  "
                 + "\n  ".join(guard_rules_display(harness))
             )
             if typer.confirm("Apply guard permissions?", default=False):
@@ -286,6 +292,9 @@ def setup() -> None:
                     done["guard_permissions"] = apply_guard(ws.root, harness)
                 except ValueError as e:
                     say(f"  skipped: {e}")
+            elif harness in HARNESS_GUIDANCE:
+                say("\nManual alternative (copy/paste, or define your own deny rules):")
+                say(harness_guidance(harness))
         else:
             say("\nHarness guard setup for this harness (human-configured):")
             say(status["guidance"])
@@ -2015,7 +2024,13 @@ def harness_init(
     harness guard` and `grayson harness mcp` inspect and reverse them later."""
     from grayson.harness import generate_harness
     from grayson.harness.mcp import apply_mcp, mcp_status
-    from grayson.harness.permissions import apply_guard, guard_rules_display, guard_status
+    from grayson.harness.permissions import (
+        HARNESS_GUIDANCE,
+        apply_guard,
+        guard_rules_display,
+        guard_status,
+        harness_guidance,
+    )
 
     root = path.resolve()
     try:
@@ -2029,7 +2044,7 @@ def harness_init(
     status = guard_status(root, harness)
     if not status.get("supported"):
         # no machine-writable config for this harness — hand over the concrete
-        # per-harness setup (denylist/hooks for Cursor, sandbox for Codex)
+        # per-harness setup (OS sandbox for Codex)
         out["guard_guidance"] = status["guidance"]
     else:
         wants_guard = guard_permissions
@@ -2050,11 +2065,16 @@ def harness_init(
                 out["guard_permissions"] = apply_guard(root, harness)
             except ValueError as e:
                 out["guard_permissions"] = {"error": str(e)}
-        elif wants_guard is None:
-            out["hint"] = (
-                "consider `grayson harness guard apply` (or --guard-permissions): deny "
-                "rules that stop the agent calling `snow` around the guard"
-            )
+        else:
+            if wants_guard is None:
+                out["hint"] = (
+                    "consider `grayson harness guard apply` (or --guard-permissions): "
+                    "deny rules that stop the agent calling `snow` around the guard"
+                )
+            if harness in HARNESS_GUIDANCE:
+                # declined the machine write — hand over the copy/paste /
+                # define-your-own path instead
+                out["guard_guidance"] = harness_guidance(harness)
 
     # -- MCP config (consent-gated) ---------------------------------------
     mstat = mcp_status(root, harness)
@@ -2090,7 +2110,9 @@ def harness_init(
 def harness_guard(
     action: str = typer.Argument(..., help="status | apply | remove"),
     harness: str = typer.Option(
-        "claude-code", "--harness", help="claude-code | copilot (cursor/codex: prints the steps)"
+        "claude-code",
+        "--harness",
+        help="claude-code | copilot | cursor (codex: prints the steps)",
     ),
     path: Path = typer.Option(Path("."), "--path", help="Repo root holding the harness config."),
 ) -> None:

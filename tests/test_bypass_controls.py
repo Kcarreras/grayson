@@ -106,16 +106,114 @@ def test_copilot_repointed_entry_is_kept(tmp_path):
 
 
 def test_unwritable_harnesses_get_specific_guidance(tmp_path):
-    cursor = apply_guard(tmp_path, harness="cursor")
-    assert cursor["supported"] is False
-    assert "command denylist" in cursor["guidance"]
-    assert "beforeShellExecution" in cursor["guidance"]  # hooks: the hard-deny layer
     codex = guard_status(tmp_path, harness="codex")
     assert codex["supported"] is False
     assert "workspace-write" in codex["guidance"]  # sandbox blocks network egress
     assert "mcp_servers" in codex["guidance"]  # MCP runs outside the sandbox
     unknown = guard_status(tmp_path, harness="windsurf")
     assert "read-only Snowflake role" in unknown["guidance"]  # generic fallback
+
+
+def test_cursor_manual_guidance_still_names_both_layers():
+    from grayson.harness.permissions import harness_guidance
+
+    guidance = harness_guidance("cursor")
+    assert "command denylist" in guidance
+    assert "beforeShellExecution" in guidance  # hooks: the hard-deny layer
+
+
+def test_cursor_hooks_apply_status_remove_roundtrip(tmp_path):
+    assert guard_status(tmp_path, harness="cursor")["applied"] is False
+    result = apply_guard(tmp_path, harness="cursor")
+    assert result["added"] == ["beforeShellExecution", "beforeReadFile"]
+    assert result["script_written"] is True
+    hooks_file = tmp_path / ".cursor" / "hooks.json"
+    script = tmp_path / ".cursor" / "hooks" / "grayson-guard.py"
+    assert script.is_file() and script.stat().st_mode & 0o111  # executable
+    data = json.loads(hooks_file.read_text())
+    entry = {"command": "./.cursor/hooks/grayson-guard.py"}
+    assert entry in data["hooks"]["beforeShellExecution"]
+    assert entry in data["hooks"]["beforeReadFile"]
+    status = guard_status(tmp_path, harness="cursor")
+    assert status["applied"] is True and status["missing"] == []
+    again = apply_guard(tmp_path, harness="cursor")
+    assert again["added"] == [] and again["script_written"] is False  # idempotent
+    removed = remove_guard(tmp_path, harness="cursor")
+    assert removed["removed"] == ["beforeShellExecution", "beforeReadFile"]
+    assert removed["script_removed"] is True and not script.exists()
+    assert guard_status(tmp_path, harness="cursor")["applied"] is False
+
+
+def test_cursor_hooks_preserve_user_entries(tmp_path):
+    hooks_file = tmp_path / ".cursor" / "hooks.json"
+    hooks_file.parent.mkdir(parents=True)
+    hooks_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "hooks": {"beforeShellExecution": [{"command": "./mine.sh"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    apply_guard(tmp_path, harness="cursor")
+    remove_guard(tmp_path, harness="cursor")
+    data = json.loads(hooks_file.read_text())
+    assert data["hooks"] == {"beforeShellExecution": [{"command": "./mine.sh"}]}
+
+
+def test_cursor_edited_script_is_kept_on_remove(tmp_path):
+    apply_guard(tmp_path, harness="cursor")
+    script = tmp_path / ".cursor" / "hooks" / "grayson-guard.py"
+    script.write_text(script.read_text() + "\n# user tweak\n", encoding="utf-8")
+    result = remove_guard(tmp_path, harness="cursor")
+    assert result["script_removed"] is False
+    assert script.is_file()  # edited script is the user's now
+
+
+@pytest.mark.parametrize(
+    ("event", "verdict"),
+    [
+        ({"command": "snow sql -q 'select 1'"}, "deny"),
+        ({"command": "uv run snow --help"}, "deny"),
+        ({"command": "cat .grayson/audit.jsonl"}, "deny"),
+        ({"file_path": "/repo/.grayson/sessions/s_0001.json"}, "deny"),
+        ({"command": "ls -la"}, "allow"),
+        ({"command": "echo snowflake-is-a-word"}, "allow"),  # substring, not the CLI
+        ({"file_path": "/repo/src/main.py"}, "allow"),
+        ({}, "allow"),  # unknown shape fails open
+    ],
+)
+def test_cursor_hook_script_verdicts(tmp_path, event, verdict):
+    import subprocess
+    import sys as _sys
+
+    apply_guard(tmp_path, harness="cursor")
+    script = tmp_path / ".cursor" / "hooks" / "grayson-guard.py"
+    proc = subprocess.run(
+        [_sys.executable, str(script)],
+        input=json.dumps(event),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(proc.stdout)["permission"] == verdict
+
+
+def test_cursor_hook_script_fails_open_on_garbage(tmp_path):
+    import subprocess
+    import sys as _sys
+
+    apply_guard(tmp_path, harness="cursor")
+    script = tmp_path / ".cursor" / "hooks" / "grayson-guard.py"
+    proc = subprocess.run(
+        [_sys.executable, str(script)],
+        input="{not json",
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(proc.stdout)["permission"] == "allow"
 
 
 def test_broken_settings_surfaces_error(tmp_path):
@@ -150,8 +248,23 @@ def test_cli_harness_init_with_guard(tmp_path, monkeypatch):
     assert "hint" not in out
     assert "workspace-write" in out["guard_guidance"]
     assert "~/.codex/config.toml" in out["mcp_guidance"]  # MCP config is user-global
+    # cursor without consent: manual copy/paste guidance, nothing written
     result = runner.invoke(app, ["harness", "init", "cursor", "--path", str(tmp_path)])
     assert "command denylist" in json.loads(result.output)["guard_guidance"]
+    assert not (tmp_path / ".cursor" / "hooks.json").exists()
+
+
+def test_cli_harness_init_cursor_with_guard(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app, ["harness", "init", "cursor", "--path", str(tmp_path), "--guard-permissions"]
+    )
+    assert result.exit_code == 0
+    out = json.loads(result.output)
+    assert out["guard_permissions"]["added"] == ["beforeShellExecution", "beforeReadFile"]
+    assert "guard_guidance" not in out  # took the machine-written path
+    assert (tmp_path / ".cursor" / "hooks.json").is_file()
+    assert (tmp_path / ".cursor" / "hooks" / "grayson-guard.py").is_file()
 
 
 def test_cli_harness_init_copilot_full(tmp_path, monkeypatch):
