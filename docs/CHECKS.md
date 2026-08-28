@@ -1,16 +1,14 @@
 # External checks: setting up ingestion
 
-Your team already runs deterministic validations somewhere — dbt tests, Airflow
-DAGs, a data-quality service, a cron job with SQL in it. grayson does not run
-any of those. It reads their **results**, keeps them in the library, and hands
-failing checks on the target tables to the agent at session start as
-pre-vetted leads (with the check's own SQL to replicate first). A check whose
-latest run is older than its declared cadence is flagged **overdue**, so
-silently-stopped automation surfaces too.
+Your team already runs deterministic validations — dbt tests, Airflow DAGs, a
+cron job with SQL in it. grayson runs none of them. It reads their **results**,
+keeps them in the library, and hands failing checks on the target tables to
+the agent at session start as pre-vetted leads (with the check's own SQL to
+replicate first). A check older than its declared cadence is flagged
+**overdue**, so silently-stopped automation surfaces too.
 
-This page is the end-to-end setup guide: the result contract, the three ways
-to feed results in, and how to adapt whatever shape your validation tool
-already produces.
+Below: the result contract, three ways to feed results in, and how to adapt
+your own tool.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/checks_dark.png">
