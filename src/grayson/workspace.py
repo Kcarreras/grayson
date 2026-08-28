@@ -113,3 +113,8 @@ class Workspace:
         """Published records (accepted findings, verified fixes) — the distilled,
         team-shareable output of sessions, unlike .grayson/ session state."""
         return self._library_root() / "records"
+
+    @property
+    def reports_dir(self) -> Path:
+        """Report profiles: how session reports render for this team."""
+        return self._library_root() / "reports"

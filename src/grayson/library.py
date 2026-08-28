@@ -16,7 +16,7 @@ from pathlib import Path
 from grayson.config import CONFIG_FILENAME
 from grayson.workspace import Workspace
 
-LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks", "records")
+LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks", "records", "reports")
 
 _REMOTE_RE = re.compile(r"^[\w.-]+@[\w.-]+:")  # scp-style git remote (git@host:org/repo)
 
@@ -29,6 +29,12 @@ def init_library(path: Path) -> Path:
     (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
     (path / "workflows").mkdir(exist_ok=True)
     (path / "records").mkdir(exist_ok=True)
+    (path / "reports").mkdir(exist_ok=True)
+    profile = path / "reports" / "default.yaml"
+    if not profile.exists():
+        from grayson.report import DEFAULT_PROFILE_YAML
+
+        profile.write_text(DEFAULT_PROFILE_YAML, encoding="utf-8")
     from grayson.checks import scaffold_checks_dir
 
     scaffold_checks_dir(path / "checks")

@@ -104,6 +104,24 @@ From any linked workspace, `grayson records search` then answers "how did
 records merge into every search, show on the console's Records tab badged
 `team`, and open from the published copy when the session isn't local.
 
+## Reports: profiles in, whole investigations out
+
+Session reports keep facts and presentation separate. The facts render
+deterministically from the session record and are not configurable; how they
+are *presented* is a **report profile** — a small YAML in the library's
+`reports/` directory (scaffolded with a commented `default.yaml`): section
+order and inclusion, `engineering` vs `stakeholder` audience, header/footer.
+Profiles are shared by git like workflow templates, so a team's reporting
+preferences compound the same way its workflows do; `grayson session report
+--profile <name>` picks one.
+
+When a session closes (the human-approved moment), its full report publishes
+into `records/<sid>/` — `report.md` rendered with the default profile plus a
+searchable `report.json` — making reports the third compounding artifact
+beside knowledge and records: `grayson records search` returns whole
+investigations, including the agent's cited narrative, not just their
+findings.
+
 ## Knowledge without the harness
 
 A collaborator who doesn't run sessions can still give their agent the team's

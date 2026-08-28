@@ -46,7 +46,10 @@ they are equivalent. Never query Snowflake except through grayson.
   user actions; you ask, they decide.
 
 ## Workflow
-1. Discover: `grayson workflow list`; read the knowledge library for the target tables
+1. Discover: `grayson workflow list` (and `grayson workflow preview <name>` — the
+   standard human-readable rendering of a template; paste its `text` to the user
+   whenever they should choose between workflows or sign off on one). Read the
+   knowledge library for the target tables
    (`grayson knowledge show DB.SCHEMA.TABLE` — its `completeness` report shows what is
    still undescribed). Ask the user for anything the data can't tell you. Save durable
    one-off answers with `grayson knowledge add`, and record the structured base
@@ -129,6 +132,11 @@ they are equivalent. Never query Snowflake except through grayson.
    console's stage strip tracks your progress. Your first executed query moves
    setup to analysis automatically; every later transition is yours to declare,
    and gates enforce that evidence exists before review/fixes.
+8b. Narrate: before the user closes, write the report narrative —
+   `grayson session narrate <sid> --text "..."` — your story of the investigation,
+   citing executed query ids. It becomes the clearly-labeled agent-written section
+   of the published report; the deterministic sections render from the record and
+   are not yours to shape.
 9. Close: the user closes the session, from the console or their own terminal —
    either on accepted findings, or as a **clean** result when the checks cleared and
    nothing turned up. `grayson session readiness <sid>` reports which route applies
@@ -146,7 +154,98 @@ commands one-to-one. If it is configured, prefer the typed tools; the protocol i
 identical.
 """
 
+#: the interactive workflow-authoring skill, one canonical text. Written in the
+#: SKILL.md open format to each harness's native skills directory (Claude Code,
+#: Cursor >=2.1, and VS Code Copilot all read the same format); Codex, which has
+#: no skills mechanism, gets it as an AGENTS.md section. Versioned with grayson
+#: so the interview can never drift from what `workflow lint` enforces.
+WORKFLOW_AUTHOR_DESCRIPTION = (
+    "Design a grayson workflow template interactively with the user: interview, "
+    "draft the YAML, lint, preview for sign-off, then store it in the team library. "
+    "Use when the user wants a new investigation workflow or to adapt an existing one."
+)
+
+WORKFLOW_AUTHOR = """\
+# Authoring a grayson workflow with the user
+
+A workflow template defines the shape of an investigation: the setup inputs a
+human provides, the evidence-gated checkpoints a session must clear, and the
+findings schema every claim validates against. You draft it; grayson validates
+and stores it; the user signs off at each step. Never hand-write files into the
+library's workflows/ directory — every step below goes through the CLI (or its
+MCP mirror), which enforces validation and ownership server-side.
+
+## 1. Interview — one topic at a time, in this order
+
+- **Purpose.** What decision does this workflow serve, and who reads its
+  findings? Write the answer into `description` — agents pick workflows by it.
+- **Fork or fresh.** `grayson workflow list`, then `grayson workflow preview
+  <name>` for the closest existing template. If one is 80% right, fork it
+  (lineage is recorded); only start blank when nothing fits.
+- **Setup inputs.** What must a human tell the agent before work starts —
+  expectations, locators, thresholds? Each becomes a `setup_inputs` entry, and
+  each should be read by some check via `uses_inputs` (lint flags an answer
+  nothing reads: a question asked of the user and then ignored).
+- **Required checks.** Ask: what is this investigation MEANINGLESS without?
+  Only those gate — four to six is the shape of the core set. Use `depends_on`
+  only for genuine ordering (bug-hunter: no cause-hunting until the anomaly
+  reproduces). Write each `description` as intent — agents close checkpoints
+  better when the point is explicit.
+- **Suggested checks.** Everything worth doing where it applies but not
+  everywhere goes here — breadth without gates. A required check that does not
+  apply to the table in front of the agent gets closed hollow, which is exactly
+  the evidence-laundering the rail exists to prevent. When in doubt, suggest.
+- **Findings schema.** `standard_v1` unless the workflow's claims need more
+  structure; name the known schemas from `grayson workflow show` on a core
+  template if the user wants options.
+
+## 2. Draft -> 3. Lint -> 4. Preview -> 5. Store
+
+```
+grayson workflow new <name> [--fork <base>]   # scaffold; then edit the YAML
+grayson workflow lint                          # repeat until clean
+grayson workflow preview <name>                # paste `text` to the user
+grayson library push                           # after the user signs off
+```
+
+Treat every lint WARNING as design feedback, not noise — each one encodes a
+rule from this interview (missing description, an input no check uses, a
+depends_on naming a check that does not exist). Iterate the interview -> edit ->
+lint -> preview loop until the user confirms the preview; do not push before
+they do.
+
+## Rules that are enforced, not advisory
+
+- Core templates are canonical: you cannot edit or shadow them — fork.
+- A colleague's workflow edits only under their user id — fork under the
+  user's own name instead (`created_by` is stamped automatically).
+- Renames are forks, never in-place edits.
+"""
+
 HARNESSES = {"cursor", "claude-code", "codex", "copilot"}
+
+#: where each harness reads SKILL.md-format skills from (Codex: none)
+_SKILL_DIRS = {
+    "claude-code": Path(".claude") / "skills",
+    "cursor": Path(".cursor") / "skills",
+    "copilot": Path(".github") / "skills",
+}
+
+_SKILL_NAME = "grayson-workflow-author"
+
+
+def _write_workflow_author_skill(root: Path, harness: str) -> str:
+    """The workflow-authoring skill, at the harness's native skills location."""
+    if harness in _SKILL_DIRS:
+        target = root / _SKILL_DIRS[harness] / _SKILL_NAME / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        front = f"---\nname: {_SKILL_NAME}\ndescription: {WORKFLOW_AUTHOR_DESCRIPTION}\n---\n\n"
+        target.write_text(front + WORKFLOW_AUTHOR, encoding="utf-8")
+        return str(target.relative_to(root))
+    # codex has no skills mechanism: a second marked section in AGENTS.md
+    return _append_section(
+        root / "AGENTS.md", WORKFLOW_AUTHOR, root, mark="grayson-workflow-author"
+    )
 
 
 def generate_harness(root: Path, harness: str, with_mcp: bool = True) -> dict:
@@ -176,24 +275,28 @@ def generate_harness(root: Path, harness: str, with_mcp: bool = True) -> dict:
         target = root / "AGENTS.md"
         written.append(_append_section(target, body, root))
 
-    # a standalone copy for reference regardless of harness
-    ref = root / ".grayson" / "PROTOCOL.md"
-    ref.parent.mkdir(parents=True, exist_ok=True)
-    ref.write_text(body, encoding="utf-8")
-    written.append(str(ref.relative_to(root)))
+    written.append(_write_workflow_author_skill(root, harness))
+
+    # standalone copies for reference regardless of harness
+    ref_dir = root / ".grayson"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    (ref_dir / "PROTOCOL.md").write_text(body, encoding="utf-8")
+    written.append(str((ref_dir / "PROTOCOL.md").relative_to(root)))
+    (ref_dir / "WORKFLOW_AUTHOR.md").write_text(WORKFLOW_AUTHOR, encoding="utf-8")
+    written.append(str((ref_dir / "WORKFLOW_AUTHOR.md").relative_to(root)))
     return {"harness": harness, "written": written}
 
 
-_MARK_START = "<!-- grayson:start -->"
-_MARK_END = "<!-- grayson:end -->"
-
-
-def _append_section(target: Path, body: str, root: Path) -> str:
-    section = f"{_MARK_START}\n{body}\n{_MARK_END}\n"
+def _append_section(target: Path, body: str, root: Path, mark: str = "grayson") -> str:
+    """Write/replace one marker-delimited section, leaving the rest of the file
+    (other grayson sections included) untouched."""
+    start, end = f"<!-- {mark}:start -->", f"<!-- {mark}:end -->"
+    section = f"{start}\n{body}\n{end}\n"
     existing = target.read_text(encoding="utf-8") if target.is_file() else ""
-    if _MARK_START in existing and _MARK_END in existing:
-        pre = existing.split(_MARK_START)[0]
-        post = existing.split(_MARK_END, 1)[1]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if start in existing and end in existing:
+        pre = existing.split(start)[0]
+        post = existing.split(end, 1)[1]
         target.write_text(pre + section + post, encoding="utf-8")
     else:
         joined = (existing.rstrip() + "\n\n" if existing.strip() else "") + section

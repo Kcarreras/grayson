@@ -61,8 +61,21 @@ grayson chart add <sid> -a q_0001 -k line -x day -y null_rate --title "..."
 grayson checkpoint complete <sid> replicate_anomaly -e q_0003
 grayson finding add <sid> --json '{...}'                  # schema + evidence validated
 grayson ui serve                                          # the human console
+grayson session narrate <sid> --text "... (q_0003)"       # agent-written story, must cite qids
 grayson session report <sid> --out report.md              # shareable report
 ```
+
+The report has two layers, deliberately separate. **Facts** — checkpoints with
+evidence, findings, proposals with verification, charts, query statistics —
+render deterministically from the session record; every figure cites an
+executed query id, and no preference can alter them. **Presentation** is a
+*report profile*: a small YAML in the library's `reports/` directory (section
+order and inclusion, `engineering` vs `stakeholder` audience, header/footer),
+shared by git like workflows — `--profile <name>` picks one. The agent's
+`narrate` text renders in its own clearly labeled section above the facts. On
+close, the full report publishes into the library's `records/` (`report.md` +
+searchable `report.json`), so `records search` returns whole investigations,
+not just their findings.
 
 Each workflow defines **setup inputs** — the questions a human answers before
 analysis starts. The agent collects them in chat and records them with
