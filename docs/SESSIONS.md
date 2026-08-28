@@ -102,7 +102,10 @@ grayson checkpoint waive <sid> freshness --reason "static reference table"
 finding, which is right for a session that found something and wrong for one
 that did not — it leaves "invent a finding" as the only way to finish. A clean
 run instead closes as a **clean outcome**: required checks cleared, nothing
-accepted, nothing left for the user to judge. `grayson session readiness <sid>`
+accepted, nothing left for the user to judge — and at least one query actually
+executed, since "we looked and it was fine" requires having looked (a workflow
+with no required checks does not offer a clean close at session start).
+`grayson session readiness <sid>`
 reports when that is the available route (`clean_close_available`,
 `next_action`), and the console offers the button.
 

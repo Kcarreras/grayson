@@ -69,6 +69,15 @@ def render_markdown(report: dict) -> str:
         waived = c["status"] == "waived"
         mark = "x" if c["status"] == "complete" else "~" if waived else " "
         evidence = f" — evidence: {', '.join(c['evidence'])}" if c["evidence"] else ""
+        off = c.get("evidence_off_scope") or []
+        if off:
+            # the reader judging this checkpoint should see how much of the
+            # citation list actually touched the tables under investigation
+            in_scope = len(c["evidence"]) - len(off)
+            evidence += (
+                f" ({in_scope} of {len(c['evidence'])} cited queries touched scope; "
+                f"off-scope: {', '.join(off)})"
+            )
         note = f" ({c['note']})" if c.get("note") else ""
         suffix = f" — **waived**{note}" if waived else f"{evidence}{note}"
         lines.append(f"- [{mark}] **{c['key']}** — {c['title']}{suffix}")

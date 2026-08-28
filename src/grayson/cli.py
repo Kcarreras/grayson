@@ -125,6 +125,26 @@ def default_actor() -> str:
     return "user" if _stdin_is_tty() else "agent"
 
 
+def resolve_actor(actor: str | None) -> str:
+    """Resolve an explicit `--actor` against who is actually at the terminal.
+
+    An explicit actor may narrow authority, never widen it: claiming 'user' from
+    a non-interactive shell-out is exactly the misattribution the terminal check
+    exists to stop — an agent's change recorded under the human's name. Any
+    other label (an agent naming itself, a worker id) is accepted as-is.
+    """
+    if actor is None:
+        return default_actor()
+    if actor == "user" and not _stdin_is_tty():
+        fail(
+            "--actor user needs an interactive terminal: a non-interactive caller "
+            "cannot record its actions under the human's name. Re-run without "
+            "--actor (the action is then attributed to 'agent'), or have the user "
+            "run this at their own prompt."
+        )
+    return actor
+
+
 def require_interactive(action: str, confirm: str = "") -> None:
     """Gate a user-only escape hatch on an interactive terminal.
 
@@ -740,7 +760,7 @@ def session_advance(
 ) -> None:
     """Advance the stage. Evidence gates block review/fixes unless satisfied or forced."""
     s = _session(session_id)
-    who = actor or default_actor()
+    who = resolve_actor(actor)
     if force:
         # `--force` is honored only for the 'user' actor, but before this the CLI
         # both defaulted --actor to "user" and let anyone pass it, so `advance
@@ -811,7 +831,9 @@ def session_close(
     clean: bool = typer.Option(
         False, "--clean", help="Close as a clean result: checks cleared, nothing found."
     ),
-    note: str = typer.Option("", "--note", help="What was checked and found sound."),
+    note: str = typer.Option(
+        "", "--note", help="Closing note for the record (kept on either outcome)."
+    ),
 ) -> None:
     """Close a session — with accepted findings, or as a confirmed clean result.
 
@@ -1202,7 +1224,7 @@ def checkpoint_complete(
     s = _session(session_id)
     try:
         cp = engine.complete_checkpoint(
-            s, key, evidence, note, actor or default_actor(), _workspace().workflows_dir
+            s, key, evidence, note, resolve_actor(actor), _workspace().workflows_dir
         )
     except EnforcementError as e:
         fail(str(e))

@@ -98,16 +98,16 @@ def complete_checkpoint(
         # it materializes the moment an agent decides to do it
         defn = tpl.check(key)
         session.seed_checkpoints([(key, defn.title if defn else key)])
-    session.complete_checkpoint(key, evidence, note, actor)
-    out = session.checkpoint(key)
+    # off-scope ids are stored on the checkpoint itself — legitimate for lineage
+    # probes, and persisted so the human reading the checkpoint (console, report)
+    # can tell the difference between walking upstream and padding the citation
+    # list, not just someone combing the event log
+    session.complete_checkpoint(key, evidence, note, actor, off_scope=off_scope)
     if off_scope:
-        # legitimate for lineage probes; surfaced so a human can tell the
-        # difference between walking upstream and padding the citation list
-        out["evidence_off_scope"] = off_scope
         session.log_event(
             actor, "evidence_off_scope", {"key": key, "qids": off_scope, "cited": len(evidence)}
         )
-    return out
+    return session.checkpoint(key)
 
 
 def waive_checkpoint(
@@ -132,13 +132,19 @@ def waive_checkpoint(
             "File an intervention asking the user to waive it, and say why it does not apply."
         )
     if tpl.check(key) is None and session.checkpoint(key) is None:
-        known = ", ".join(tpl.required_check_keys())
+        known = ", ".join(tpl.required_check_keys() + tpl.suggested_check_keys())
         raise EnforcementError(
             f"unknown checkpoint '{key}' for workflow '{tpl.name}' (checks: {known})"
         )
+    if session.checkpoint(key) is None:
+        # a known-but-unseeded check (suggested, or added to the template after the
+        # session was seeded) materializes here, same as on the complete path —
+        # otherwise the row-level waive has nothing to update and blows up
+        defn = tpl.check(key)
+        session.seed_checkpoints([(key, defn.title if defn else key)])
     try:
         session.waive_checkpoint(key, reason, actor)
-    except ValueError as e:
+    except (KeyError, ValueError) as e:
         raise EnforcementError(str(e.args[0] if e.args else e)) from e
     return session.checkpoint(key)
 
@@ -221,6 +227,7 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
         "stage": session.stage,
         "outcome": session.outcome,
         "workflow": tpl.name,
+        "queries_executed": session.executed_count(),
         "required_checks": keys,
         "open_checks": open_checks,
         "waived_checks": waived_checks,
@@ -254,6 +261,15 @@ def clean_close_blockers(ready: dict) -> list[str]:
     said they were not real, which is itself a clean result.
     """
     blockers = []
+    # "we looked and it was fine" requires having looked: with no executed
+    # queries there is nothing behind the vouch, however few checks the
+    # workflow declares — a zero-check workflow must not offer a clean close
+    # the moment the session starts
+    if not ready.get("queries_executed"):
+        blockers.append(
+            "no queries have executed — a clean close vouches that the targets were "
+            "examined and found sound, and nothing has been examined yet"
+        )
     if ready["open_checks"]:
         blockers.append(f"required checkpoints still open: {ready['open_checks']}")
     if ready["findings_accepted"]:
@@ -345,13 +361,14 @@ def advance_stage(
             "recorded and accepted by the user (in the console) before fixes."
         )
     session.set_stage(to_stage, actor)
-    if to_stage == "closed" and not session.outcome:
-        # 'clean' means a human vouched for a negative result, so a forced close
-        # never earns it — it leaves the outcome blank rather than overstating it
-        if ready["findings_accepted"]:
-            session.set_outcome("findings", actor)
-        elif not force:
-            session.set_outcome("clean", actor)
+    # an outcome is a label the gates earned, so a forced close never gets one —
+    # not 'clean' (nothing was confirmed) and not 'findings' (the gates that
+    # make the label mean something were skipped); it leaves the outcome blank
+    # rather than overstating it. The only non-forced route here carries
+    # accepted findings (a clean run cannot pass the fixes gate above —
+    # close_session is where 'clean' is assigned).
+    if to_stage == "closed" and not session.outcome and not force and ready["findings_accepted"]:
+        session.set_outcome("findings", actor)
     if force:
         session.log_event(
             actor, "stage_gate_forced", {"stage": to_stage, "open_checks": ready["open_checks"]}
@@ -385,6 +402,11 @@ def close_session(
     if ready["findings_accepted"]:
         # a run with accepted findings closes on the normal gated path
         advance_stage(session, "closed", actor, False, overrides_dir)
+        if note.strip():
+            # the user's closing note is part of the record on either outcome,
+            # not only the clean one
+            session.set_meta("outcome_note", note.strip())
+            session.log_event(actor, "outcome_note_recorded", {"note": note.strip()})
         return readiness(session, overrides_dir)
     blockers = clean_close_blockers(ready)
     if blockers:

@@ -481,3 +481,24 @@ def test_every_human_boundary_refuses_a_shell_out(workspace, fake_snow_env, sid,
 def test_knowledge_confirm_refuses_a_shell_out(workspace, fake_snow_env):
     err = invoke_err("knowledge", "confirm", "DB.S.T1", "k_001")["error"]
     assert "confirming a knowledge fact" in err
+
+
+def test_actor_user_flag_requires_a_terminal(workspace, fake_snow_env, sid):
+    """A non-interactive caller must not write its actions into the audit trail
+    under the human's name — `--actor user` needs a human at the prompt."""
+    err = invoke_err("session", "advance", sid, "--to", "analysis", "--actor", "user")["error"]
+    assert "interactive terminal" in err
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    err = invoke_err(
+        "checkpoint", "complete", sid, "null_completeness", "-e", run["qid"], "--actor", "user"
+    )["error"]
+    assert "interactive terminal" in err
+    # without the flag the same action proceeds, attributed to the agent
+    out = invoke("session", "advance", sid, "--to", "analysis")
+    assert out["stage"] == "analysis"
+    events = invoke("session", "events", sid, "--limit", "5")
+    stage_events = [e for e in events if e["type"] == "stage_changed"]
+    # the shell-out's advance is the agent's (auto-advances log as 'system');
+    # nothing here may claim the human's name
+    assert any(e["actor"] == "agent" for e in stage_events)
+    assert not any(e["actor"] == "user" for e in stage_events)

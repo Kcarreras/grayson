@@ -331,3 +331,79 @@ def test_wholly_off_scope_evidence_is_still_refused(session):
     out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
     with pytest.raises(EnforcementError, match="does not touch any table"):
         engine.complete_checkpoint(session, "replicate_anomaly", [out["qid"]], "n/a")
+
+
+# -- honest-outcome hardening (post-review fixes) --------------------------
+
+
+def test_waiving_an_unseeded_suggested_check_works(session):
+    """Suggested checks materialize when taken up; a waive of one that never was
+    must seed it and waive, not blow up on the missing row."""
+    cp = engine.waive_checkpoint(session, "onset_dating", "no time dimension on this table")
+    assert cp["status"] == "waived"
+    assert cp["note"] == "no time dimension on this table"
+
+
+def test_waive_unknown_checkpoint_names_both_pools(session):
+    # the complete path lists required + suggested keys; the waive path should too
+    with pytest.raises(EnforcementError, match="onset_dating"):
+        engine.waive_checkpoint(session, "not_a_check", "n/a")
+
+
+def test_waiving_a_completed_checkpoint_is_refused(session):
+    """A waive over a completed check would silently discard its evidence."""
+    qids = _run(session, 1)
+    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    with pytest.raises(EnforcementError, match="already complete"):
+        engine.waive_checkpoint(session, "replicate_anomaly", "second thoughts")
+    cp = session.checkpoint("replicate_anomaly")
+    assert cp["status"] == "complete"
+    assert cp["evidence"] == qids
+
+
+def test_clean_close_requires_something_examined(session):
+    """'We looked and it was fine' requires having looked — a session with no
+    executed queries (e.g. a zero-check workflow at start) never offers clean."""
+    ready = engine.readiness(session)
+    assert ready["queries_executed"] == 0
+    assert ready["clean_close_available"] is False
+    assert any("nothing has been examined" in b for b in engine.clean_close_blockers(ready))
+    _clear_all_checks(session)
+    assert engine.clean_close_blockers(engine.readiness(session)) == []
+
+
+def test_forced_close_with_accepted_findings_earns_no_outcome(session):
+    """A forced close skips the gates that make an outcome label mean something,
+    so it earns neither label — 'findings' included."""
+    qids = _run(session, 1)
+    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    got = engine.record_finding(session, _finding(qids))
+    session.accept_finding(got["fid"])
+    # other required checks still open: only force gets this to closed
+    engine.advance_stage(session, "closed", actor="user", force=True)
+    assert session.stage == "closed"
+    assert session.outcome == ""
+
+
+def test_close_note_is_kept_on_a_findings_close(session):
+    qids = _clear_all_checks(session)
+    got = engine.record_finding(session, _finding(qids))
+    session.accept_finding(got["fid"])
+    engine.close_session(session, actor="user", note="verified the fix against prod counts")
+    assert session.outcome == "findings"
+    assert session.summary()["outcome_note"] == "verified the fix against prod counts"
+
+
+def test_off_scope_evidence_is_persisted_on_the_checkpoint(session):
+    """The off-scope marker must live on the stored row the console and report
+    render, not only in the transient return and the event log."""
+    in_scope = _run(session, 1)
+    out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
+    engine.complete_checkpoint(session, "replicate_anomaly", in_scope, "reproduced")
+    engine.complete_checkpoint(
+        session, "upstream_trace", in_scope + [out["qid"]], "walked upstream"
+    )
+    cp = session.checkpoint("upstream_trace")
+    assert cp["evidence_off_scope"] == [out["qid"]]
+    listed = {c["key"]: c for c in session.checkpoints()}
+    assert listed["upstream_trace"]["evidence_off_scope"] == [out["qid"]]

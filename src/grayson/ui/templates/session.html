@@ -167,7 +167,14 @@
       {% elif c.status == "waived" %}<span class="badge attn">waived</span>
       {% else %}<span class="badge todo">open</span>{% endif %}</td>
   <td>{% if c.status == "waived" %}<span class="muted small">not applicable</span>
-      {% else %}{% for q in c.evidence %}{{ qc(q) }} {% endfor %}{% endif %}</td>
+      {% else %}{% for q in c.evidence %}{{ qc(q) }} {% endfor %}
+      {% if c.evidence_off_scope %}
+      {# legitimate for lineage probes — but the human judging the checkpoint
+         should see how much of the citation list actually touched scope #}
+      <div class="attn-text small">{{ (c.evidence | length) - (c.evidence_off_scope | length) }}
+        of {{ c.evidence | length }} cited queries touched the tables under investigation
+        (off-scope: {{ c.evidence_off_scope | join(", ") }})</div>
+      {% endif %}{% endif %}</td>
   <td class="muted small">
     {{ c.note or "" }}
     {% if c.status == "open" and s.stage != "closed" %}

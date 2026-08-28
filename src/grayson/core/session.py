@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS queries(
 );
 CREATE TABLE IF NOT EXISTS checkpoints(
     key TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
-    evidence TEXT, note TEXT, completed_by TEXT, completed_at TEXT
+    evidence TEXT, note TEXT, completed_by TEXT, completed_at TEXT,
+    evidence_off_scope TEXT
 );
 CREATE TABLE IF NOT EXISTS findings(
     fid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
@@ -129,6 +130,7 @@ class Session:
         "ALTER TABLE findings ADD COLUMN superseded_by TEXT",
         "ALTER TABLE findings ADD COLUMN rejected_reason TEXT",
         "ALTER TABLE findings ADD COLUMN rejected_at TEXT",
+        "ALTER TABLE checkpoints ADD COLUMN evidence_off_scope TEXT",
     )
 
     def _migrate(self) -> None:
@@ -532,13 +534,16 @@ class Session:
         try:
             con.row_factory = sqlite3.Row
             rows = con.execute(
-                "SELECT key, title, status, evidence, note, completed_by, completed_at "
-                "FROM checkpoints ORDER BY rowid"
+                "SELECT key, title, status, evidence, note, completed_by, completed_at, "
+                "evidence_off_scope FROM checkpoints ORDER BY rowid"
             ).fetchall()
             out = []
             for r in rows:
                 d = dict(r)
                 d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
+                d["evidence_off_scope"] = (
+                    json.loads(d["evidence_off_scope"]) if d["evidence_off_scope"] else []
+                )
                 out.append(d)
             return out
         finally:
@@ -549,8 +554,8 @@ class Session:
         try:
             con.row_factory = sqlite3.Row
             row = con.execute(
-                "SELECT key, title, status, evidence, note, completed_by, completed_at "
-                "FROM checkpoints WHERE key = ?",
+                "SELECT key, title, status, evidence, note, completed_by, completed_at, "
+                "evidence_off_scope FROM checkpoints WHERE key = ?",
                 (key,),
             ).fetchone()
         finally:
@@ -559,15 +564,32 @@ class Session:
             return None
         d = dict(row)
         d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
+        d["evidence_off_scope"] = (
+            json.loads(d["evidence_off_scope"]) if d["evidence_off_scope"] else []
+        )
         return d
 
-    def complete_checkpoint(self, key: str, evidence: list[str], note: str, actor: str) -> None:
+    def complete_checkpoint(
+        self,
+        key: str,
+        evidence: list[str],
+        note: str,
+        actor: str,
+        off_scope: list[str] | None = None,
+    ) -> None:
         con = self._con()
         try:
             cur = con.execute(
                 "UPDATE checkpoints SET status='complete', evidence=?, note=?, "
-                "completed_by=?, completed_at=? WHERE key=?",
-                (json.dumps(evidence), note, actor, utcnow(), key),
+                "completed_by=?, completed_at=?, evidence_off_scope=? WHERE key=?",
+                (
+                    json.dumps(evidence),
+                    note,
+                    actor,
+                    utcnow(),
+                    json.dumps(off_scope) if off_scope else None,
+                    key,
+                ),
             )
             con.commit()
             if cur.rowcount == 0:
@@ -589,14 +611,23 @@ class Session:
             raise ValueError("a waive requires a reason — it is what makes the gap auditable")
         con = self._con()
         try:
-            cur = con.execute(
+            row = con.execute("SELECT status FROM checkpoints WHERE key=?", (key,)).fetchone()
+            if row is None:
+                raise KeyError(f"no checkpoint '{key}'")
+            if row[0] == "complete":
+                # waiving over a completed check would silently discard the evidence
+                # on record — the reverse of what a waive is for
+                raise ValueError(
+                    f"checkpoint '{key}' is already complete, with evidence on the "
+                    "record — waiving it now would discard that evidence. Reopen it "
+                    "first (`grayson checkpoint reopen`) if it really should be waived."
+                )
+            con.execute(
                 "UPDATE checkpoints SET status='waived', evidence=NULL, note=?, "
-                "completed_by=?, completed_at=? WHERE key=?",
+                "completed_by=?, completed_at=?, evidence_off_scope=NULL WHERE key=?",
                 (reason.strip(), actor, utcnow(), key),
             )
             con.commit()
-            if cur.rowcount == 0:
-                raise KeyError(f"no checkpoint '{key}'")
         finally:
             con.close()
         self.log_event(actor, "checkpoint_waived", {"key": key, "reason": reason.strip()})
