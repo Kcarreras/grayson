@@ -468,6 +468,7 @@ def test_calibration_gates_apply_through_the_cli(workspace, fake_snow_env, sid):
         (("intervention", "respond", "SID", "i_001", "--json", "{}"), "answering an intervention"),
         (("checkpoint", "waive", "SID", "freshness", "--reason", "n/a"), "waiving a checkpoint"),
         (("session", "close", "SID"), "closing a session"),
+        (("library", "migrate"), "migrating the library format"),
     ],
 )
 def test_every_human_boundary_refuses_a_shell_out(workspace, fake_snow_env, sid, args, action):

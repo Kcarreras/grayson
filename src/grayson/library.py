@@ -259,6 +259,47 @@ def library_pull(workspace: Workspace) -> dict:
     return library_pull_path(lib)
 
 
+def migrate_library(workspace: Workspace) -> dict:
+    """Rewrite the library's knowledge docs to the current format, deliberately.
+
+    The compatibility contract (docs/LIBRARY.md, "Format stability") is that a
+    breaking format change never happens implicitly on read — it happens here,
+    on a clean git tree, landing as one labeled commit a human can review and
+    revert. Today the only rewrite is stamping `format:` on docs written before
+    stamping existed; future FORMAT_STEPS run through the same door.
+    """
+    from grayson.identity import get_user_id
+    from grayson.knowledge import KNOWLEDGE_FORMAT, KnowledgeStore
+
+    lib = workspace.config.library_path or workspace.root
+    is_git = (lib / ".git").exists()
+    if is_git and _git(lib, "status", "--porcelain").stdout.strip():
+        raise RuntimeError(
+            "library working tree is dirty — commit or stash first, so the migration "
+            "lands as one revertible commit and nothing else rides along with it"
+        )
+    report = KnowledgeStore(workspace.knowledge_dir).migrate()
+    out = {"library": str(lib), "is_git": is_git, **report}
+    if not is_git:
+        out["warning"] = (
+            "library is not a git repo, so this rewrite has no rollback point — "
+            "`git init` the library (or `grayson library link`) before the next one"
+        )
+        return out
+    if report["migrated"]:
+        message = f"grayson library migrate: knowledge format {KNOWLEDGE_FORMAT}"
+        user_id = get_user_id()
+        if user_id:
+            message += f"\n\nGrayson-User: {user_id}"
+        _git(lib, "add", "-A")
+        commit = _git(lib, "commit", "-m", message)
+        out["committed"] = commit.returncode == 0
+        if workspace.config.library_auto_push:
+            push = _git(lib, "push", "-u", "origin", "HEAD", timeout=120)
+            out["pushed"] = push.returncode == 0
+    return out
+
+
 def extract_library(workspace: Workspace, dest: Path) -> dict:
     """Split a solo workspace's assets out into a new library repo."""
     dest = dest.resolve()

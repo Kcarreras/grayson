@@ -9,13 +9,28 @@ faster and more reliable than the last.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from grayson.util import utcnow
+
+#: version of the knowledge-doc format this grayson reads and writes. Docs
+#: without a `format:` key predate stamping and are format 1 by definition.
+#: The compatibility contract lives in docs/LIBRARY.md ("Format stability"):
+#: changes within a format are additive-only, and a breaking change bumps this
+#: and ships a migration step in FORMAT_STEPS the same release.
+KNOWLEDGE_FORMAT = 1
+
+#: future breaking changes register here: FORMAT_STEPS[n] rewrites a doc dict
+#: from format n to n+1 (applied in sequence by upgrade_doc, run deliberately
+#: via `grayson library migrate` — never implicitly on read). Empty today:
+#: format 1 is the first stamped format, and stamping an unstamped doc needs
+#: no reshaping.
+FORMAT_STEPS: dict[int, Callable[[dict], dict]] = {}
 
 
 class KnowledgeDocError(ValueError):
@@ -41,8 +56,17 @@ _PROFILE_DEFAULTS: dict[str, object] = {
     "open_questions": [],
 }
 
+#: frontmatter keys this format defines; anything else in a doc is preserved
+#: verbatim under the doc's "extra" key and written back untouched
+_KNOWN_FRONT_KEYS = {"table", "format", "facts", "definition_files", *PROFILE_KEYS}
+
 
 class Fact(BaseModel):
+    # extra='allow': a fact written by a newer grayson may carry fields this
+    # version does not know; they round-trip through read -> model_dump ->
+    # write instead of being silently stripped on the next rewrite
+    model_config = ConfigDict(extra="allow")
+
     id: str
     fact: str
     status: FactStatus = "proposed"
@@ -81,9 +105,11 @@ class KnowledgeStore:
         if not path.is_file():
             return {
                 "table": fqn.upper(),
+                "format": KNOWLEDGE_FORMAT,
                 "facts": [],
                 "definition_files": [],
                 "notes": "",
+                "extra": {},
                 **{
                     k: (v.copy() if isinstance(v, list) else v)
                     for k, v in _PROFILE_DEFAULTS.items()
@@ -105,11 +131,22 @@ class KnowledgeStore:
         except ValueError as e:
             raise KnowledgeDocError(f"knowledge doc {rel} has a malformed fact: {e}") from e
         table = data.get("table", fqn.upper())
+        try:
+            fmt = int(data.get("format", 1))  # unstamped docs predate stamping: format 1
+        except (TypeError, ValueError) as e:
+            raise KnowledgeDocError(
+                f"knowledge doc {rel}: 'format' must be an integer, got {data.get('format')!r}"
+            ) from e
         doc = {
             "table": table,
+            "format": fmt,
             "facts": facts,
             "definition_files": data.get("definition_files", []),
             "notes": _strip_heading(body, table),
+            # frontmatter this version does not define — kept verbatim so a
+            # rewrite by this grayson never strips what a newer one (or a
+            # hand-edit) recorded
+            "extra": {k: v for k, v in data.items() if k not in _KNOWN_FRONT_KEYS},
         }
         for key, default in _PROFILE_DEFAULTS.items():
             doc[key] = data.get(key, default.copy() if isinstance(default, list) else default)
@@ -125,12 +162,26 @@ class KnowledgeStore:
     # -- write -----------------------------------------------------------
 
     def _write(self, fqn: str, doc: dict[str, Any]) -> None:
+        # A reader may load a newer doc best-effort, but must never REWRITE one:
+        # this version writes only the fields it defines, so a rewrite would
+        # discard whatever the newer format added. Visible refusal beats silent
+        # loss — the invariant that keeps mixed grayson versions safe on one
+        # shared library.
+        fmt = int(doc.get("format", KNOWLEDGE_FORMAT))
+        if fmt > KNOWLEDGE_FORMAT:
+            raise KnowledgeDocError(
+                f"knowledge doc for {doc.get('table', fqn.upper())} is format {fmt}, newer "
+                f"than this grayson writes (format {KNOWLEDGE_FORMAT}) — refusing to "
+                "rewrite it. Upgrade grayson to edit this doc, or edit the file by hand."
+            )
         path = self.table_path(fqn)
         path.parent.mkdir(parents=True, exist_ok=True)
-        front = {"table": doc["table"]}
+        front = {"table": doc["table"], "format": KNOWLEDGE_FORMAT}
         for key in PROFILE_KEYS:  # only write populated profile fields (small diffs)
             if doc.get(key):
                 front[key] = doc[key]
+        for key, value in (doc.get("extra") or {}).items():
+            front.setdefault(key, value)  # round-trip, but never clobber a defined key
         front |= {
             "definition_files": doc.get("definition_files", []),
             "facts": doc.get("facts", []),
@@ -264,6 +315,48 @@ class KnowledgeStore:
                     )
         return hits
 
+    # -- format migration -------------------------------------------------
+
+    def _stored_format(self, fqn: str) -> int | None:
+        """The format actually written in the file (None when missing/unstamped),
+        as opposed to read()'s normalized view where unstamped means 1."""
+        path = self.table_path(fqn)
+        if not path.is_file():
+            return None
+        front, _ = _split_frontmatter(path.read_text(encoding="utf-8"))
+        try:
+            data = yaml.safe_load(front) or {} if front else {}
+        except yaml.YAMLError:
+            return None
+        raw = data.get("format") if isinstance(data, dict) else None
+        try:
+            return int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def migrate(self) -> dict:
+        """Rewrite every table doc to the current format. Deliberate-only: this
+        is invoked by `grayson library migrate` (which insists on a clean git
+        tree and lands the result as one labeled, revertible commit) — never
+        implicitly on read. Idempotent: an up-to-date doc is left untouched."""
+        migrated, up_to_date, errors = [], [], []
+        for fqn in self.all_tables():
+            try:
+                if self._stored_format(fqn) == KNOWLEDGE_FORMAT:
+                    up_to_date.append(fqn)
+                    continue
+                self._write(fqn, upgrade_doc(self.read(fqn)))
+                migrated.append(fqn)
+            except KnowledgeDocError as e:
+                # one broken or too-new doc must not abort the rest of the sweep
+                errors.append({"table": fqn, "error": str(e)})
+        return {
+            "format": KNOWLEDGE_FORMAT,
+            "migrated": migrated,
+            "up_to_date": len(up_to_date),
+            "errors": errors,
+        }
+
     def all_tables(self) -> list[str]:
         if not self.dir.is_dir():
             return []
@@ -276,6 +369,25 @@ class KnowledgeStore:
             if len(parts) == 3:
                 out.append(".".join(parts).upper())
         return out
+
+
+def upgrade_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    """Apply FORMAT_STEPS in sequence until the doc is at the current format.
+
+    A doc already current (or newer) passes through unchanged — _write is the
+    gate that refuses newer formats. A gap in the ladder is a release bug and
+    says so."""
+    fmt = int(doc.get("format", 1))
+    while fmt < KNOWLEDGE_FORMAT:
+        step = FORMAT_STEPS.get(fmt)
+        if step is None:
+            raise KnowledgeDocError(
+                f"no migration step from knowledge format {fmt} to {fmt + 1} — "
+                "this is a grayson release bug, not a problem with your library"
+            )
+        doc = step(doc)
+        fmt = doc["format"] = fmt + 1
+    return doc
 
 
 def completeness(doc: dict[str, Any]) -> dict[str, Any]:

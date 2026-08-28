@@ -40,6 +40,35 @@ The console's Knowledge tab includes a relationship canvas of the whole
 library (Cytoscape + ELK, vendored — no CDN); each table page shows its
 completeness report, facts, and the external checks that cover it.
 
+## Format stability
+
+The library is the team's compounding asset, so its file formats are a public
+interface with a compatibility contract — the code adapts to the files, never
+the reverse:
+
+- **The library must remain useful with zero grayson.** Knowledge docs are
+  markdown with YAML frontmatter, records are small JSON files: readable by a
+  human or any agent from the raw repo alone. No change may trade this away.
+- **Changes within a format version are additive-only.** New fields may
+  appear; existing fields never change meaning or disappear. A rename means
+  writing both names and reading either for a deprecation window.
+- **Unknown fields round-trip.** A grayson that does not recognize a
+  frontmatter key or fact field preserves it verbatim on rewrite, so mixed
+  versions can share one library without a rewrite by an older install
+  stripping what a newer one recorded.
+- **Docs are stamped** (`format: N` in frontmatter; unstamped docs predate
+  stamping and are format 1). A reader may load a newer doc best-effort, but
+  it **refuses to rewrite** one — visible refusal with an upgrade message,
+  never silent loss.
+- **Breaking changes ship only alongside `grayson library migrate`**, which
+  runs on a clean git tree and lands the rewrite as one labeled commit —
+  reviewable, revertible, run deliberately by a human. Migration never
+  happens implicitly on read; git history is the rollback mechanism.
+
+```bash
+grayson library migrate   # idempotent; refuses on a dirty tree
+```
+
 ## Attribution: user ids
 
 Set a short per-user id once after install:
