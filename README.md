@@ -17,10 +17,10 @@
 
 ---
 
-Agents are now really good at data QA, troubleshooting and remediation. But the investigation process in a typical enterprise warehouse is messy. Sometimes it's open-ended, and in messy schemas and disjointed orgs, each agent starts from the same messy, incomplete context. grayson resolves that: your agent — in Cursor, Claude Code, Codex,
-or any harness — does the analysis, and grayson gives it rails to run on, and you, the confidence to automate. Currently, Snowflake-first. Guarded read-only access. Sessions that cannot claim
-work without evidence. A human console at every critical semantic judgment call. A
-git-shared team library so every investigation makes the next one smarter. Documentation of every pipeline fix persists beyond your agents context window. 
+Agents are now really good at data QA, troubleshooting and remediation. But the investigation process in a typical enterprise warehouse is messy. Sometimes it's open-ended, and in chaotic schemas and disjointed orgs, each agent has to overcome the a mountain of patchy context to do real work. grayson resolves that: bring your own agent (BYOA) — in Cursor, Claude Code, VSCode Copilot, Codex,
+or any other harness, and grayson gives it rails to run on, and you, the confidence to automate analytic workflows. Currently, Snowflake-first. Guarded read-only access. Sessions that cannot claim
+work without evidence. A human console for every critical semantic judgment call. A
+git-shared team library so every investigation makes the next one smarter. Documentation of every pipeline fix that persists beyond your agent's context window. 
 
 Holy Cartesian Product Batman! 
 
@@ -104,7 +104,7 @@ grayson setup                     # guided: workspace → connection → user id
 ```
 
 Prefer flags? Every step is its own command — `grayson init .`, `doctor`,
-`user set <id>`, `library link <url>`, `harness init claude-code|cursor|codex`.
+`user set <id>`, `library link <url>`, `harness init claude-code|cursor|codex|copilot`.
 
 No Snowflake yet? The sandbox is a full demo on a local mock warehouse,
 seeded with planted, workflow-matched bugs and a scoring answer key:
