@@ -94,3 +94,83 @@ def test_all_tables(ks):
     ks.add_fact("DB.S.A", "x", fact_id="1")
     ks.add_fact("DB.S.B", "y", fact_id="2")
     assert set(ks.all_tables()) == {"DB.S.A", "DB.S.B"}
+
+
+# -- format stability ------------------------------------------------------
+
+
+def test_write_stamps_current_format(ks, workspace):
+    from grayson.knowledge import KNOWLEDGE_FORMAT
+
+    ks.add_fact("DB.S.T", "ID is a surrogate key", fact_id="id_meaning")
+    text = (workspace.knowledge_dir / "DB" / "S" / "T.md").read_text()
+    assert f"format: {KNOWLEDGE_FORMAT}" in text
+
+
+def test_unknown_fields_round_trip_through_a_rewrite(ks, workspace):
+    """A doc enriched by a newer grayson (or a hand edit) must survive a rewrite
+    by this one: unknown frontmatter keys and fact fields are preserved, not
+    silently stripped — the mixed-version-team guarantee."""
+    path = workspace.knowledge_dir / "DB" / "S" / "T.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        "table: DB.S.T\n"
+        "domain: finance\n"
+        "facts:\n"
+        "- id: f1\n"
+        "  fact: amounts are gross\n"
+        "  status: proposed\n"
+        "  weight: 3\n"
+        "---\n\n# DB.S.T\n",
+        encoding="utf-8",
+    )
+    doc = ks.read("DB.S.T")
+    assert doc["extra"] == {"domain": "finance"}
+    assert doc["facts"][0]["weight"] == 3
+    ks.add_fact("DB.S.T", "region_id maps to legacy regions", fact_id="region")
+    text = path.read_text()
+    assert "domain: finance" in text
+    assert "weight: 3" in text
+    assert len(ks.read("DB.S.T")["facts"]) == 2
+
+
+def test_newer_format_reads_best_effort_but_refuses_rewrite(ks, workspace):
+    """Visible refusal beats silent loss: this version writes only the fields it
+    defines, so rewriting a newer doc would discard what that format added."""
+    from grayson.knowledge import KnowledgeDocError
+
+    path = workspace.knowledge_dir / "DB" / "S" / "T.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = (
+        "---\n"
+        "table: DB.S.T\n"
+        "format: 99\n"
+        "facts:\n"
+        "- id: f1\n"
+        "  fact: amounts are gross\n"
+        "  status: proposed\n"
+        "---\n\n# DB.S.T\n"
+    )
+    path.write_text(original, encoding="utf-8")
+    assert ks.read("DB.S.T")["facts"][0]["id"] == "f1"  # best-effort read still works
+    with pytest.raises(KnowledgeDocError, match="refusing to rewrite"):
+        ks.add_fact("DB.S.T", "another fact")
+    assert path.read_text() == original  # untouched
+
+
+def test_unstamped_docs_read_as_format_one(ks, workspace):
+    path = workspace.knowledge_dir / "DB" / "S" / "T.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("---\ntable: DB.S.T\nfacts: []\n---\n\n# DB.S.T\n", encoding="utf-8")
+    assert ks.read("DB.S.T")["format"] == 1
+
+
+def test_garbage_format_key_is_a_named_doc_error(ks, workspace):
+    from grayson.knowledge import KnowledgeDocError
+
+    path = workspace.knowledge_dir / "DB" / "S" / "T.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("---\ntable: DB.S.T\nformat: banana\n---\n", encoding="utf-8")
+    with pytest.raises(KnowledgeDocError, match="format"):
+        ks.read("DB.S.T")

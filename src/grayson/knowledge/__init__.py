@@ -1,4 +1,5 @@
 from grayson.knowledge.store import (
+    KNOWLEDGE_FORMAT,
     PROFILE_KEYS,
     Fact,
     KnowledgeDocError,
@@ -6,4 +7,11 @@ from grayson.knowledge.store import (
     completeness,
 )
 
-__all__ = ["PROFILE_KEYS", "Fact", "KnowledgeDocError", "KnowledgeStore", "completeness"]
+__all__ = [
+    "KNOWLEDGE_FORMAT",
+    "PROFILE_KEYS",
+    "Fact",
+    "KnowledgeDocError",
+    "KnowledgeStore",
+    "completeness",
+]

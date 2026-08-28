@@ -7,6 +7,7 @@ library repo that each workspace links via [library] in grayson.toml.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -257,6 +258,101 @@ def library_pull(workspace: Workspace) -> dict:
     if lib is None or not (lib / ".git").exists():
         return {"ok": False, "detail": "no linked git library to pull"}
     return library_pull_path(lib)
+
+
+def _lint_records(records_dir: Path) -> dict:
+    """Published records the readers would silently skip: broken JSON, or a
+    shape record search does not recognize (library_records drops both without
+    a word — fine for serving, wrong for finding out)."""
+    from grayson.records import RECORD_KINDS
+
+    errors: list[dict] = []
+    checked = 0
+    if records_dir.is_dir():
+        for path in sorted(records_dir.rglob("*.json")):
+            checked += 1
+            rel = str(path.relative_to(records_dir))
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                errors.append({"file": rel, "problem": f"unreadable JSON: {e}"})
+                continue
+            if not isinstance(data, dict) or data.get("kind") not in RECORD_KINDS:
+                errors.append(
+                    {
+                        "file": rel,
+                        "problem": "not a recognized record shape — record search "
+                        "skips this file silently",
+                    }
+                )
+    return {"ok": not errors, "checked": checked, "errors": errors}
+
+
+def library_doctor(workspace: Workspace) -> dict:
+    """One read-only health pass over the whole library.
+
+    Knowledge docs against the format contract (parse, stamp, duplicate fact
+    ids, moved files), workflow templates through their linter, published
+    records through a parse check, and the repo's git freshness. Surfaces on
+    demand the drift that hand edits and merges accumulate — it changes
+    nothing; fixing is the human's (or `library migrate`'s) job.
+    """
+    from grayson.knowledge import KnowledgeStore
+    from grayson.workflows import lint_workflows
+
+    lib = workspace.config.library_path or workspace.root
+    knowledge = KnowledgeStore(workspace.knowledge_dir).lint()
+    workflows = lint_workflows(workspace.workflows_dir)
+    records = _lint_records(workspace.records_dir)
+    return {
+        "library": str(lib),
+        "ok": knowledge["ok"] and workflows["ok"] and records["ok"],
+        "knowledge": knowledge,
+        "workflows": workflows,
+        "records": records,
+        "repo": repo_status(lib),
+    }
+
+
+def migrate_library(workspace: Workspace) -> dict:
+    """Rewrite the library's knowledge docs to the current format, deliberately.
+
+    The compatibility contract (docs/LIBRARY.md, "Format stability") is that a
+    breaking format change never happens implicitly on read — it happens here,
+    on a clean git tree, landing as one labeled commit a human can review and
+    revert. Today the only rewrite is stamping `format:` on docs written before
+    stamping existed; future FORMAT_STEPS run through the same door.
+    """
+    from grayson.identity import get_user_id
+    from grayson.knowledge import KNOWLEDGE_FORMAT, KnowledgeStore
+
+    lib = workspace.config.library_path or workspace.root
+    is_git = (lib / ".git").exists()
+    if is_git and _git(lib, "status", "--porcelain").stdout.strip():
+        raise RuntimeError(
+            "library working tree is dirty — commit or stash first, so the migration "
+            "lands as one revertible commit and nothing else rides along with it"
+        )
+    report = KnowledgeStore(workspace.knowledge_dir).migrate()
+    out = {"library": str(lib), "is_git": is_git, **report}
+    if not is_git:
+        out["warning"] = (
+            "library is not a git repo, so this rewrite has no rollback point — "
+            "`git init` the library (or `grayson library link`) before the next one"
+        )
+        return out
+    if report["migrated"]:
+        message = f"grayson library migrate: knowledge format {KNOWLEDGE_FORMAT}"
+        user_id = get_user_id()
+        if user_id:
+            message += f"\n\nGrayson-User: {user_id}"
+        _git(lib, "add", "-A")
+        commit = _git(lib, "commit", "-m", message)
+        out["committed"] = commit.returncode == 0
+        if workspace.config.library_auto_push:
+            push = _git(lib, "push", "-u", "origin", "HEAD", timeout=120)
+            out["pushed"] = push.returncode == 0
+    return out
 
 
 def extract_library(workspace: Workspace, dest: Path) -> dict:

@@ -2099,6 +2099,39 @@ def library_pull_cmd() -> None:
     emit(library_pull(_workspace()))
 
 
+@library_app.command("doctor")
+def library_doctor_cmd() -> None:
+    """Health-check the library: knowledge docs against the format contract,
+    workflow lint, published records, and git freshness. Read-only; exits
+    non-zero when something needs fixing."""
+    from grayson.library import library_doctor
+
+    report = library_doctor(_workspace())
+    emit(report)
+    if not report["ok"]:
+        raise typer.Exit(1)
+
+
+@library_app.command("migrate")
+def library_migrate_cmd() -> None:
+    """Rewrite the library's knowledge docs to the current format.
+
+    A deliberate, human-run step — never implicit: it requires a clean git tree
+    and lands as one labeled, revertible commit. Idempotent when everything is
+    already current."""
+    from grayson.knowledge import KNOWLEDGE_FORMAT
+    from grayson.library import migrate_library
+
+    require_interactive(
+        "migrating the library format",
+        f"Rewrite this library's knowledge docs to format {KNOWLEDGE_FORMAT}?",
+    )
+    try:
+        emit(migrate_library(_workspace()))
+    except (RuntimeError, OSError) as e:
+        fail(str(e))
+
+
 @library_app.command("extract")
 def library_extract_cmd(
     dest: Path = typer.Argument(..., help="Destination for the extracted library repo."),
