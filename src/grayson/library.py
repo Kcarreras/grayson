@@ -7,6 +7,7 @@ library repo that each workspace links via [library] in grayson.toml.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -257,6 +258,60 @@ def library_pull(workspace: Workspace) -> dict:
     if lib is None or not (lib / ".git").exists():
         return {"ok": False, "detail": "no linked git library to pull"}
     return library_pull_path(lib)
+
+
+def _lint_records(records_dir: Path) -> dict:
+    """Published records the readers would silently skip: broken JSON, or a
+    shape record search does not recognize (library_records drops both without
+    a word — fine for serving, wrong for finding out)."""
+    from grayson.records import RECORD_KINDS
+
+    errors: list[dict] = []
+    checked = 0
+    if records_dir.is_dir():
+        for path in sorted(records_dir.rglob("*.json")):
+            checked += 1
+            rel = str(path.relative_to(records_dir))
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                errors.append({"file": rel, "problem": f"unreadable JSON: {e}"})
+                continue
+            if not isinstance(data, dict) or data.get("kind") not in RECORD_KINDS:
+                errors.append(
+                    {
+                        "file": rel,
+                        "problem": "not a recognized record shape — record search "
+                        "skips this file silently",
+                    }
+                )
+    return {"ok": not errors, "checked": checked, "errors": errors}
+
+
+def library_doctor(workspace: Workspace) -> dict:
+    """One read-only health pass over the whole library.
+
+    Knowledge docs against the format contract (parse, stamp, duplicate fact
+    ids, moved files), workflow templates through their linter, published
+    records through a parse check, and the repo's git freshness. Surfaces on
+    demand the drift that hand edits and merges accumulate — it changes
+    nothing; fixing is the human's (or `library migrate`'s) job.
+    """
+    from grayson.knowledge import KnowledgeStore
+    from grayson.workflows import lint_workflows
+
+    lib = workspace.config.library_path or workspace.root
+    knowledge = KnowledgeStore(workspace.knowledge_dir).lint()
+    workflows = lint_workflows(workspace.workflows_dir)
+    records = _lint_records(workspace.records_dir)
+    return {
+        "library": str(lib),
+        "ok": knowledge["ok"] and workflows["ok"] and records["ok"],
+        "knowledge": knowledge,
+        "workflows": workflows,
+        "records": records,
+        "repo": repo_status(lib),
+    }
 
 
 def migrate_library(workspace: Workspace) -> dict:

@@ -66,8 +66,16 @@ the reverse:
   happens implicitly on read; git history is the rollback mechanism.
 
 ```bash
+grayson library doctor    # read-only health pass: knowledge format, workflow
+                          # lint, records parse, git freshness; non-zero exit
+                          # when something needs fixing
 grayson library migrate   # idempotent; refuses on a dirty tree
 ```
+
+Hand edits and merges are first-class ways to write the library, so drift is
+normal — `doctor` is how it surfaces on demand instead of accumulating: the
+doc that no longer parses, the fact id a merge duplicated, the doc a newer
+grayson wrote that this version can read but not rewrite.
 
 ## Attribution: user ids
 

@@ -2099,6 +2099,19 @@ def library_pull_cmd() -> None:
     emit(library_pull(_workspace()))
 
 
+@library_app.command("doctor")
+def library_doctor_cmd() -> None:
+    """Health-check the library: knowledge docs against the format contract,
+    workflow lint, published records, and git freshness. Read-only; exits
+    non-zero when something needs fixing."""
+    from grayson.library import library_doctor
+
+    report = library_doctor(_workspace())
+    emit(report)
+    if not report["ok"]:
+        raise typer.Exit(1)
+
+
 @library_app.command("migrate")
 def library_migrate_cmd() -> None:
     """Rewrite the library's knowledge docs to the current format.

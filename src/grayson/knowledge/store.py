@@ -315,6 +315,82 @@ class KnowledgeStore:
                     )
         return hits
 
+    # -- lint --------------------------------------------------------------
+
+    def lint(self) -> dict:
+        """Validate every knowledge doc against the current format.
+
+        Hand edits and merges are first-class ways to write the library, so
+        drift is normal — this is how a team finds it on demand instead of
+        accumulating it: the doc that no longer parses, the fact id a merge
+        duplicated, the doc a newer grayson wrote that this version cannot
+        rewrite. Errors mean broken; warnings mean working but worth a look;
+        unstamped is informational (stamped on the next write or migrate).
+        """
+        errors: list[dict] = []
+        warnings: list[dict] = []
+        unstamped: list[str] = []
+        checked = 0
+        if not self.dir.is_dir():
+            return {"ok": True, "checked": 0, "errors": [], "warnings": [], "unstamped": []}
+        for path in sorted(self.dir.rglob("*.md")):
+            if path.name == "glossary.md":
+                continue
+            rel = str(path.relative_to(self.dir))
+            parts = path.relative_to(self.dir).with_suffix("").parts
+            if len(parts) != 3:
+                warnings.append(
+                    {
+                        "file": rel,
+                        "problem": "not at DB/SCHEMA/TABLE.md depth — invisible to "
+                        "table listings and search",
+                    }
+                )
+                continue
+            fqn = ".".join(parts)
+            checked += 1
+            try:
+                doc = self.read(fqn)
+            except ValueError as e:  # KnowledgeDocError included
+                errors.append({"file": rel, "problem": str(e)})
+                continue
+            stored = self._stored_format(fqn)
+            if stored is None:
+                unstamped.append(fqn.upper())
+            elif stored > KNOWLEDGE_FORMAT:
+                warnings.append(
+                    {
+                        "file": rel,
+                        "problem": f"format {stored} is newer than this grayson writes "
+                        f"({KNOWLEDGE_FORMAT}) — readable, but read-only until you upgrade",
+                    }
+                )
+            if str(doc["table"]).upper() != fqn.upper():
+                warnings.append(
+                    {
+                        "file": rel,
+                        "problem": f"frontmatter table '{doc['table']}' disagrees with the "
+                        f"path ('{fqn.upper()}') — was the file moved by hand?",
+                    }
+                )
+            ids = [f["id"] for f in doc["facts"]]
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            if dupes:
+                errors.append(
+                    {
+                        "file": rel,
+                        "problem": f"duplicate fact id(s) {dupes} — usually a merge gone "
+                        "wrong; ids must be unique per table",
+                    }
+                )
+        return {
+            "ok": not errors,
+            "checked": checked,
+            "errors": errors,
+            "warnings": warnings,
+            "unstamped": unstamped,
+        }
+
     # -- format migration -------------------------------------------------
 
     def _stored_format(self, fqn: str) -> int | None:
