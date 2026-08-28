@@ -407,13 +407,18 @@ def close_session(
             # not only the clean one
             session.set_meta("outcome_note", note.strip())
             session.log_event(actor, "outcome_note_recorded", {"note": note.strip()})
-        return readiness(session, overrides_dir)
-    blockers = clean_close_blockers(ready)
-    if blockers:
-        raise EnforcementError(
-            "cannot close: " + "; ".join(blockers) + ". A session closes either with "
-            "accepted findings or as a confirmed clean result — not with work still open."
-        )
-    session.set_outcome(OUTCOMES[0], actor, note)
-    session.set_stage("closed", actor)
+    else:
+        blockers = clean_close_blockers(ready)
+        if blockers:
+            raise EnforcementError(
+                "cannot close: " + "; ".join(blockers) + ". A session closes either with "
+                "accepted findings or as a confirmed clean result — not with work still open."
+            )
+        session.set_outcome(OUTCOMES[0], actor, note)
+        session.set_stage("closed", actor)
+    # close is the human-approved moment, so the report publishes here —
+    # best-effort (publication never fails the close), like finding acceptance
+    from grayson.records import publish_report
+
+    publish_report(session)
     return readiness(session, overrides_dir)

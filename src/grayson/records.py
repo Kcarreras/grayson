@@ -23,7 +23,7 @@ from pathlib import Path
 from grayson.core.session import Session
 from grayson.workspace import Workspace
 
-RECORD_KINDS = ("finding", "proposal")
+RECORD_KINDS = ("finding", "proposal", "report")
 
 
 def _finding_row(base: dict, f: dict) -> dict:
@@ -169,6 +169,65 @@ def publish_proposal(session: Session, pid: str) -> None:
         p,
         f"grayson records: proposal {pid} ({session.id})",
     )
+
+
+def publish_report(session: Session) -> None:
+    """Publish the session's full report at close — the third compounding
+    artifact beside knowledge and records: the whole story of an investigation,
+    searchable from any linked workspace.
+
+    Close is the human-approved moment (a user action, like acceptance for
+    findings), so publication rides on it. Best-effort like every publication:
+    it must never fail the close itself. Writes records/<sid>/report.json (the
+    searchable row + full report) and report.md (the rendered document, using
+    the library's default profile).
+    """
+    try:
+        from grayson.report import ReportError, ReportProfile, build_report, load_profile
+        from grayson.report import render_markdown as _render
+
+        ws = session.workspace
+        report = build_report(session, ws.workflows_dir)
+        try:
+            profile = load_profile(ws.reports_dir)
+        except ReportError:
+            profile = ReportProfile()  # a broken profile must not block the close
+        meta = session.meta_all()
+        ready = report["readiness"]
+        summary = _outcome_summary(meta, ready)
+        md_path = ws.records_dir / session.id / "report.md"
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(_render(report, profile), encoding="utf-8")
+        row = {
+            **_session_base(session.id, meta),
+            "kind": "report",
+            "id": "report",
+            "ts": report["generated_at"],
+            "title": meta.get("title") or session.id,
+            "outcome": meta.get("outcome", ""),
+            "summary": summary,
+            "payload": {
+                "targets": report["session"].get("targets", []),
+                "queries_executed": ready.get("queries_executed", 0),
+                "findings_accepted": ready.get("findings_accepted", 0),
+                "waived_checks": [w["key"] for w in ready.get("waived_checks", [])],
+                "narrative": report.get("narrative", ""),
+            },
+        }
+        _publish(session.workspace, row, report, f"grayson records: report ({session.id})")
+    except (OSError, ValueError, KeyError):  # pragma: no cover - best-effort
+        return
+
+
+def _outcome_summary(meta: dict, ready: dict) -> str:
+    outcome = meta.get("outcome", "")
+    note = (meta.get("outcome_note") or "").strip()
+    head = {
+        "clean": "clean — checks cleared, nothing found worth acting on",
+        "findings": f"closed on {ready.get('findings_accepted', 0)} accepted finding(s)",
+    }.get(outcome, f"stage {meta.get('stage', '')}")
+    counts = f"{ready.get('queries_executed', 0)} queries executed"
+    return f"{head}; {counts}" + (f" — {note}" if note else "")
 
 
 def library_records(records_dir: Path, kind: str | None = None) -> list[dict]:

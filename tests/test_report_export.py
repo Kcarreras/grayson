@@ -126,3 +126,127 @@ def test_report_distinguishes_a_clean_run_from_an_empty_one(workspace):
     # a waived check is neither ticked nor left looking unfinished
     assert "[~]" in text and "**waived**" in text
     assert "static reference table" in text
+
+
+# -- profiles, narrative, charts, publication ------------------------------
+
+
+def invoke_err(*args) -> dict:
+    result = runner.invoke(app, list(args))
+    assert result.exit_code != 0, result.output
+    return json.loads(result.stderr or result.output)
+
+
+def _session_with_work(workspace):
+    from grayson.config import GuardSettings
+    from grayson.core import engine
+    from grayson.core.run import run_statement
+    from grayson.core.session import Session
+
+    s = Session.create(
+        workspace,
+        workflow="table-health",
+        targets=["DB.S.T1"],
+        guard=GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0),
+        guard_profile="moderate",
+    )
+    engine.seed_from_workflow(s)
+    qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
+    for key in engine.workflow_for(s).required_check_keys():
+        engine.complete_checkpoint(s, key, [qid], "checked")
+    return s, qid
+
+
+def test_narrative_renders_labeled_and_must_cite_evidence(workspace, fake_snow_env, sid):
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    # a narrative citing nothing is refused — it is the story of the evidence
+    err = invoke_err("session", "narrate", sid, "--text", "all looked fine to me")
+    assert "must cite" in err["error"]
+    out = invoke(
+        "session", "narrate", sid, "--text", f"Nulls concentrate after the backfill ({run['qid']})."
+    )
+    assert out["cites"] == [run["qid"]]
+    report = invoke("session", "report", sid, "--markdown")
+    assert "## Narrative (agent-written)" in report["markdown"]
+    assert run["qid"] in report["narrative"]
+
+
+def test_charts_appear_in_the_report(workspace, fake_snow_env, sid):
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    invoke(
+        "chart",
+        "add",
+        sid,
+        "--artifact",
+        run["qid"],
+        "--kind",
+        "bar",
+        "-x",
+        "VAL",
+        "-y",
+        "ID",
+        "--title",
+        "ids by val",
+    )
+    report = invoke("session", "report", sid, "--markdown")
+    assert report["charts"][0]["title"] == "ids by val"
+    assert "## Charts" in report["markdown"] and "ids by val" in report["markdown"]
+
+
+def test_profile_controls_sections_and_audience(workspace, fake_snow_env, sid):
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    cps = invoke("checkpoint", "list", sid)
+    invoke("checkpoint", "complete", sid, cps[0]["key"], "-e", run["qid"])
+    (workspace.reports_dir).mkdir(parents=True, exist_ok=True)
+    (workspace.reports_dir / "exec.yaml").write_text(
+        "audience: stakeholder\nsections: [checkpoints, findings]\n"
+        'header: "INTERNAL — Data QA"\nfooter: "Questions: #data-quality"\n',
+        encoding="utf-8",
+    )
+    md = invoke("session", "report", sid, "--markdown", "--profile", "exec")["markdown"]
+    assert md.startswith("INTERNAL — Data QA")
+    assert "Questions: #data-quality" in md
+    assert "## Queries" not in md  # section dropped by the profile
+    # stakeholder audience summarizes qid lists but keeps the count
+    assert "1 executed query cited" in md and run["qid"] not in md.split("## Checkpoints")[1]
+    # facts stay deterministic regardless of profile: the JSON carries the ids
+    report = invoke("session", "report", sid, "--profile", "exec")
+    assert run["qid"] in report["checkpoints"][0]["evidence"]
+
+
+def test_unknown_profile_and_unknown_section_fail_loudly(workspace, fake_snow_env, sid):
+    err = invoke_err("session", "report", sid, "--profile", "nope")
+    assert "no report profile" in err["error"]
+    (workspace.reports_dir).mkdir(parents=True, exist_ok=True)
+    (workspace.reports_dir / "bad.yaml").write_text("sections: [not_a_section]\n", encoding="utf-8")
+    err = invoke_err("session", "report", sid, "--profile", "bad")
+    assert "unknown report section" in err["error"]
+
+
+def test_report_publishes_to_library_records_at_close(workspace):
+    from grayson.core import engine
+    from grayson.records import search_records
+
+    s, qid = _session_with_work(workspace)
+    engine.close_session(s, actor="user", note="all four checks came back sound")
+    md = workspace.records_dir / s.id / "report.md"
+    assert md.is_file()
+    text = md.read_text(encoding="utf-8")
+    assert "clean — checks cleared" in text and qid in text
+    row_path = workspace.records_dir / s.id / "report.json"
+    assert row_path.is_file()
+    row = json.loads(row_path.read_text(encoding="utf-8"))
+    assert row["kind"] == "report" and row["outcome"] == "clean"
+    assert "all four checks came back sound" in row["summary"]
+    hits = search_records(workspace, "came back sound", kind="report")
+    assert hits and hits[0]["session_id"] == s.id
+
+
+def test_narrate_refused_after_close(workspace):
+    from grayson.core import engine
+
+    s, qid = _session_with_work(workspace)
+    engine.close_session(s, actor="user")
+    result = runner.invoke(app, ["session", "narrate", s.id, "--text", f"late thoughts {qid}"])
+    assert result.exit_code == 1
+    assert "closed" in (result.stderr or result.output)

@@ -102,6 +102,19 @@ grayson workflow new orders-slim-health --fork table-health
 grayson workflow preview orders-slim-health   # the standard confirmation form
 ```
 
+`grayson harness init` also installs an interactive **workflow-author skill**
+for the agent — one canonical text, written in the shared SKILL.md format to
+each harness's native skills directory (`.claude/skills/` for Claude Code,
+`.cursor/skills/` for Cursor ≥2.1, `.github/skills/` for VS Code Copilot;
+Codex, which has no skills mechanism, gets an AGENTS.md section, and a
+reference copy always lands at `.grayson/WORKFLOW_AUTHOR.md`). It walks the
+agent through interviewing the user — purpose, fork-or-fresh, setup inputs,
+the "meaningless without" test for required checks, breadth as suggested
+checks, schema — then the draft → lint → preview → sign-off → push loop, with
+every step going through the CLI so validation and ownership stay
+server-side. It ships with grayson rather than the library so the interview
+can never drift from what `workflow lint` enforces.
+
 `workflow preview` renders any template the standard human-readable way —
 setup inputs, gating checks with their order and the answers each works from,
 suggested breadth, and the session shape — with the file's lint findings

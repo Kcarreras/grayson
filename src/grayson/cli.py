@@ -869,16 +869,61 @@ def session_close(
 def session_report(
     session_id: str,
     out: Path = typer.Option(None, "--out", "-o", help="Also write a markdown report here."),
+    profile: str = typer.Option(
+        "default", "--profile", help="Report profile from the library's reports/ dir."
+    ),
+    markdown: bool = typer.Option(
+        False, "--markdown", "-m", help="Include the rendered markdown in the JSON output."
+    ),
 ) -> None:
-    """Build a full session report: checkpoints, findings, proposals, query stats."""
-    from grayson.report import build_report, render_markdown
+    """Build a full session report: checkpoints, findings, proposals, charts,
+    narrative, query stats. Facts are deterministic; the profile controls
+    presentation (sections, audience, header/footer)."""
+    from grayson.report import ReportError, build_report, load_profile, render_markdown
 
-    report = build_report(_session(session_id), _workspace().workflows_dir)
-    if out is not None:
-        out.write_text(render_markdown(report), encoding="utf-8")
-        emit({"written": str(out), "report": report})
+    ws = _workspace()
+    report = build_report(_session(session_id), ws.workflows_dir)
+    try:
+        prof = load_profile(ws.reports_dir, profile)
+    except ReportError as e:
+        fail(str(e))
         return
+    if markdown or out is not None:
+        text = render_markdown(report, prof)
+        if markdown:
+            report["markdown"] = text
+        if out is not None:
+            out.write_text(text, encoding="utf-8")
+            emit({"written": str(out), "report": report})
+            return
     emit(report)
+
+
+@session_app.command("narrate")
+def session_narrate(
+    session_id: str,
+    text: str = typer.Option(..., "--text", help="The narrative; cite executed q_XXXX ids."),
+) -> None:
+    """Set the session's report narrative — the agent-written story of the
+    investigation. It renders in its own clearly labeled section and can never
+    alter the deterministic sections; it must cite at least one executed query
+    id, because it is the story of the evidence, not a substitute for it."""
+    import re as _re
+
+    s = _session(session_id)
+    if s.stage == "closed":
+        fail("session is closed and its report is published — the narrative is part of the record")
+        return
+    cited = set(_re.findall(r"q_\d{4}", text))
+    if not (cited & s.executed_qids()):
+        fail(
+            "the narrative must cite at least one executed query id (q_XXXX) from this "
+            "session — it is the story of the evidence, not a substitute for it"
+        )
+        return
+    s.set_meta("report_narrative", text.strip())
+    s.log_event(default_actor(), "narrative_recorded", {"chars": len(text), "cites": sorted(cited)})
+    emit({"id": s.id, "narrative_chars": len(text.strip()), "cites": sorted(cited)})
 
 
 # -- worker --------------------------------------------------------------

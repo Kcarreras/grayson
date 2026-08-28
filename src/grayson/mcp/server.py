@@ -242,7 +242,7 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="Build a full session report: checkpoints, findings, proposals "
-        "(with verification), and query statistics."
+        "(with verification), charts, narrative, and query statistics."
     )
     def session_report(session_id: str) -> dict:
         from grayson.report import build_report
@@ -251,6 +251,32 @@ def build_server(workspace: Workspace) -> Any:
             return build_report(_session(session_id), workspace.workflows_dir)
         except (FileNotFoundError, ValueError) as e:
             return _err(e)
+
+    @mcp.tool(
+        description="Set the session's report narrative — your written story of the "
+        "investigation. Renders in its own clearly labeled 'agent-written' section of "
+        "the report and never alters the deterministic sections. Must cite at least "
+        "one executed query id (q_XXXX); write it before the user closes the session."
+    )
+    def session_narrate(session_id: str, text: str) -> dict:
+        import re as _re
+
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        if s.stage == "closed":
+            return {"error": "session is closed and its report is published"}
+        cited = set(_re.findall(r"q_\d{4}", text))
+        if not (cited & s.executed_qids()):
+            return {
+                "error": "the narrative must cite at least one executed query id "
+                "(q_XXXX) from this session — it is the story of the evidence, "
+                "not a substitute for it"
+            }
+        s.set_meta("report_narrative", text.strip())
+        s.log_event("agent", "narrative_recorded", {"chars": len(text), "cites": sorted(cited)})
+        return {"id": s.id, "narrative_chars": len(text.strip()), "cites": sorted(cited)}
 
     @mcp.tool(description="Register a parallel worker; returns its id for labeling queries.")
     def worker_join(session_id: str, label: str = "") -> dict:

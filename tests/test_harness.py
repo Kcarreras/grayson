@@ -124,3 +124,40 @@ def test_mcp_broken_config_surfaces_error(tmp_path):
     assert "error" in mcp_status(tmp_path, "claude-code")
     with pytest.raises(ValueError):
         apply_mcp(tmp_path, "claude-code")
+
+
+# -- workflow-author skill --------------------------------------------------
+
+
+def test_workflow_author_skill_written_per_harness(tmp_path):
+    """One canonical SKILL.md body lands at each harness's native skills
+    location (the shared open format); Codex, with no skills mechanism, gets a
+    second marked AGENTS.md section that coexists with the protocol section."""
+    from grayson.harness import generate_harness
+
+    skill_dirs = {
+        "claude-code": ".claude/skills/grayson-workflow-author/SKILL.md",
+        "cursor": ".cursor/skills/grayson-workflow-author/SKILL.md",
+        "copilot": ".github/skills/grayson-workflow-author/SKILL.md",
+    }
+    for harness, rel in skill_dirs.items():
+        root = tmp_path / harness
+        root.mkdir()
+        written = generate_harness(root, harness)["written"]
+        assert rel in written
+        text = (root / rel).read_text(encoding="utf-8")
+        assert text.startswith("---\nname: grayson-workflow-author\n")
+        assert "workflow preview" in text and "MEANINGLESS without" in text
+        assert (root / ".grayson" / "WORKFLOW_AUTHOR.md").is_file()
+
+    codex_root = tmp_path / "codex"
+    codex_root.mkdir()
+    generate_harness(codex_root, "codex")
+    agents = (codex_root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- grayson:start -->" in agents
+    assert "<!-- grayson-workflow-author:start -->" in agents
+    # regenerating replaces each section in place, never duplicates
+    generate_harness(codex_root, "codex")
+    agents = (codex_root / "AGENTS.md").read_text(encoding="utf-8")
+    assert agents.count("<!-- grayson-workflow-author:start -->") == 1
+    assert agents.count("<!-- grayson:start -->") == 1
