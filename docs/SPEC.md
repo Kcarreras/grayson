@@ -28,7 +28,7 @@ calls an LLM.
 6. **Everything inspectable.** Sessions, findings, knowledge, and query logs are plain
    files in the workspace, readable in any IDE.
 
-## 2. Confirmed requirements (from spec sessions)
+## 2. Decisions
 
 | Decision | Choice |
 |---|---|
@@ -504,22 +504,24 @@ runs the checks; malformed entries are reported per-file without hiding the rest
 FastAPI + server-rendered pages (Jinja2; no Node build chain), `127.0.0.1` only, with a
 per-launch session token in the URL. v1 views:
 
-1. **Sessions dashboard** — active/recent sessions, stage, checkpoint progress, pending
-   items, auth status.
-1. **Session setup panel** — guard-profile dropdown (suggested default pre-selected,
-   per-setting overrides), view pick-list with refresh flags, pending DDL to execute,
-   base-file pointers.
-2. **Session detail** — checkpoints w/ evidence, live query log (statement, verdict,
-   rows, duration, worker), cached artifacts, event timeline, and the analysis-chart
-   gallery (§8a) refreshed on the page's live cycle.
-3. **Interventions inbox** — pending tasks; interactive labeling/confirmation forms.
-4. **Findings review** — rendered findings with evidence drill-down; accept per finding.
-5. **Proposals** — diffs/DDL rendered side-by-side with the finding they fix;
-   approve/reject; verification results after rerun.
-6. **Knowledge** — browse/search; confirm or edit proposed facts.
-7. **Checks** — latest external check results (§11b): failures first with details
-   and check SQL, overdue automation flagged, per-table checks on knowledge pages.
-8. **Settings** — edit the workspace rails (`grayson.toml`): connection, default
+- **Sessions dashboard** — active/recent sessions, stage, checkpoint progress, pending
+  items, auth status.
+- **Session setup panel** — guard-profile dropdown (suggested default pre-selected,
+  per-setting overrides), view pick-list with refresh flags, pending DDL to execute,
+  base-file pointers.
+- **Session detail** — checkpoints w/ evidence, live query log (statement, verdict,
+  rows, duration, worker), cached artifacts, event timeline, and the analysis-chart
+  gallery (§8a) refreshed on the page's live cycle.
+- **Interventions inbox** — pending tasks; interactive labeling/confirmation forms.
+- **Findings review** — rendered findings with evidence drill-down; accept per finding.
+- **Proposals** — diffs/DDL rendered side-by-side with the finding they fix;
+  approve/reject; verification results after rerun.
+- **Workflows** — the catalog: core + team templates, create-or-fork, per-workflow
+  detail pages.
+- **Knowledge** — browse/search; confirm or edit proposed facts.
+- **Checks** — latest external check results (§11b): failures first with details
+  and check SQL, overdue automation flagged, per-table checks on knowledge pages.
+- **Settings** — edit the workspace rails (`grayson.toml`): connection, default
    guard profile, strict scope, allowed scopes, per-profile guard controls, and
    team-library controls (auto-push, pull/push, sync state). Settings mutation is
    a *human* surface: this page and the `grayson config` CLI are the only writers;
@@ -556,32 +558,23 @@ per-launch session token in the URL. v1 views:
 - Cached warehouse data is gitignored by generated `.gitignore`; a `grayson session
   scrub` command deletes a session's cached data on demand.
 
-## 15. Build phases
+## 15. Status
 
-1. ✅ **Core + guard + executor + cache** — workspace init, config, session basics,
-   guarded `query run`, result caching with freshness, audit log.
-2. ✅ **Workflows + checkpoints + findings** — templates, state machine, evidence
-   enforcement, findings schemas.
-3. ✅ **UI console + interventions** — dashboard, query log, intervention forms, findings
-   review.
-4. ✅ **Proposals + verification** — fix proposals, approval flow, before/after verification.
-5. ✅ **Knowledge + view libraries** — libraries, provenance, coverage check at setup,
-   team library linking, last-used guard defaults.
-6. ✅ **MCP server + harness generators** — typed tool surface mirroring the CLL, skill
-   file generation (cursor / claude-code / codex), worker registration.
+All planned phases are implemented and tested — core/guard/executor/cache,
+workflows + evidence enforcement, the console + interventions, proposals +
+verification, knowledge/view/checks libraries, records + reports, and the
+MCP server + harness generators. The suite includes an adversarial guard
+suite and the multi-agent security reviews logged in
+[SECURITY.md](SECURITY.md).
 
-All six phases are implemented, tested (253 pytest cases including an adversarial guard
-suite and a passed multi-agent security review — see docs/SECURITY.md), and lint-clean.
-
-One implementation note that diverged from this spec: result storage uses stdlib SQLite
-rather than duckdb/Parquet, because duckdb's native DLL is blocked by the Windows
-Application Control policy on the target work machine (§8).
+One divergence from the original spec: result storage uses stdlib SQLite
+rather than duckdb/Parquet — duckdb's native DLL is blocked by common
+Windows Application Control policies (§8).
 
 ---
 
-*Spec converged 2026-08-20 from requirements interview. Open items intentionally
-deferred: read-only role adoption, any central collaboration service (git-based
-library model specified in §11a is v1), additional workflow templates.*
+*Converged 2026-08-20. Deliberately deferred: read-only role adoption, any
+central collaboration service (the git-based library model in §11a is v1).*
 
 ## Repository layout
 

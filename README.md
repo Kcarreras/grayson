@@ -17,15 +17,20 @@
 
 ---
 
-Agents are now really good at data QA, troubleshooting and remediation. But the investigation process in a typical enterprise warehouse is messy. Sometimes it's open-ended, and in chaotic schemas and disjointed orgs, each agent has to overcome the a mountain of patchy context to do real work. grayson resolves that: bring your own agent (BYOA) — in Cursor, Claude Code, VSCode Copilot, Codex,
-or any other harness, and grayson gives it rails to run on, and you, the confidence to automate analytic workflows. Currently, Snowflake-first. Guarded read-only access. Sessions that cannot claim
-work without evidence. A human console for every critical semantic judgment call. A
-git-shared team library so every investigation makes the next one smarter. Documentation of every pipeline fix that persists beyond your agent's context window. 
+Agents are good at data QA, troubleshooting, and remediation. A typical
+enterprise warehouse is not good to agents: chaotic schemas, patchy context,
+open-ended questions. grayson closes that gap. Bring your own agent — Cursor,
+Claude Code, VS Code Copilot, Codex, any harness — and grayson gives it rails
+to run on:
 
-Holy Cartesian Product Batman! 
+- guarded, read-only warehouse access (Snowflake-first)
+- sessions that cannot claim work without evidence
+- a human console for every judgment call
+- a git-shared team library, so each investigation makes the next one smarter
+- fixes documented beyond any agent's context window
 
-grayson itself never calls an LLM. Every guarantee is enforced by code, not by
-prompts.
+grayson itself never calls an LLM. Every guarantee is enforced by code, not
+by prompts.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/session_dark.png">

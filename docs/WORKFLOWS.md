@@ -2,30 +2,29 @@
 
 A workflow template defines the shape of an investigation: the setup inputs a
 human provides, the evidence-gated checkpoints a session must clear, and the
-findings schema every claim validates against. Templates are YAML data — small
+findings schema every claim validates against. Templates are YAML — small
 files an analyst can read, fork, and share.
 
 ## Required, suggested, waived
 
-A workflow has to be complete without being universal, and those pull against
-each other: a check that is mandatory everywhere gets closed hollow where it
-does not apply, which is precisely the evidence-laundering the gate exists to
-prevent. So checkpoints come in two kinds, with an escape for the third case.
+Checkpoints come in two kinds, with an escape hatch for the third case:
 
 - **`required_checks`** gate. Keep them to the handful without which the
-  investigation is meaningless — four to six is the shape of the core set.
-  `depends_on` expresses the rare genuine ordering (bug-hunter will not let you
-  hunt a cause before the anomaly reproduces). `uses_inputs` names which of the
-  user's setup answers a check works from — it tells the agent what the check is
-  testing, and lint uses it to catch a required input no checkpoint ever reads.
-- **`suggested_checks`** carry breadth and gate nothing. They are surfaced at
-  session start and in the console; an agent does the ones that fit the tables
-  in front of it and closes those like any other checkpoint. This is how a
-  workflow names thirty fundamentals without demanding all thirty on a
-  five-column lookup table.
-- **Waiving** handles the last case: a *required* check that genuinely does not
-  apply here. The agent asks (an intervention saying why); a human waives it
-  with a reason. Waived satisfies the gate and never renders as complete.
+  investigation is meaningless — four to six in the core set. `depends_on`
+  expresses genuine ordering (bug-hunter: no cause-hunting until the anomaly
+  reproduces). `uses_inputs` names which setup answers a check works from;
+  lint uses it to catch a required input no checkpoint reads.
+- **`suggested_checks`** carry breadth and gate nothing. Surfaced at session
+  start and in the console; the agent does the ones that fit the tables in
+  front of it. This is how a workflow names thirty fundamentals without
+  demanding all thirty on a five-column lookup table.
+- **Waiving** covers a *required* check that genuinely does not apply. The
+  agent asks via an intervention; a human waives with a reason. Waived
+  satisfies the gate and never renders as complete.
+
+The design rule behind the split: a check that is mandatory everywhere gets
+closed hollow where it does not apply — the evidence-laundering the gates
+exist to prevent.
 
 ## The core templates
 
@@ -41,106 +40,89 @@ Seven ship built-in:
 | `table-onboarding` | Build the base descriptor for an undocumented table |
 | `feature-readiness` | Assess a feature table / training set before it feeds a model |
 
-`feature-readiness` is the ML-prep workflow. Descriptive profiling of one table lives in
-`table-health` and `table-onboarding` What it offers is the
-*decision*: is this set safe to train on? Its checkpoints are the things that
-sink a model — population and grain, label distribution and base rate,
-missingness **mechanism** rather than rate, redundancy, and leakage and point-in-time correctness. Its schema requires a
-`leakage_assessment` that says what was tested.
+Notes on three of them:
 
-`bug-hunter` opens by checking the *expectation* itself — a large share of
-reported anomalies are misunderstandings of the grain or of a deliberate rule,
-and finding that out costs one query here and a day of lineage walking later.
-Its findings schema takes a `resolution`: `root_caused`, or `inconclusive` with
-what is still open. An investigation that reproduces and bounds an anomaly, and a schema that accepts only a
-confident answer.
+- `bug-hunter` opens by checking the *expectation* itself — many reported
+  anomalies are misunderstandings of the grain or of a deliberate rule, and
+  finding that out costs one query here versus a day of lineage walking later.
+  Its schema accepts `resolution: inconclusive` (with what is still open):
+  reproducing and bounding an anomaly without isolating it is a real result.
+- `feature-readiness` answers a decision — is this set safe to train on? —
+  not generic profiling (that lives in `table-health`/`table-onboarding`).
+  Its checkpoints are what sinks models: population and grain, label
+  distribution, missingness *mechanism*, redundancy, leakage and
+  point-in-time correctness. Its schema requires a `leakage_assessment`.
+- `migration-parity` doubles as the verification stage for any other workflow.
 
-`migration-parity` doubles as the verification stage for every other workflow.
-
-Core templates are **canonical**: a library file cannot shadow a core name (a
-collision is rejected and reported, never merged), so core behavior changes
-only with a grayson release. Customization forks under a new name.
+Core templates are **canonical**: a library file cannot shadow a core name,
+so core behavior changes only with a grayson release. Customization forks
+under a new name.
 
 ## Findings schemas and severity
 
-Each workflow validates its claims against a closed-ended schema, and the schema
-is the enforceable quality lever on the open-ended end of the range. There are six:
-`standard_v1`, `bug_hunter_v1`, `parity_v1`, `pipeline_qa_v1`,
-`rule_qa_v1`, `feature_readiness_v1`. Two use a discriminator — `bug_hunter_v1` 
-asks for a `resolution` (`root_caused` or `inconclusive`, the latter needing `remaining_hypotheses`),
-and `rule_qa_v1` asks for a `finding_kind`, because an accuracy estimate must carry its sample size and
-sampling frame while an unreachable-category defect has no sample behind it at
+Each workflow validates claims against a closed schema — six ship:
+`standard_v1`, `bug_hunter_v1`, `parity_v1`, `pipeline_qa_v1`, `rule_qa_v1`,
+`feature_readiness_v1`. Two use a discriminator: `bug_hunter_v1` requires a
+`resolution` (`root_caused`, or `inconclusive` with `remaining_hypotheses`);
+`rule_qa_v1` requires a `finding_kind`, since an accuracy estimate needs a
+sample size and frame while an unreachable-category defect has no sample at
 all.
 
-Severity has a published scale (`grayson finding rubric`, MCP `finding_rubric`),
-because without a shared one every finding drifts to "high" and a queue where
-everything is high has no priority in it. grayson does not judge whether a
-severity is *right* — that is what accepting and rejecting are for. It makes the
-top two rungs cost the specificity a real severe finding already has:
+Severity has a published scale (`grayson finding rubric`) so findings don't
+all drift to "high". grayson never judges whether a severity is right — that
+is what accept/reject is for — but the top rungs cost the specificity a real
+severe finding already has:
 
-- `confidence: high` requires a `reproduction`. If nobody else can go and see it,
-  it is not high confidence.
-- `severity: critical` or `high` requires `affected_objects`. A severe finding
-  nobody can locate cannot be acted on.
+- `confidence: high` requires a `reproduction`.
+- `severity: critical` or `high` requires `affected_objects`.
 
 ## Team workflows: fork, edit, share
 
-The library's `workflows/` directory extends the catalog with your team's own
-templates, shared by git like everything else in the library
-([LIBRARY.md](LIBRARY.md)). Each carries provenance in the YAML itself:
-`created_by` (the author's `grayson user` id) and, for forks, `forked_from`
-lineage.
+The library's `workflows/` directory extends the catalog with your team's
+templates, git-shared like everything else ([LIBRARY.md](LIBRARY.md)). Each
+carries provenance in the YAML: `created_by`, and `forked_from` for forks.
 
 ```bash
 grayson workflow new orders-slim-health --fork table-health
 grayson workflow preview orders-slim-health   # the standard confirmation form
 ```
 
-`grayson harness init` also installs an interactive **workflow-author skill**
-for the agent — one canonical text, written in the shared SKILL.md format to
-each harness's native skills directory (`.claude/skills/` for Claude Code,
+`workflow preview` renders any template the way a person signs off on it —
+setup inputs, gating checks with order and the answers each uses, suggested
+breadth, session shape — with lint findings attached for library workflows.
+Show the preview, not raw YAML.
+
+`grayson harness init` installs a **workflow-author skill** for the agent: an
+interview (purpose, fork-or-fresh, inputs wired to checks, the "meaningless
+without" test for required checks, breadth as suggested, schema) followed by
+the draft → lint → preview → sign-off → push loop. One canonical SKILL.md,
+written to each harness's skills directory (`.claude/skills/`,
 `.cursor/skills/` for Cursor ≥2.1, `.github/skills/` for VS Code Copilot;
-Codex, which has no skills mechanism, gets an AGENTS.md section, and a
-reference copy always lands at `.grayson/WORKFLOW_AUTHOR.md`). It walks the
-agent through interviewing the user — purpose, fork-or-fresh, setup inputs,
-required checks, breadth as suggested checks, schema — then the draft → lint → preview → sign-off → push loop,
-with every step going through the CLI so validation and ownership stay
-server-side. Keeping it in the packang ensures tje interview can never 
-drift from what `workflow lint` enforces, so tread lightly making adjustments.
+Codex gets an AGENTS.md section; a reference copy lands at
+`.grayson/WORKFLOW_AUTHOR.md`). It ships with grayson, not the library, so
+the interview cannot drift from what lint enforces.
 
-`workflow preview` renders any template the standard human-readable way —
-setup inputs, gating checks with their order and the answers each works from,
-suggested breadth, and the session shape — with the file's lint findings
-attached for library workflows. It is the form to show a user before they
-commit to a workflow: an agent drafting or proposing one pastes the preview
-for sign-off, and a human deciding between workflows reads it instead of raw
-YAML.
+Editing is ownership-aware, enforced server-side: workflows you created edit
+in place; a collaborator's workflow — or a core template — forks under your
+id instead. A legacy file with no author is editable by anyone; the first
+save stamps the editor's id. Renames are forks, never in-place edits.
 
-Editing is ownership-aware, enforced server-side in the console: workflows
-you created edit in place; a collaborator's workflow — or a core template —
-forks a copy under your id instead, so nothing shared breaks under someone
-else's edit. A legacy file with no recorded author is editable by anyone, and
-the first save stamps the editor's id.
-
-## Lint: broken workflows are loud
+## Lint
 
 ```bash
-grayson workflow lint
+grayson workflow lint    # non-zero exit on errors; CI-friendly
 ```
 
-Errors (non-zero exit, CI-friendly for the qa-library repo): YAML that does
-not parse or validate, core-name shadowing, duplicate workflow names,
-duplicate checkpoint keys, unknown findings schemas. Warnings: missing
-descriptions (agents pick workflows by description), workflows with no
-checkpoints, file/name mismatches, a `depends_on` naming a check the workflow
-does not define, a `uses_inputs` naming an input it does not have, and a
-required setup input no checkpoint works from — a question asked of the user and
-then ignored. The same semantic rules run over the **core** templates in the
-test suite: they are canonical and non-editable, so their quality is grayson's
-to keep rather than a reviewer's to notice. A file that fails to load is reported
-everywhere workflows are listed — CLI, MCP (`workflow_list.library_problems`),
-and red-badged in the console — never silently skipped: **loadable means
-runnable**.
+Errors: YAML that does not parse or validate, core-name shadowing, duplicate
+workflow names or checkpoint keys, unknown findings schemas. Warnings:
+missing descriptions (agents pick workflows by description), no checkpoints,
+file/name mismatches, `depends_on` naming an undefined check, `uses_inputs`
+naming a missing input, a required input no checkpoint reads.
+
+A file that fails to load is reported everywhere workflows are listed — CLI,
+MCP (`workflow_list.library_problems`), red-badged in the console — never
+silently skipped: loadable means runnable. The same semantic rules run over
+the core templates in the test suite.
 
 ## The Workflows tab
 
@@ -149,12 +131,11 @@ runnable**.
   <img src="img/workflows_light.png" alt="The Workflows tab: a gallery of core and team workflows with a create-or-fork card">
 </picture>
 
-The console's Workflows tab makes the catalog browsable: a gallery of core and
-team workflows (lint failures shown red, in place), and a create-or-fork card.
-Each workflow's page draws the session flow stage by stage — evidence gates
-and human-approval points marked — with every checkpoint, setup input, and
-findings-schema field unpacked, plus usage and provenance.
-`/workflows/{name}/yaml` exports any definition for sharing.
+The console's Workflows tab is the browsable catalog: core and team workflows
+(lint failures red, in place) and a create-or-fork card. Each workflow's page
+draws the session flow — evidence gates and human-approval points marked —
+with checkpoints, setup inputs, and schema fields unpacked, plus usage and
+provenance. `/workflows/{name}/yaml` exports any definition.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/workflow_detail_dark.png">
