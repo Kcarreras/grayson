@@ -2,7 +2,8 @@
 
 The query guard is airtight only for statements that pass through grayson; an
 agent with arbitrary shell access could call `snow` directly with the user's
-own credentials, or read `.grayson/` state files. Where the harness has a
+own credentials, read those credentials and connect without `snow` at all, or
+read `.grayson/` state files. Where the harness has a
 machine-writable permission config (Claude Code's `.claude/settings.json`,
 VS Code / Copilot's `chat.tools.terminal.autoApprove` in
 `.vscode/settings.json`, Cursor's `.cursor/hooks.json` + hook script),
@@ -25,6 +26,12 @@ from pathlib import Path
 #: user-authored rules in the same file are never touched).
 GUARD_DENY_RULES = [
     "Bash(snow:*)",  # direct Snowflake CLI use — all warehouse access goes through grayson
+    # Blocking the `snow` binary while leaving its credentials readable is a
+    # half-measure: the connection details (and any key-pair private key stored
+    # beside them) are all an agent needs to reach the warehouse through the
+    # Python connector or the REST API, with no `snow` invocation to match on.
+    "Read(~/.snowflake/**)",
+    "Read(~/.snowsql/**)",  # the legacy snowsql client's config lives here too
     "Read(.grayson/**)",  # session state, cache, audit — read via grayson tools only
     "Edit(.grayson/**)",
     "Write(.grayson/**)",
@@ -51,10 +58,14 @@ HARNESS_GUIDANCE = {
         "is never auto-run: any direct warehouse call surfaces as a prompt a "
         "human sees.\n"
         "2. Hooks — a `beforeShellExecution` hook in .cursor/hooks.json can "
-        "hard-deny commands matching `snow` or paths under .grayson/; "
+        "hard-deny commands matching `snow`, reads of ~/.snowflake/ (the "
+        "connection details are all an agent needs to reach the warehouse "
+        "without `snow` at all), or paths under .grayson/; "
         "`grayson harness guard apply --harness cursor` writes exactly this "
         "(hook + script) if you'd rather not hand-roll it, or see Cursor's "
-        "hooks documentation for the script contract to define your own.\n"
+        "hooks documentation for the script contract to define your own. A hook "
+        "beats a denylist here because it can default-deny and normalize the "
+        "command rather than matching one literal string.\n"
         "Note the denylist and hooks govern the IDE agent; `cursor-agent` (the "
         "Cursor CLI) has its own permission config, set separately — for "
         "CLI-driven use, lean on the MCP server as the interface and configure "
@@ -84,8 +95,10 @@ HARNESS_GUIDANCE = {
 MANUAL_GUIDANCE = (
     "this harness has no machine-writable permission config grayson knows; "
     "configure its command allowlist to deny `snow` (and warehouse SDK "
-    "invocations) for agent sessions, and pair it with a read-only Snowflake "
-    "role — that role is the control that holds even without harness support"
+    "invocations) for agent sessions, deny reads of ~/.snowflake/ so the "
+    "credentials cannot simply be used without `snow`, and pair it with a "
+    "read-only Snowflake role — that role is the control that holds even "
+    "without harness support"
 )
 
 
@@ -102,7 +115,8 @@ def guard_rules_display(harness: str) -> list[str]:
         ]
     if harness == "cursor":
         return [
-            f"{ev} hook → {_CURSOR_SCRIPT_REL} (hard-deny `snow` and `.grayson/` access)"
+            f"{ev} hook → {_CURSOR_SCRIPT_REL} (hard-deny `snow`, Snowflake "
+            "credential reads, and `.grayson/` access)"
             for ev in _CURSOR_HOOK_EVENTS
         ]
     return list(GUARD_DENY_RULES)
@@ -185,7 +199,10 @@ def apply_guard(root: Path, harness: str = "claude-code") -> dict:
         "added": added,
         "rules": GUARD_DENY_RULES,
         "note": "friction + visibility, not containment — pair with a read-only "
-        "Snowflake role for the guarantee that survives a bypass",
+        "Snowflake role for the guarantee that survives a bypass. These rules match "
+        "tool calls and command strings, so they stop the direct path, not a determined "
+        "one; a key-pair private key stored outside ~/.snowflake is not covered and "
+        "cannot be, since its location is yours to choose.",
     }
 
 
@@ -309,9 +326,12 @@ _CURSOR_NOTE = (
 _CURSOR_HOOK_SCRIPT = r'''#!/usr/bin/env python3
 """grayson harness guard hook for Cursor (managed by `grayson harness guard`).
 
-Hard-denies agent shell commands invoking the Snowflake CLI (`snow`) and any
-shell or file access touching `.grayson/` state: warehouse access must go
-through grayson, where it is parsed, capped, and audited. Fails open — a
+Hard-denies agent shell commands invoking the Snowflake CLI (`snow`), reads
+of Snowflake credential/config directories (~/.snowflake/, ~/.snowsql/ — the
+connection details there are all an agent needs to reach the warehouse
+without `snow` at all), and any shell or file access touching `.grayson/`
+state: warehouse access must go through grayson, where it is parsed, capped,
+and audited. Fails open — a
 malformed event is allowed rather than wedging the agent; this layer is
 friction + visibility, not containment (docs/SECURITY.md).
 """
@@ -324,6 +344,11 @@ DENY = [
     (
         re.compile(r"(^|[\s;&|(`/])snow\b"),
         "direct `snow` use is blocked: all warehouse access goes through grayson",
+    ),
+    (
+        re.compile(r"\.snowflake\b|\.snowsql\b"),
+        "Snowflake credentials/config are off-limits: the connection details "
+        "are all an agent needs to reach the warehouse without `snow`",
     ),
     (
         re.compile(r"\.grayson\b"),

@@ -89,12 +89,55 @@ and fixed (regressions in `tests/test_integrity_hardening.py` and additions to
 | 16 | low | `_FQN_PART` accepted a trailing newline | Anchored with `\Z` |
 | 17 | low | MCP exposed `force` (dup of #2) | Removed from the MCP surface |
 
+### 2026-08-27 — Core workflow review: incomplete gate fixes and a gate with no honest exit
+
+Reviewing the core workflow templates surfaced three integrity gaps, two of them
+residue from the fixes above (regressions in `tests/test_cli.py` and
+`tests/test_engine.py`):
+
+| # | Severity | Issue | Fix |
+|---|---|---|---|
+| 18 | high | #2 was only half-fixed: `force` was honored for the `user` actor, but the CLI *defaulted* `--actor` to `user` and let any caller pass it, so a plain `session advance --force` from a shell-out cleared every gate | `--force` now also requires an interactive terminal and an explicit confirmation. Friction, not containment — an agent shelling out non-interactively cannot claim the user's authority, and harness deny rules can pattern-match the flag as a second layer |
+| 19 | medium | `session close` bypassed the engine entirely — it called `set_stage` directly, skipping both the checks-complete and accepted-finding gates, and logged the change under the default actor `user`, misattributing an agent's bypass to the human in the audit trail | Closing routes through `engine.close_session` and is a user action (interactive terminal). CLI actor now derives from whether a human is at the prompt, so agent-driven changes are recorded as the agent's. An explicit `--actor user` from a non-interactive caller is refused for the same reason — the flag can narrow claimed authority, never widen it |
+| 20 | medium | A required checkpoint that did not apply to the target had no honest exit, so the only route past the gate was a query chosen to satisfy the relevance test — the evidence-laundering the gate exists to prevent | Checkpoints can be **waived** by a user with a mandatory reason. Agents request via intervention; a waived gate is reported separately from a closed one everywhere |
+
+| 21 | high | The terminal gate covered `close`, `waive` and `--force`, but the other human boundaries were left open: `finding accept`, `proposal approve`/`reject`, `intervention respond` and `knowledge confirm` all ran fine from a non-interactive shell-out, so an agent could accept its own finding, approve its own fix, and answer its own intervention | Every command documented as a user action now requires an interactive terminal. `intervention respond` loses its non-interactive stdin path — an agent answering the question it asked defeats the reason for asking |
+
+A fourth issue was integrity-adjacent rather than a bypass: a session that found
+nothing could not close, because every stage from `fixes` on required an accepted
+finding. The pressure that creates — invent a finding or abandon the session —
+pointed the wrong way, so a clean run now closes as a first-class `clean` outcome
+that a human confirms. A *forced* close never earns that label.
+
+### 2026-08-27 — Guard rules covered the binary, not the credentials
+
+`grayson harness guard apply` denied `Bash(snow:*)` and reads of `.grayson/**`,
+but nothing covered `~/.snowflake/` — where the `snow` CLI keeps connection
+details and, under key-pair auth, the private key beside them. An agent with
+shell did not need to evade the `snow` pattern at all: read the connection
+file, connect with the Python connector or the SQL REST API, and no matched
+command ever appears. The deny set now includes `Read(~/.snowflake/**)` and
+`Read(~/.snowsql/**)`, and the Cursor and manual guidance name the same path.
+
+Workspaces guarded before this ship will show the new rules as missing in
+`grayson harness guard status`; re-running `apply` adds them.
+
+A private key stored somewhere other than `~/.snowflake` is still uncovered and
+cannot be covered — its location is the user's to choose. This is the ordinary
+shape of the layer: it stops the direct path, not a determined one.
+
 ## Residual risks (accepted)
 
 - A pre-existing malicious UDF with an external-access integration could exfiltrate
   *in-scope* data when invoked from a SELECT. Creating such a UDF requires privileged
   account setup that the guard already blocks; scope-limiting reduces blast radius. Use a
   read-only role for the strongest guarantee.
+- The interactive-terminal check on user-only actions (`--force`, `session close`,
+  `checkpoint waive`, `finding accept`, `proposal approve`/`reject`,
+  `intervention respond`, `knowledge confirm`) is friction, not containment: an agent that can allocate a pty
+  can defeat it. It removes the accidental and the casual path, keeps the audit trail
+  honest about who acted, and gives harness guard rules a stable pattern to deny. The
+  console remains the surface where a human unambiguously is the human.
 - The guard's correctness depends on sqlglot parsing SQL the way Snowflake executes it.
   sqlglot is version-pinned; dialect updates are reviewed before bumping.
 

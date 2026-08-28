@@ -8,6 +8,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
+from conftest import FakeExecutor
 from grayson.cli import app
 
 runner = CliRunner()
@@ -93,3 +94,35 @@ def test_query_rerun(workspace, fake_snow_env, sid):
 def test_query_rerun_unknown_qid_fails(workspace, fake_snow_env, sid):
     result = runner.invoke(app, ["query", "rerun", sid, "q_9999"])
     assert result.exit_code == 1
+
+
+def test_report_distinguishes_a_clean_run_from_an_empty_one(workspace):
+    """A clean session has no findings — without the outcome, its report reads as
+    a session that gave up rather than one that checked and found nothing."""
+    from grayson.config import GuardSettings
+    from grayson.core import engine
+    from grayson.core.run import run_statement
+    from grayson.core.session import Session
+    from grayson.report import build_report, render_markdown
+
+    s = Session.create(
+        workspace,
+        workflow="table-health",
+        targets=["DB.S.T1"],
+        guard=GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0),
+        guard_profile="moderate",
+    )
+    engine.seed_from_workflow(s)
+    qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
+    keys = engine.workflow_for(s).required_check_keys()
+    for key in keys[:-1]:
+        engine.complete_checkpoint(s, key, [qid], "checked")
+    engine.waive_checkpoint(s, keys[-1], "static reference table")
+    engine.close_session(s, "user", "everything came back sound")
+
+    text = render_markdown(build_report(s))
+    assert "clean — checks cleared" in text
+    assert "everything came back sound" in text
+    # a waived check is neither ticked nor left looking unfinished
+    assert "[~]" in text and "**waived**" in text
+    assert "static reference table" in text

@@ -113,6 +113,15 @@ GLOSSARY: dict[str, str] = {
         "edited: a corrected finding proposes to supersede the old one, and the "
         "swap executes only when you accept it — the history stays visible."
     ),
+    "severity": (
+        "How bad, on a shared scale — critical: wrong data is already being used "
+        "for decisions; high: real and material, but bounded or not yet consumed; "
+        "medium: genuine, limited blast radius; low: nobody is currently harmed; "
+        "info: not a defect, just worth knowing. grayson does not judge whether the "
+        "agent got it right — that is what accepting or rejecting is for — but it "
+        "does make the top rungs cost specificity: 'critical' and 'high' must name "
+        "the objects affected, and 'high' confidence must come with a reproduction."
+    ),
     "proposals": (
         "Concrete fixes the agent drafts — a file diff or DDL for you to apply. "
         "Agents never get write access; you approve and apply."

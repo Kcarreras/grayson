@@ -51,7 +51,7 @@
   <summary>Closed sessions ({{ historical | length }})</summary>
   <div class="fold-body scroll">
   <table>
-    <tr><th>Session</th><th>Workflow</th><th>Target tables</th><th>Findings</th><th>Created</th></tr>
+    <tr><th>Session</th><th>Workflow</th><th>Target tables</th><th>Outcome</th><th>Findings</th><th>Created</th></tr>
     {% for row in historical %}
     {% set s = row.summary %}
     <tr>
@@ -59,6 +59,11 @@
         <div class="faint mono small">{{ s.id }}</div></td>
       <td>{{ s.workflow }}</td>
       <td class="muted small">{{ s.targets | join(", ") }}</td>
+      {# a clean run has no findings; without the outcome it reads as a session
+         that did nothing rather than one that checked and found nothing #}
+      <td>{% if s.outcome == "clean" %}<span class="badge ok">clean</span>
+          {% elif s.outcome == "findings" %}<span class="badge plain">findings</span>
+          {% else %}<span class="faint small">—</span>{% endif %}</td>
       <td class="num">{{ row.findings }}</td>
       <td class="muted mono small">{{ s.created_at }}</td>
     </tr>

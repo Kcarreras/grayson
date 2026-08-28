@@ -21,21 +21,57 @@ required_checks:
     description: >
       Distribution of assigned categories, including the fallback/"other"
       bucket; flag if coverage deviates from expectation.
-  - key: sample_for_review
-    title: Draw a review sample and get human labels
+    uses_inputs: [rule_description, rule_location]
+  - key: sample_design
+    title: State the sampling design before drawing
     description: >
-      Draw a representative (and edge-weighted) sample and route it through a
-      human-labeling intervention; agents may not self-certify semantic
-      correctness.
+      Write down, before you look at results: the sampling frame (which rows are
+      eligible), the size and why it is adequate, and how strata are weighted if
+      you are over-sampling edge cases. "Representative" and "edge-weighted" pull
+      against each other — an edge-weighted sample estimates error modes well and
+      overall accuracy badly, so decide which you are buying and say so.
+    uses_inputs: [correctness_criteria]
+  - key: sample_for_review
+    title: Draw the sample and get human labels
+    description: >
+      Draw the sample as designed and route it through a human-labeling
+      intervention; agents may not self-certify semantic correctness.
+    depends_on: [sample_design]
+    uses_inputs: [correctness_criteria]
   - key: accuracy_estimate
     title: Estimate accuracy from labels
     description: >
       Using returned human labels, estimate assignment accuracy and characterize
-      the error modes (which categories are confused, systematic biases).
+      the error modes (which categories are confused, systematic biases). Report
+      the estimate with its sample size and an interval, and against the frame it
+      was drawn from — a bare percentage from an edge-weighted sample reads as an
+      overall accuracy and is not one.
+    depends_on: [sample_for_review]
+    uses_inputs: [correctness_criteria]
   - key: error_pattern_analysis
     title: Analyze error patterns
     description: >
       For misassignments, find the shared structure (URL pattern, source,
       regex gap) that explains them and points to a fix.
-open_stages: [analysis]
-findings_schema: standard_v1
+    depends_on: [sample_for_review]
+    uses_inputs: [rule_location]
+suggested_checks:
+  - key: adjudicate_disputed
+    title: Adjudicate the cases the labeler was unsure about
+    description: >
+      Route unsure or conflicting labels back to whoever the setup named as
+      adjudicator. Treating "unsure" as either correct or incorrect biases the
+      estimate in a direction you did not choose.
+  - key: rule_drift
+    title: Check whether accuracy is moving
+    description: >
+      Compare category assignment over time. A rule that was right when written
+      degrades as the inputs change — new URL shapes, new product lines — and
+      the drift shows up before the complaints do.
+  - key: unreachable_rules
+    title: Look for rules that never fire
+    description: >
+      Categories with zero or near-zero assignment usually mean a shadowed
+      branch or a condition that can no longer be met — a bug in the rule that
+      accuracy on the assigned rows will never reveal.
+findings_schema: rule_qa_v1

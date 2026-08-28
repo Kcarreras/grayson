@@ -37,6 +37,13 @@ they are equivalent. Never query Snowflake except through grayson.
   or reconfigure it yourself.
 - When a judgement needs a human (semantic correctness, ambiguous rules), file an
   intervention and wait for the answer instead of guessing.
+- **Finding nothing is a result.** If the checks clear and nothing is worth acting on,
+  do not manufacture a finding to get past a gate: ask the user to close the session as
+  a *clean* result (`session readiness` tells you when that is the available route).
+  Likewise, if a required checkpoint genuinely does not apply to this target, do not
+  close it with a query picked to satisfy the evidence test — file an intervention
+  asking the user to **waive** it, and say why. Closing sessions and waiving checks are
+  user actions; you ask, they decide.
 
 ## Workflow
 1. Discover: `grayson workflow list`; read the knowledge library for the target tables
@@ -60,6 +67,14 @@ they are equivalent. Never query Snowflake except through grayson.
    refresh any the setup flags. Need another registered view later?
    `grayson views use <sid> <name>` brings it into scope. Note the session id; use it
    in every later command.
+2b. Profile first: `grayson profile table <sid> DB.SCHEMA.TABLE` returns a table's
+   whole descriptive battery — per-column nulls, cardinality, ranges, key candidates,
+   value frequencies — in three or four guarded queries whose ids are evidence. Do
+   NOT hand-roll forty single-column queries; it burns the budget and produces ids
+   that differ every run. Its `observations` are leads, not verdicts. For quantiles
+   and correlations use `grayson profile stats|correlate <sid> <sample-qid>`: those
+   compute locally over the cached sample, so cite the sample's qid AND say the
+   statistic was computed locally rather than verified by the warehouse.
 3. Analyze: run guarded queries (`grayson query run <sid> --sql "..." --label "why"`).
    Always pass `--label`: a short purpose note ("replicate: dup order ids") that shows
    up in the console's query log and the audit trail. Before querying,
@@ -80,8 +95,20 @@ they are equivalent. Never query Snowflake except through grayson.
    (its grain, a semantic rule, an expectation), persist it for future sessions:
    `grayson knowledge add <table> --fact "..." --evidence <iid>` — the user confirms it
    from the console later.
+4b. Breadth: `workflow show <name>` lists **suggested checks** alongside the required
+   ones. They gate nothing — they are the fundamentals the workflow expects you to
+   consider. Do the ones that apply to these tables and close them like any other
+   checkpoint (`checkpoint complete` accepts them by key); skip the rest and say
+   which in your findings. Required checks may declare `depends_on`: close them in
+   that order, it is part of the method.
 5. Findings: record them against the workflow schema, each citing evidence:
-   `grayson finding add <sid> --json '{...}'`. Findings are immutable — never try
+   `grayson finding add <sid> --json '{...}'`. Calibrate severity against
+   `grayson finding rubric` — critical means wrong data is already being used for
+   decisions, info means it is not a defect at all. Two rungs cost specificity and
+   are enforced: `confidence: high` needs a `reproduction` (if nobody else can go
+   and see it, it is not high confidence), and `severity: critical|high` needs
+   `affected_objects`. Downgrading to dodge those is worse than either — say what
+   you found and let the user judge. Findings are immutable — never try
    to edit one. If an accepted finding turns out to be wrong, record a corrected
    finding with `"supersedes": "f_00X"` in the payload: that is a proposal, and
    the old finding is replaced only if the user accepts the new one. If the user
@@ -102,6 +129,11 @@ they are equivalent. Never query Snowflake except through grayson.
    console's stage strip tracks your progress. Your first executed query moves
    setup to analysis automatically; every later transition is yours to declare,
    and gates enforce that evidence exists before review/fixes.
+9. Close: the user closes the session, from the console or their own terminal —
+   either on accepted findings, or as a **clean** result when the checks cleared and
+   nothing turned up. `grayson session readiness <sid>` reports which route applies
+   (`clean_close_available`, `next_action`); tell the user what you found, or that you
+   found nothing, and let them close it.
 
 Run `grayson --help` (and `grayson <group> --help`) for the full command surface.
 """

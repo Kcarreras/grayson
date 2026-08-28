@@ -16,6 +16,11 @@ from grayson.workspace import Workspace
 
 STAGES = ["setup", "analysis", "synthesis", "review", "fixes", "verification", "closed"]
 
+#: how a closed session ended. 'clean' means the required checks cleared and
+#: nothing was found worth acting on — an outcome a human confirmed, not a
+#: session that merely ran out of road.
+OUTCOMES = ["clean", "findings"]
+
 #: aliases accepted anywhere a session id is expected; resolve to the newest session
 LATEST_ALIASES = {"latest", "last", "."}
 
@@ -85,7 +90,8 @@ CREATE TABLE IF NOT EXISTS queries(
 );
 CREATE TABLE IF NOT EXISTS checkpoints(
     key TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
-    evidence TEXT, note TEXT, completed_by TEXT, completed_at TEXT
+    evidence TEXT, note TEXT, completed_by TEXT, completed_at TEXT,
+    evidence_off_scope TEXT
 );
 CREATE TABLE IF NOT EXISTS findings(
     fid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
@@ -124,6 +130,7 @@ class Session:
         "ALTER TABLE findings ADD COLUMN superseded_by TEXT",
         "ALTER TABLE findings ADD COLUMN rejected_reason TEXT",
         "ALTER TABLE findings ADD COLUMN rejected_at TEXT",
+        "ALTER TABLE checkpoints ADD COLUMN evidence_off_scope TEXT",
     )
 
     def _migrate(self) -> None:
@@ -151,6 +158,7 @@ class Session:
         workers: int = 1,
         strict_scope: bool | None = None,
         connection: str | None = None,
+        actor: str = "user",
     ) -> Session:
         session_id = new_session_id()
         sdir = workspace.session_dir(session_id)
@@ -181,7 +189,10 @@ class Session:
         finally:
             con.close()
         session = cls(workspace, session_id)
-        session.log_event("user", "session_created", {"workflow": workflow, "targets": targets})
+        # attributed to whoever actually started it: an agent-started session used to
+        # be recorded under the human's name, same class of misattribution the stage
+        # and close paths carried
+        session.log_event(actor, "session_created", {"workflow": workflow, "targets": targets})
         return session
 
     def close_db(self) -> None:  # placeholder for symmetry; connections are per-call
@@ -277,6 +288,24 @@ class Session:
         extra = set(json.loads(self.get_meta("scope_extra", "[]") or "[]"))
         extra.update(t.upper() for t in tables)
         self.set_meta("scope_extra", json.dumps(sorted(extra)))
+
+    @property
+    def outcome(self) -> str:
+        """How a closed session ended: '' while open, then 'clean' or 'findings'.
+
+        A clean run — checks cleared, nothing wrong found — is a real result, not
+        an unfinished investigation. Recording it as such is what lets "we looked
+        and it was fine" compound in the library alongside defects.
+        """
+        return self.get_meta("outcome", "") or ""
+
+    def set_outcome(self, outcome: str, actor: str = "user", note: str = "") -> None:
+        if outcome not in OUTCOMES:
+            raise ValueError(f"unknown outcome '{outcome}' (outcomes: {', '.join(OUTCOMES)})")
+        self.set_meta("outcome", outcome)
+        if note.strip():
+            self.set_meta("outcome_note", note.strip())
+        self.log_event(actor, "outcome_recorded", {"outcome": outcome, "note": note.strip()})
 
     def set_stage(self, stage: str, actor: str = "user") -> None:
         if stage not in STAGES:
@@ -505,13 +534,16 @@ class Session:
         try:
             con.row_factory = sqlite3.Row
             rows = con.execute(
-                "SELECT key, title, status, evidence, note, completed_by, completed_at "
-                "FROM checkpoints ORDER BY rowid"
+                "SELECT key, title, status, evidence, note, completed_by, completed_at, "
+                "evidence_off_scope FROM checkpoints ORDER BY rowid"
             ).fetchall()
             out = []
             for r in rows:
                 d = dict(r)
                 d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
+                d["evidence_off_scope"] = (
+                    json.loads(d["evidence_off_scope"]) if d["evidence_off_scope"] else []
+                )
                 out.append(d)
             return out
         finally:
@@ -522,8 +554,8 @@ class Session:
         try:
             con.row_factory = sqlite3.Row
             row = con.execute(
-                "SELECT key, title, status, evidence, note, completed_by, completed_at "
-                "FROM checkpoints WHERE key = ?",
+                "SELECT key, title, status, evidence, note, completed_by, completed_at, "
+                "evidence_off_scope FROM checkpoints WHERE key = ?",
                 (key,),
             ).fetchone()
         finally:
@@ -532,15 +564,32 @@ class Session:
             return None
         d = dict(row)
         d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
+        d["evidence_off_scope"] = (
+            json.loads(d["evidence_off_scope"]) if d["evidence_off_scope"] else []
+        )
         return d
 
-    def complete_checkpoint(self, key: str, evidence: list[str], note: str, actor: str) -> None:
+    def complete_checkpoint(
+        self,
+        key: str,
+        evidence: list[str],
+        note: str,
+        actor: str,
+        off_scope: list[str] | None = None,
+    ) -> None:
         con = self._con()
         try:
             cur = con.execute(
                 "UPDATE checkpoints SET status='complete', evidence=?, note=?, "
-                "completed_by=?, completed_at=? WHERE key=?",
-                (json.dumps(evidence), note, actor, utcnow(), key),
+                "completed_by=?, completed_at=?, evidence_off_scope=? WHERE key=?",
+                (
+                    json.dumps(evidence),
+                    note,
+                    actor,
+                    utcnow(),
+                    json.dumps(off_scope) if off_scope else None,
+                    key,
+                ),
             )
             con.commit()
             if cur.rowcount == 0:
@@ -549,10 +598,48 @@ class Session:
             con.close()
         self.log_event(actor, "checkpoint_completed", {"key": key, "evidence": evidence})
 
+    def waive_checkpoint(self, key: str, reason: str, actor: str = "user") -> None:
+        """Mark a checkpoint not-applicable, with the reason on the record.
+
+        A waive is the honest alternative to evidence-laundering: an agent facing
+        an inapplicable check (freshness on a static dimension table) otherwise has
+        to manufacture a nominally-relevant query to clear the gate. The reason is
+        mandatory and the waiver is named, so a waived gate reads differently from
+        a closed one everywhere it is shown.
+        """
+        if not reason.strip():
+            raise ValueError("a waive requires a reason — it is what makes the gap auditable")
+        con = self._con()
+        try:
+            row = con.execute("SELECT status FROM checkpoints WHERE key=?", (key,)).fetchone()
+            if row is None:
+                raise KeyError(f"no checkpoint '{key}'")
+            if row[0] == "complete":
+                # waiving over a completed check would silently discard the evidence
+                # on record — the reverse of what a waive is for
+                raise ValueError(
+                    f"checkpoint '{key}' is already complete, with evidence on the "
+                    "record — waiving it now would discard that evidence. Reopen it "
+                    "first (`grayson checkpoint reopen`) if it really should be waived."
+                )
+            con.execute(
+                "UPDATE checkpoints SET status='waived', evidence=NULL, note=?, "
+                "completed_by=?, completed_at=?, evidence_off_scope=NULL WHERE key=?",
+                (reason.strip(), actor, utcnow(), key),
+            )
+            con.commit()
+        finally:
+            con.close()
+        self.log_event(actor, "checkpoint_waived", {"key": key, "reason": reason.strip()})
+
     def reopen_checkpoint(self, key: str, actor: str = "user") -> None:
         con = self._con()
         try:
-            con.execute("UPDATE checkpoints SET status='open' WHERE key=?", (key,))
+            con.execute(
+                "UPDATE checkpoints SET status='open', completed_by=NULL, completed_at=NULL "
+                "WHERE key=?",
+                (key,),
+            )
             con.commit()
         finally:
             con.close()
@@ -935,6 +1022,8 @@ class Session:
             "title": meta.get("title", ""),
             "workflow": meta.get("workflow", ""),
             "stage": meta.get("stage", "setup"),
+            "outcome": meta.get("outcome", ""),
+            "outcome_note": meta.get("outcome_note", ""),
             "created_at": meta.get("created_at"),
             "targets": json.loads(meta.get("targets") or "[]"),
             "guard_profile": meta.get("guard_profile"),

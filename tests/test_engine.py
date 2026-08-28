@@ -78,6 +78,8 @@ def test_finding_requires_valid_schema_and_evidence(session):
                 "title": "Anomaly found",
                 "severity": "high",
                 "confidence": "high",
+                "affected_objects": ["DB.S.T1"],
+                "reproduction": "re-run the cited query",
                 "summary": "Something is off in the data pipeline output.",
                 "evidence": qids,
             },
@@ -92,9 +94,12 @@ def test_finding_recorded(session):
             "title": "Fan-out duplicates",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Join fan-out creates duplicate rows in the output.",
             "evidence": qids,
             "extra": {
+                "resolution": "root_caused",
                 "root_cause": "one-to-many join",
                 "blast_radius": "1200 rows",
                 "alternatives_tested": "two ruled out",
@@ -137,3 +142,268 @@ def test_readiness_report(session):
     r = engine.readiness(session)
     assert set(r["open_checks"]) == set(r["required_checks"])
     assert not r["checks_complete"]
+
+
+# -- waiving inapplicable checks ------------------------------------------
+
+
+def _clear_all_checks(session, waive_last=False):
+    """Close every required check with real evidence (optionally waiving one)."""
+    qids = _run(session, 1)
+    keys = engine.workflow_for(session).required_check_keys()
+    for key in keys[:-1] if waive_last else keys:
+        engine.complete_checkpoint(session, key, qids, "done")
+    if waive_last:
+        engine.waive_checkpoint(session, keys[-1], "no lineage upstream of this table")
+    return qids
+
+
+def test_agent_cannot_waive_its_own_gate(session):
+    with pytest.raises(EnforcementError, match="user action"):
+        engine.waive_checkpoint(session, "upstream_trace", "does not apply", actor="agent")
+    assert session.checkpoint("upstream_trace")["status"] == "open"
+
+
+def test_waive_requires_a_reason(session):
+    with pytest.raises(EnforcementError, match="requires a reason"):
+        engine.waive_checkpoint(session, "upstream_trace", "   ")
+
+
+def test_waive_unknown_checkpoint_rejected(session):
+    with pytest.raises(EnforcementError, match="unknown checkpoint"):
+        engine.waive_checkpoint(session, "not_a_check", "n/a")
+
+
+def test_waived_check_satisfies_the_gate_but_stays_visible(session):
+    _clear_all_checks(session, waive_last=True)
+    ready = engine.readiness(session)
+    assert ready["checks_complete"] is True
+    assert ready["open_checks"] == []
+    # a waived gate never reads as a closed one
+    waived = ready["waived_checks"]
+    assert [w["key"] for w in waived] == ["rule_out_alternatives"]
+    assert waived[0]["reason"] == "no lineage upstream of this table"
+    assert waived[0]["by"] == "user"
+    assert session.checkpoint("rule_out_alternatives")["evidence"] == []
+    engine.advance_stage(session, "review", actor="user")
+    assert session.stage == "review"
+
+
+def test_reopening_a_waived_check_reimposes_the_gate(session):
+    _clear_all_checks(session, waive_last=True)
+    session.reopen_checkpoint("rule_out_alternatives")
+    ready = engine.readiness(session)
+    assert ready["open_checks"] == ["rule_out_alternatives"]
+    assert ready["waived_checks"] == []
+
+
+# -- clean close ----------------------------------------------------------
+
+
+def test_clean_run_can_close_without_inventing_a_finding(session):
+    _clear_all_checks(session)
+    ready = engine.readiness(session)
+    assert ready["clean_close_available"] is True
+    assert "clean result" in ready["next_action"]
+    out = engine.close_session(session, actor="user", note="nothing anomalous")
+    assert session.stage == "closed"
+    assert session.outcome == "clean"
+    assert out["outcome"] == "clean"
+
+
+def test_clean_close_is_a_user_action(session):
+    _clear_all_checks(session)
+    with pytest.raises(EnforcementError, match="user action"):
+        engine.close_session(session, actor="agent")
+    assert session.stage != "closed"
+
+
+def test_clean_close_blocked_while_checks_are_open(session):
+    with pytest.raises(EnforcementError, match="checkpoints still open"):
+        engine.close_session(session, actor="user")
+
+
+def test_clean_close_blocked_while_a_finding_awaits_judgement(session):
+    qids = _clear_all_checks(session)
+    engine.record_finding(session, _finding(qids))
+    ready = engine.readiness(session)
+    assert ready["clean_close_available"] is False
+    with pytest.raises(EnforcementError, match="awaiting the user"):
+        engine.close_session(session, actor="user")
+
+
+def test_rejected_findings_do_not_block_a_clean_close(session):
+    qids = _clear_all_checks(session)
+    got = engine.record_finding(session, _finding(qids))
+    session.reject_finding(got["fid"], "that spike is a known backfill")
+    # the user has already said it was not real — that is itself a clean result
+    assert engine.readiness(session)["clean_close_available"] is True
+    engine.close_session(session, actor="user")
+    assert session.outcome == "clean"
+
+
+def test_advance_to_closed_names_the_clean_route_instead_of_dead_ending(session):
+    _clear_all_checks(session)
+    with pytest.raises(EnforcementError, match="closes as one"):
+        engine.advance_stage(session, "closed", actor="agent")
+
+
+def test_session_with_accepted_findings_closes_as_findings(session):
+    qids = _clear_all_checks(session)
+    got = engine.record_finding(session, _finding(qids))
+    session.accept_finding(got["fid"])
+    assert engine.readiness(session)["clean_close_available"] is False
+    engine.close_session(session, actor="user")
+    assert session.stage == "closed"
+    assert session.outcome == "findings"
+
+
+def _finding(qids: list[str]) -> dict:
+    return {
+        "title": "Duplicate order ids",
+        "severity": "high",
+        "confidence": "high",
+        "affected_objects": ["DB.S.T1"],
+        "reproduction": "re-run the cited query",
+        "summary": "Order ids repeat after the promo join.",
+        "evidence": qids,
+        "extra": {
+            "resolution": "root_caused",
+            "root_cause": "non-unique promo codes",
+            "blast_radius": "412 rows",
+            "alternatives_tested": "source duplication ruled out",
+        },
+    }
+
+
+def test_forced_close_is_not_recorded_as_clean(session):
+    # a bypass is not a human vouching that the data was sound
+    engine.advance_stage(session, "closed", actor="user", force=True)
+    assert session.stage == "closed"
+    assert session.outcome == ""
+
+
+# -- ordering and evidence relevance --------------------------------------
+
+
+def test_dependency_blocks_out_of_order_closure(session):
+    qids = _run(session, 1)
+    # bug-hunter: no cause-hunting until the anomaly reproduces
+    with pytest.raises(EnforcementError, match="depends on"):
+        engine.complete_checkpoint(session, "upstream_trace", qids, "traced")
+    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    engine.complete_checkpoint(session, "upstream_trace", qids, "traced")
+    assert session.checkpoint("upstream_trace")["status"] == "complete"
+
+
+def test_a_waived_prerequisite_still_unblocks(session):
+    qids = _run(session, 1)
+    engine.waive_checkpoint(session, "replicate_anomaly", "user supplied the failing rows")
+    engine.complete_checkpoint(session, "upstream_trace", qids, "traced")
+    assert session.checkpoint("upstream_trace")["status"] == "complete"
+
+
+def test_suggested_check_can_be_closed_but_never_gates(session):
+    qids = _run(session, 1)
+    engine.complete_checkpoint(session, "onset_dating", qids, "first appears 08-14")
+    ready = engine.readiness(session)
+    assert "onset_dating" not in ready["required_checks"]
+    assert next(c for c in ready["suggested_checks"] if c["key"] == "onset_dating")["done"]
+    assert ready["checks_complete"] is False  # the required ones are still open
+
+
+def test_off_scope_evidence_is_reported_not_rejected(session):
+    """upstream_trace walks lineage through tables that are NOT session targets;
+    those probes are legitimate evidence. Requiring every qid to touch scope
+    would just teach agents to staple a target table onto each one."""
+    in_scope = _run(session, 1)
+    out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
+    engine.complete_checkpoint(session, "replicate_anomaly", in_scope, "reproduced")
+    cp = engine.complete_checkpoint(
+        session, "upstream_trace", in_scope + [out["qid"]], "walked upstream"
+    )
+    assert cp["status"] == "complete"
+    assert cp["evidence_off_scope"] == [out["qid"]]
+    assert any(e["type"] == "evidence_off_scope" for e in session.events(20))
+
+
+def test_wholly_off_scope_evidence_is_still_refused(session):
+    out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
+    with pytest.raises(EnforcementError, match="does not touch any table"):
+        engine.complete_checkpoint(session, "replicate_anomaly", [out["qid"]], "n/a")
+
+
+# -- honest-outcome hardening (post-review fixes) --------------------------
+
+
+def test_waiving_an_unseeded_suggested_check_works(session):
+    """Suggested checks materialize when taken up; a waive of one that never was
+    must seed it and waive, not blow up on the missing row."""
+    cp = engine.waive_checkpoint(session, "onset_dating", "no time dimension on this table")
+    assert cp["status"] == "waived"
+    assert cp["note"] == "no time dimension on this table"
+
+
+def test_waive_unknown_checkpoint_names_both_pools(session):
+    # the complete path lists required + suggested keys; the waive path should too
+    with pytest.raises(EnforcementError, match="onset_dating"):
+        engine.waive_checkpoint(session, "not_a_check", "n/a")
+
+
+def test_waiving_a_completed_checkpoint_is_refused(session):
+    """A waive over a completed check would silently discard its evidence."""
+    qids = _run(session, 1)
+    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    with pytest.raises(EnforcementError, match="already complete"):
+        engine.waive_checkpoint(session, "replicate_anomaly", "second thoughts")
+    cp = session.checkpoint("replicate_anomaly")
+    assert cp["status"] == "complete"
+    assert cp["evidence"] == qids
+
+
+def test_clean_close_requires_something_examined(session):
+    """'We looked and it was fine' requires having looked — a session with no
+    executed queries (e.g. a zero-check workflow at start) never offers clean."""
+    ready = engine.readiness(session)
+    assert ready["queries_executed"] == 0
+    assert ready["clean_close_available"] is False
+    assert any("nothing has been examined" in b for b in engine.clean_close_blockers(ready))
+    _clear_all_checks(session)
+    assert engine.clean_close_blockers(engine.readiness(session)) == []
+
+
+def test_forced_close_with_accepted_findings_earns_no_outcome(session):
+    """A forced close skips the gates that make an outcome label mean something,
+    so it earns neither label — 'findings' included."""
+    qids = _run(session, 1)
+    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    got = engine.record_finding(session, _finding(qids))
+    session.accept_finding(got["fid"])
+    # other required checks still open: only force gets this to closed
+    engine.advance_stage(session, "closed", actor="user", force=True)
+    assert session.stage == "closed"
+    assert session.outcome == ""
+
+
+def test_close_note_is_kept_on_a_findings_close(session):
+    qids = _clear_all_checks(session)
+    got = engine.record_finding(session, _finding(qids))
+    session.accept_finding(got["fid"])
+    engine.close_session(session, actor="user", note="verified the fix against prod counts")
+    assert session.outcome == "findings"
+    assert session.summary()["outcome_note"] == "verified the fix against prod counts"
+
+
+def test_off_scope_evidence_is_persisted_on_the_checkpoint(session):
+    """The off-scope marker must live on the stored row the console and report
+    render, not only in the transient return and the event log."""
+    in_scope = _run(session, 1)
+    out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
+    engine.complete_checkpoint(session, "replicate_anomaly", in_scope, "reproduced")
+    engine.complete_checkpoint(
+        session, "upstream_trace", in_scope + [out["qid"]], "walked upstream"
+    )
+    cp = session.checkpoint("upstream_trace")
+    assert cp["evidence_off_scope"] == [out["qid"]]
+    listed = {c["key"]: c for c in session.checkpoints()}
+    assert listed["upstream_trace"]["evidence_off_scope"] == [out["qid"]]

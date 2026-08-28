@@ -40,6 +40,9 @@ worker_app = typer.Typer(help="Parallel worker registration.", no_args_is_help=T
 guard_app = typer.Typer(help="Statement validation.", no_args_is_help=True)
 workflow_app = typer.Typer(help="Workflow templates.", no_args_is_help=True)
 checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_help=True)
+profile_app = typer.Typer(
+    help="Deterministic table profiling (citable evidence).", no_args_is_help=True
+)
 finding_app = typer.Typer(help="Findings (schema + evidence validated).", no_args_is_help=True)
 intervention_app = typer.Typer(help="Human-in-the-loop tasks.", no_args_is_help=True)
 proposal_app = typer.Typer(help="Fix proposals and verification.", no_args_is_help=True)
@@ -77,6 +80,7 @@ app.add_typer(worker_app, name="worker")
 app.add_typer(guard_app, name="guard")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(checkpoint_app, name="checkpoint")
+app.add_typer(profile_app, name="profile")
 app.add_typer(finding_app, name="finding")
 app.add_typer(intervention_app, name="intervention")
 app.add_typer(proposal_app, name="proposal")
@@ -102,6 +106,62 @@ def emit(obj: object) -> None:
 def fail(message: str, code: int = 1) -> None:
     typer.echo(json.dumps({"error": message}, indent=2), err=True)
     raise typer.Exit(code)
+
+
+def _stdin_is_tty() -> bool:
+    """Whether a human is at the other end. One place, so it can be exercised."""
+    return sys.stdin.isatty()
+
+
+def default_actor() -> str:
+    """Who is driving the CLI right now.
+
+    The CLI is genuinely both interfaces — the human's and the agent's — and it
+    cannot ask its caller which one it is. An interactive terminal is the one
+    signal it does have, so attribution follows it: a person at a prompt is
+    'user', a non-interactive shell-out is 'agent'. This is why `session close`
+    used to record an agent's bypass under the human's name.
+    """
+    return "user" if _stdin_is_tty() else "agent"
+
+
+def resolve_actor(actor: str | None) -> str:
+    """Resolve an explicit `--actor` against who is actually at the terminal.
+
+    An explicit actor may narrow authority, never widen it: claiming 'user' from
+    a non-interactive shell-out is exactly the misattribution the terminal check
+    exists to stop — an agent's change recorded under the human's name. Any
+    other label (an agent naming itself, a worker id) is accepted as-is.
+    """
+    if actor is None:
+        return default_actor()
+    if actor == "user" and not _stdin_is_tty():
+        fail(
+            "--actor user needs an interactive terminal: a non-interactive caller "
+            "cannot record its actions under the human's name. Re-run without "
+            "--actor (the action is then attributed to 'agent'), or have the user "
+            "run this at their own prompt."
+        )
+    return actor
+
+
+def require_interactive(action: str, confirm: str = "") -> None:
+    """Gate a user-only escape hatch on an interactive terminal.
+
+    Friction, not containment — grayson's stated posture for every guard rail
+    that an agent with shell access could route around. An agent shelling out
+    non-interactively cannot claim the user's authority here, and the harness
+    deny rules can pattern-match the same flags as a second layer. A human who
+    genuinely needs this in a script has the console.
+    """
+    if not _stdin_is_tty():
+        fail(
+            f"{action} is a user action and needs an interactive terminal. "
+            "If you are an agent: ask the user to do this in the console or at their "
+            "own prompt — do not retry with a different actor or flag."
+        )
+    if confirm and not typer.confirm(confirm):
+        fail("cancelled")
 
 
 def _workspace() -> Workspace:
@@ -555,7 +615,7 @@ def session_start(
         if dup:
             s = Session(ws, dup)
             if provided:
-                s.set_setup_inputs(provided)
+                s.set_setup_inputs(provided, actor=default_actor())
             emit(
                 {
                     "reused_existing": True,
@@ -596,10 +656,11 @@ def session_start(
         title=title,
         workers=workers,
         strict_scope=strict_scope,
+        actor=default_actor(),
     )
     engine.seed_from_workflow(session, ws.workflows_dir)
     if provided:
-        session.set_setup_inputs(provided)
+        session.set_setup_inputs(provided, actor=default_actor())
     result = {
         "session": session.summary(),
         "guard_profile_source": (
@@ -694,13 +755,24 @@ def session_status(session_id: str) -> None:
 def session_advance(
     session_id: str,
     stage: str = typer.Option(..., "--to", help=f"One of: {', '.join(STAGES)}"),
-    actor: str = typer.Option("user", "--actor"),
-    force: bool = typer.Option(False, "--force", help="Override evidence gates (audited)."),
+    actor: str = typer.Option(None, "--actor", help="Defaults to the caller (TTY = user)."),
+    force: bool = typer.Option(False, "--force", help="Override evidence gates (user, TTY only)."),
 ) -> None:
     """Advance the stage. Evidence gates block review/fixes unless satisfied or forced."""
     s = _session(session_id)
+    who = resolve_actor(actor)
+    if force:
+        # `--force` is honored only for the 'user' actor, but before this the CLI
+        # both defaulted --actor to "user" and let anyone pass it, so `advance
+        # --force` cleared every gate from a shell-out. The terminal is the check
+        # the actor string never was.
+        require_interactive(
+            "forcing an evidence gate",
+            f"Force the gate and advance {session_id} to '{stage}' without the evidence?",
+        )
+        who = "user"
     try:
-        result = engine.advance_stage(s, stage, actor, force, _workspace().workflows_dir)
+        result = engine.advance_stage(s, stage, who, force, _workspace().workflows_dir)
     except EnforcementError as e:
         fail(str(e))
         return
@@ -754,10 +826,35 @@ def session_scrub(session_id: str) -> None:
 
 
 @session_app.command("close")
-def session_close(session_id: str) -> None:
+def session_close(
+    session_id: str,
+    clean: bool = typer.Option(
+        False, "--clean", help="Close as a clean result: checks cleared, nothing found."
+    ),
+    note: str = typer.Option(
+        "", "--note", help="Closing note for the record (kept on either outcome)."
+    ),
+) -> None:
+    """Close a session — with accepted findings, or as a confirmed clean result.
+
+    A user action either way (the last of grayson's human boundaries), so it needs
+    an interactive terminal. Agents ask the user; they do not close their own
+    sessions, and they never invent a finding to get a clean run over the line.
+    """
     s = _session(session_id)
-    s.set_stage("closed")
-    emit({"id": session_id, "stage": "closed"})
+    workflows_dir = _workspace().workflows_dir
+    if clean and engine.readiness(s, workflows_dir)["findings_accepted"]:
+        fail(
+            "this session has accepted findings, so it does not close clean — close it "
+            "without --clean and it will be recorded as a findings outcome"
+        )
+    require_interactive("closing a session")
+    try:
+        result = engine.close_session(s, "user", note, workflows_dir)
+    except EnforcementError as e:
+        fail(str(e))
+        return
+    emit({"id": session_id, "stage": s.stage, "outcome": s.outcome, "readiness": result})
 
 
 @session_app.command("report")
@@ -1018,6 +1115,7 @@ def workflow_list() -> None:
                 "name": t.name,
                 "title": t.title,
                 "description": t.description.strip(),
+                "suggested_checks": t.suggested_check_keys(),
                 "suggested_guard_profile": t.suggested_guard_profile,
                 "required_checks": t.required_check_keys(),
                 "findings_schema": t.findings_schema,
@@ -1120,12 +1218,39 @@ def checkpoint_complete(
     key: str,
     evidence: list[str] = typer.Option([], "--evidence", "-e", help="Executed query ids."),
     note: str = typer.Option("", "--note"),
-    actor: str = typer.Option("agent", "--actor"),
+    actor: str = typer.Option(None, "--actor", help="Defaults to the caller (TTY = user)."),
 ) -> None:
     """Close a checkpoint — requires evidence (executed query ids) that exist."""
     s = _session(session_id)
     try:
-        cp = engine.complete_checkpoint(s, key, evidence, note, actor, _workspace().workflows_dir)
+        cp = engine.complete_checkpoint(
+            s, key, evidence, note, resolve_actor(actor), _workspace().workflows_dir
+        )
+    except EnforcementError as e:
+        fail(str(e))
+        return
+    emit(cp)
+
+
+@checkpoint_app.command("waive")
+def checkpoint_waive(
+    session_id: str,
+    key: str,
+    reason: str = typer.Option(..., "--reason", help="Why this check does not apply here."),
+) -> None:
+    """Mark a checkpoint not-applicable, with the reason on the record.
+
+    A user action: agents ask for a waive via an intervention, saying why the
+    check does not apply. The alternative — an unwaivable gate on an irrelevant
+    check — just teaches agents to find a query that satisfies the scope test.
+    """
+    s = _session(session_id)
+    require_interactive(
+        "waiving a checkpoint",
+        f"Waive '{key}' on {session_id} as not applicable?",
+    )
+    try:
+        cp = engine.waive_checkpoint(s, key, reason, "user", _workspace().workflows_dir)
     except EnforcementError as e:
         fail(str(e))
         return
@@ -1134,12 +1259,112 @@ def checkpoint_complete(
 
 @checkpoint_app.command("reopen")
 def checkpoint_reopen(session_id: str, key: str) -> None:
+    """Reopen a closed or waived checkpoint. Not a bypass — it re-imposes the gate."""
     s = _session(session_id)
-    s.reopen_checkpoint(key)
+    s.reopen_checkpoint(key, default_actor())
     emit(s.checkpoint(key))
 
 
+# -- profiling -----------------------------------------------------------
+
+
+@profile_app.command("table")
+def profile_table_cmd(
+    session_id: str,
+    table: str,
+    sample_rows: int = typer.Option(5000, "--sample-rows", help="Rows pulled for local stats."),
+    no_frequencies: bool = typer.Option(False, "--no-frequencies"),
+    no_sample: bool = typer.Option(False, "--no-sample"),
+) -> None:
+    """Profile a table in a handful of guarded queries.
+
+    Every statement runs the ordinary guarded path, so the artifacts are evidence
+    like any other and the returned query ids close checkpoints directly. Nulls,
+    cardinality, ranges, value frequencies and key candidates come back as facts —
+    what they mean is yours to work out.
+    """
+    from grayson.profile import ProfileError, profile_table
+
+    s = _session(session_id)
+    try:
+        emit(
+            profile_table(
+                s,
+                table,
+                sample_rows=sample_rows,
+                frequencies=not no_frequencies,
+                sample=not no_sample,
+            )
+        )
+    except ProfileError as e:
+        fail(str(e.args[0] if e.args else e))
+
+
+@profile_app.command("stats")
+def profile_stats_cmd(session_id: str, qid: str) -> None:
+    """Numeric summaries (mean, stdev, quantiles) over a cached artifact.
+
+    Computed locally, not by the warehouse — cite the artifact's query id and say
+    so. See `profile correlate` for the same caveat spelled out.
+    """
+    from grayson.profile import summarize
+
+    s = _session(session_id)
+    columns, rows = s.cache.rows(qid)
+    if not columns:
+        fail(f"no cached artifact '{qid}'")
+        return
+    emit(
+        {
+            "qid": qid,
+            "sample_rows": len(rows),
+            "summaries": summarize(columns, rows),
+            "computed": "local",
+        }
+    )
+
+
+@profile_app.command("correlate")
+def profile_correlate_cmd(
+    session_id: str,
+    qid: str,
+    method: str = typer.Option("pearson", "--method", help="pearson | spearman"),
+) -> None:
+    """Pairwise correlation over a cached artifact.
+
+    Local by design: pairwise correlation over N columns is quadratic, and doing
+    it in the warehouse would cost hundreds of queries to answer a question a
+    single cached sample already contains. The trade is that the statistic itself
+    is unaudited — the response carries the caveat; pass it on.
+    """
+    from grayson.profile import correlations
+
+    s = _session(session_id)
+    columns, rows = s.cache.rows(qid)
+    if not columns:
+        fail(f"no cached artifact '{qid}'")
+        return
+    try:
+        emit({"qid": qid, **correlations(columns, rows, method)})
+    except ValueError as e:
+        fail(str(e.args[0] if e.args else e))
+
+
 # -- findings ------------------------------------------------------------
+
+
+@finding_app.command("rubric")
+def finding_rubric() -> None:
+    """The severity and confidence scale, and which parts of it are enforced.
+
+    grayson does not judge whether a severity is right — that is the user's call
+    when they accept or reject. It publishes the scale, because with no shared
+    one every finding drifts to high and a queue where everything is high has no
+    priority in it.
+    """
+    from grayson.findings.schemas import rubric
+
+    emit(rubric())
 
 
 @finding_app.command("add")
@@ -1195,6 +1420,7 @@ def finding_show(session_id: str, fid: str) -> None:
 def finding_accept(session_id: str, fid: str) -> None:
     """Accept a finding (a user action in the review stage)."""
     s = _session(session_id)
+    require_interactive("accepting a finding")
     try:
         s.accept_finding(fid)
     except KeyError as e:
@@ -1297,15 +1523,19 @@ def intervention_respond(
     file: Path = typer.Option(None, "--file", "-f"),
     json_str: str = typer.Option(None, "--json"),
 ) -> None:
-    """Submit a response (normally done via the UI; provided for scripting/tests)."""
+    """Answer an intervention (normally done in the console).
+
+    The strictest of the human boundaries: an intervention exists precisely to
+    get a judgement the agent must not make for itself, so an agent answering
+    its own question would defeat the point of asking. Requires a terminal.
+    """
+    require_interactive("answering an intervention")
     if file:
         raw = file.read_text(encoding="utf-8") if file.is_file() else fail(f"no file: {file}")
     elif json_str:
         raw = json_str
-    elif not sys.stdin.isatty():
-        raw = sys.stdin.read()
     else:
-        fail("no response payload: use --file, --json, or stdin")
+        fail("no response payload: use --file or --json")
         return
     s = _session(session_id)
     item = s.intervention(iid)
@@ -1379,6 +1609,7 @@ def proposal_show(session_id: str, pid: str) -> None:
 @proposal_app.command("approve")
 def proposal_approve(session_id: str, pid: str) -> None:
     """Approve a proposal (a user action). The harness agent then applies it."""
+    require_interactive("approving a fix proposal")
     try:
         emit(proposals_engine.decide(_session(session_id), pid, approve=True))
     except ProposalError as e:
@@ -1387,6 +1618,8 @@ def proposal_approve(session_id: str, pid: str) -> None:
 
 @proposal_app.command("reject")
 def proposal_reject(session_id: str, pid: str) -> None:
+    """Reject a proposal (a user action)."""
+    require_interactive("rejecting a fix proposal")
     try:
         emit(proposals_engine.decide(_session(session_id), pid, approve=False))
     except ProposalError as e:
@@ -1581,6 +1814,7 @@ def knowledge_add(
 @knowledge_app.command("confirm")
 def knowledge_confirm(table: str, fact_id: str, by: str = typer.Option("user", "--by")) -> None:
     """Confirm a proposed/inferred fact (a user action)."""
+    require_interactive("confirming a knowledge fact")
     ws = _workspace()
     try:
         result = KnowledgeStore(ws.knowledge_dir).confirm_fact(table, fact_id, by)

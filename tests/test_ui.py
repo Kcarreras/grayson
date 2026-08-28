@@ -83,8 +83,16 @@ def test_records_show_renamed_session_title(client, session):
             "title": "Wrong buckets",
             "severity": "low",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Some URLs land in the wrong category bucket.",
             "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs land in the wrong bucket",
+                "expected_behaviour": "match the documented taxonomy",
+            },
         },
     )["fid"]
     client.post(
@@ -182,8 +190,16 @@ def test_accept_finding_via_ui(client, session):
             "title": "Miscategorized URLs",
             "severity": "medium",
             "confidence": "medium",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "About 8% of URLs fall into the wrong category bucket.",
             "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs land in the wrong bucket",
+                "expected_behaviour": "match the documented taxonomy",
+            },
         },
     )
     r = client.post(
@@ -210,8 +226,16 @@ def test_proposal_approve_via_ui(client, session):
             "title": "Bad categories",
             "severity": "high",
             "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
             "summary": "Categories are wrong for a meaningful fraction of URLs.",
             "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs land in the wrong bucket",
+                "expected_behaviour": "match the documented taxonomy",
+            },
         },
     )["fid"]
     p = proposals.record_proposal(
@@ -230,3 +254,107 @@ def test_proposal_approve_via_ui(client, session):
     )
     assert r.status_code == 303
     assert session.proposal(p["pid"])["status"] == "approved"
+
+
+# -- honest outcomes: waive and clean close in the console ----------------
+
+
+def _clear_checks(session, waive: str | None = None) -> list[str]:
+    out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
+    keys = engine.workflow_for(session).required_check_keys()
+    for key in keys:
+        if key == waive:
+            continue
+        engine.complete_checkpoint(session, key, [out["qid"]], "done")
+    return [out["qid"]]
+
+
+def test_clean_close_card_appears_only_when_the_run_is_clean(client, session):
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Close as clean" not in page
+    _clear_checks(session)
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "This run came back clean" in page
+    assert "Close as clean" in page
+
+
+def test_close_clean_records_the_outcome(client, session):
+    _clear_checks(session)
+    r = client.post(
+        f"/session/{session.id}/close-clean?t={TOKEN}",
+        data={"note": "coverage and labels both sound"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert session.stage == "closed"
+    assert session.outcome == "clean"
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "closed clean" in page
+    assert "coverage and labels both sound" in page
+
+
+def test_close_clean_refused_with_work_outstanding(client, session):
+    r = client.post(f"/session/{session.id}/close-clean?t={TOKEN}", data={"note": ""})
+    assert r.status_code == 400
+    assert "checkpoints still open" in r.text
+    assert session.stage != "closed"
+
+
+def test_waive_from_the_console(client, session):
+    _clear_checks(session, waive="error_pattern_analysis")
+    r = client.post(
+        f"/session/{session.id}/checkpoint/error_pattern_analysis/waive?t={TOKEN}",
+        data={"reason": "no misassignments to pattern-match"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert session.checkpoint("error_pattern_analysis")["status"] == "waived"
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "waived" in page
+    assert "no misassignments to pattern-match" in page
+
+
+def test_waive_without_a_reason_is_refused(client, session):
+    r = client.post(
+        f"/session/{session.id}/checkpoint/rule_coverage/waive?t={TOKEN}", data={"reason": "  "}
+    )
+    assert r.status_code == 400
+    assert "requires a reason" in r.text
+    assert session.checkpoint("rule_coverage")["status"] == "open"
+
+
+def test_suggested_checks_show_as_breadth_not_gates(client, session):
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Suggested — not gates" in page
+    # they must not count against the checkpoint gate
+    assert engine.readiness(session)["required_checks"] == [c["key"] for c in session.checkpoints()]
+
+
+def test_taking_up_a_suggested_check_records_it_as_a_checkpoint(client, session):
+    out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
+    engine.complete_checkpoint(session, "rule_drift", [out["qid"]], "accuracy is flat")
+    assert session.checkpoint("rule_drift")["status"] == "complete"
+    ready = engine.readiness(session)
+    # closed, but it never becomes a gate
+    assert "rule_drift" not in ready["required_checks"]
+    assert next(c for c in ready["suggested_checks"] if c["key"] == "rule_drift")["done"]
+    assert ready["checks_complete"] is False
+
+
+def test_severity_scale_is_explained_where_findings_are_judged(client, session):
+    """The user accepting or rejecting is the one calibration check that matters;
+    they need to know what the agent's label was supposed to mean."""
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "wrong data is already being used" in page.lower()
+
+
+def test_closed_sessions_list_shows_the_outcome(client, session):
+    from grayson.core.run import run_statement
+
+    out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
+    for key in engine.workflow_for(session).required_check_keys():
+        engine.complete_checkpoint(session, key, [out["qid"]], "checked")
+    engine.close_session(session, "user", "nothing to act on")
+    page = client.get(f"/?t={TOKEN}").text
+    assert "Closed sessions" in page
+    assert "clean" in page

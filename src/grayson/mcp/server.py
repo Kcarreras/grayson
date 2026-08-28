@@ -32,8 +32,16 @@ run guarded queries (only SELECT/SHOW/DESCRIBE/EXPLAIN survive), close each requ
 checkpoint citing executed query ids as evidence, record findings against the schema,
 request human interventions when judgment is needed, then propose fixes and verify them
 with before/after evidence. grayson enforces the rails; you supply the analysis.
+Finding nothing is a valid result: if the checks clear and nothing is worth acting on,
+ask the user to close the session as a clean result — never invent a finding, or close a
+checkpoint with a query picked to pass the evidence test, in order to clear a gate. A
+check that does not apply is waived by the user on your request, not worked around.
 Failing external checks returned at session start (external_checks) are pre-vetted
-leads — replicate them first. Narrate the investigation visually: chart_add builds
+leads — replicate them first.
+Profile before hand-rolling: profile_table covers a table's descriptive battery
+(nulls, cardinality, ranges, key candidates, frequencies) in three or four guarded
+queries whose ids are evidence — do not write forty single-column queries yourself.
+Narrate the investigation visually: chart_add builds
 bar/line/scatter charts from cached artifacts that render live in the user's console,
 each traceable to its executed query.
 If a target table has no recorded knowledge, settle grain/semantics with the user early
@@ -75,6 +83,7 @@ def build_server(workspace: Workspace) -> Any:
                     "title": t.title,
                     "description": t.description.strip(),
                     "required_checks": t.required_check_keys(),
+                    "suggested_checks": t.suggested_check_keys(),
                     "suggested_guard_profile": t.suggested_guard_profile,
                 }
                 for t in list_workflows(workspace.workflows_dir)
@@ -143,6 +152,7 @@ def build_server(workspace: Workspace) -> Any:
             guard_profile=chosen,
             title=title,
             strict_scope=strict_scope,
+            actor="agent",
         )
         engine.seed_from_workflow(s, workspace.workflows_dir)
         if provided:
@@ -161,6 +171,7 @@ def build_server(workspace: Workspace) -> Any:
         out = {
             "session": s.summary(),
             "required_checks": [c.model_dump() for c in tpl.required_checks],
+            "suggested_checks": [c.model_dump() for c in tpl.suggested_checks],
             "findings_schema": tpl.findings_schema,
             "setup_inputs": provided,
             "view_coverage": registry.coverage_check(tables, current),
@@ -184,6 +195,14 @@ def build_server(workspace: Workspace) -> Any:
                 f"on the target tables ({ids}) — pre-vetted leads: replicate each with a "
                 "guarded query first (their sql/details are in external_checks.failing), "
                 "then widen the investigation"
+            )
+        if tpl.suggested_checks:
+            hints.append(
+                f"{len(tpl.suggested_checks)} suggested check(s) are available beyond the "
+                "required ones (see suggested_checks) — they do not gate anything, but they "
+                "are the fundamentals this workflow expects you to consider. Do the ones "
+                "that apply to these tables and close them like any other checkpoint; skip "
+                "the ones that do not, and say which in your findings"
             )
         if gaps:
             hints.append(
@@ -240,7 +259,13 @@ def build_server(workspace: Workspace) -> Any:
         except (FileNotFoundError, ValueError) as e:
             return _err(e)
 
-    @mcp.tool(description="What still blocks the next gated stage transition.")
+    @mcp.tool(
+        description="What still blocks the next gated stage transition. Reports open "
+        "checkpoints, waived ones (and why), findings awaiting the user, and a "
+        "`next_action` sentence. When `clean_close_available` is true the run found "
+        "nothing worth acting on — ask the user to close it as a clean result; never "
+        "record a finding you do not believe in order to clear a gate."
+    )
     def session_readiness(session_id: str) -> dict:
         try:
             return engine.readiness(_session(session_id), workspace.workflows_dir)
@@ -323,6 +348,80 @@ def build_server(workspace: Workspace) -> Any:
             "rows": [dict(zip(columns, r, strict=True)) for r in data],
         }
 
+    # -- profiling -----------------------------------------------------
+
+    @mcp.tool(
+        description="Profile a table in a handful of guarded queries: per-column nulls, "
+        "cardinality, ranges, key candidates, and value frequencies for low-cardinality "
+        "columns. Every statement runs the ordinary guarded path, so the returned query "
+        "ids are evidence you can close checkpoints with — do NOT hand-roll the same "
+        "battery one column at a time. `observations` are mechanical leads, not verdicts."
+    )
+    def profile_table(
+        session_id: str,
+        table: str,
+        sample_rows: int = 5000,
+        frequencies: bool = True,
+        sample: bool = True,
+    ) -> dict:
+        from grayson.profile import ProfileError
+        from grayson.profile import profile_table as _profile
+
+        try:
+            return _profile(
+                _session(session_id),
+                table,
+                sample_rows=sample_rows,
+                frequencies=frequencies,
+                sample=sample,
+            )
+        except (ProfileError, FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Numeric summaries (mean, stdev, quantiles) over a cached artifact — "
+        "typically a profile's sample. Computed LOCALLY, not by the warehouse: cite the "
+        "artifact's query id and say the statistic was computed locally."
+    )
+    def profile_stats(session_id: str, qid: str) -> dict:
+        from grayson.profile import summarize
+
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        columns, rows = s.cache.rows(qid)
+        if not columns:
+            return {"error": f"no cached artifact '{qid}'"}
+        return {
+            "qid": qid,
+            "sample_rows": len(rows),
+            "summaries": summarize(columns, rows),
+            "computed": "local",
+        }
+
+    @mcp.tool(
+        description="Pairwise correlation (pearson|spearman) over a cached artifact. Local "
+        "by design — pairwise over N columns is quadratic and would cost hundreds of "
+        "warehouse queries. The statistic itself is therefore unaudited: the response "
+        "carries a caveat and a confidence ceiling, and you must pass both on in any "
+        "finding that rests on it."
+    )
+    def profile_correlate(session_id: str, qid: str, method: str = "pearson") -> dict:
+        from grayson.profile import correlations
+
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        columns, rows = s.cache.rows(qid)
+        if not columns:
+            return {"error": f"no cached artifact '{qid}'"}
+        try:
+            return {"qid": qid, **correlations(columns, rows, method)}
+        except ValueError as e:
+            return _err(e)
+
     # -- checkpoints & findings ---------------------------------------
 
     @mcp.tool(description="List the session's checkpoints and their status.")
@@ -334,7 +433,10 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="Complete a checkpoint. Requires evidence: executed query ids that "
-        "exist and succeeded."
+        "exist and succeeded. If a required checkpoint genuinely does not apply to this "
+        "target (freshness on a static dimension table, say), do NOT satisfy it with a "
+        "query chosen to pass the scope test — file an intervention asking the user to "
+        "waive it, and say why."
     )
     def checkpoint_complete(session_id: str, key: str, evidence: list[str], note: str = "") -> dict:
         try:
@@ -345,8 +447,22 @@ def build_server(workspace: Workspace) -> Any:
             return _err(e)
 
     @mcp.tool(
+        description="The severity/confidence scale findings are calibrated against, and "
+        "which parts of it grayson enforces. Read it before assigning a severity: with "
+        "no shared scale everything drifts to 'high', and a queue where everything is "
+        "high has no priority in it."
+    )
+    def finding_rubric() -> dict:
+        from grayson.findings.schemas import rubric
+
+        return rubric()
+
+    @mcp.tool(
         description="Record a finding. Validated against the workflow's findings schema; "
-        "must cite executed query evidence. Pass the finding as a dict."
+        "must cite executed query evidence. Pass the finding as a dict. Calibrate "
+        "severity against `finding_rubric` — two rungs are enforced: confidence 'high' "
+        "requires a `reproduction`, and severity 'critical'/'high' requires "
+        "`affected_objects`."
     )
     def finding_add(session_id: str, finding: dict, worker: str | None = None) -> dict:
         try:

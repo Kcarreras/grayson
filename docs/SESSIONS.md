@@ -81,6 +81,87 @@ validate against the workflow's schema; the human accepts or rejects each one,
 approves proposed fixes, and the agent proves an applied fix with a
 deterministic before/after comparison of re-run queries.
 
+## Honest endings
+
+Two things a gate must allow, or it starts manufacturing the evidence it exists
+to demand.
+
+**A check that does not apply.** Freshness on a static reference table, error
+patterns when there were no errors — the agent's only other route past the gate
+is a query picked to satisfy the relevance test rather than to learn anything.
+So a checkpoint can be **waived**: the agent files an intervention saying why it
+does not apply, and a human waives it with a reason on the record. Waived is not
+complete — it shows as its own status, with its reason and the name of whoever
+granted it, everywhere checkpoints are reported.
+
+```bash
+grayson checkpoint waive <sid> freshness --reason "static reference table"
+```
+
+**A run that finds nothing.** Every stage from `fixes` onward needs an accepted
+finding, which is right for a session that found something and wrong for one
+that did not — it leaves "invent a finding" as the only way to finish. A clean
+run instead closes as a **clean outcome**: required checks cleared, nothing
+accepted, nothing left for the user to judge — and at least one query actually
+executed, since "we looked and it was fine" requires having looked (a workflow
+with no required checks does not offer a clean close at session start).
+`grayson session readiness <sid>`
+reports when that is the available route (`clean_close_available`,
+`next_action`), and the console offers the button.
+
+```bash
+grayson session close <sid> --clean --note "all four checks came back sound"
+```
+
+Every human boundary is a **user** action: accepting or rejecting a finding,
+approving a fix, answering an intervention, confirming a knowledge fact, waiving
+a check, forcing a gate, and closing the session. The agent asks; the human
+decides. Because the CLI is genuinely both interfaces and cannot see who is
+calling it, all of these require an interactive terminal — an agent shelling out
+is refused by every one of them — and the audit trail attributes each action to
+whoever actually took it rather than assuming the human.
+Recording a clean result is the point of the ceremony: "we looked and it was
+fine" is knowledge the next session should start with.
+
+## Profiling
+
+The descriptive battery — per-column nulls, cardinality, ranges, key candidates,
+value frequencies — is the same on every table, and hand-rolling it is both
+expensive and unreproducible: forty single-column queries burn the budget, and
+their ids differ every run.
+
+```bash
+grayson profile table <sid> DB.SCHEMA.TABLE
+```
+
+Aggregates compose, so this costs three or four statements rather than forty:
+one `DESCRIBE`, one wide `SELECT` carrying every column's aggregates, one
+`UNION ALL` of value frequencies for the low-cardinality columns, and one
+sample. Each runs the ordinary guarded path, so the returned `q_XXXX` ids are
+evidence like any other and close checkpoints directly. The response's
+`observations` are mechanical leads — "nearly unique but not quite, 3 rows
+beyond the distinct count", "null in 8.6% of rows" — never verdicts. Whether a
+sparse column is a defect depends on what it is for, which grayson does not know
+and will not guess.
+
+Two statistics do not fit in portable SQL, and one of them is quadratic:
+
+```bash
+grayson profile stats <sid> <sample-qid>       # mean, stdev, quantiles
+grayson profile correlate <sid> <sample-qid>   # pairwise, pearson | spearman
+```
+
+Both compute locally over a cached artifact, which is why they are cheap:
+pairwise correlation across 30 columns is 435 pairs, and asking the warehouse
+would cost hundreds of queries to answer what one cached sample already
+contains. **The evidence chain is weaker here and says so.** A warehouse query
+is audited end to end; a local statistic is "this artifact, plus arithmetic
+grayson did afterwards", and it describes the sample rather than the table. Both
+responses carry `computed: "local"`, a confidence ceiling, and a caveat to pass
+on — cite the sample's query id, say the number was computed locally, and
+confirm anything decisive against the warehouse before resting a
+high-confidence finding on it.
+
 ## Analysis charts
 
 Agents chart cached query results as they work — `grayson chart add` (MCP:

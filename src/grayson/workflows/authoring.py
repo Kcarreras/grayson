@@ -41,6 +41,16 @@ required_checks:
       What must be demonstrated, with executed queries, before the session
       can advance. Write the intent down — agents close checkpoints better
       when it is explicit.
+    uses_inputs: [target_description]
+suggested_checks:
+  - key: a_fundamental
+    title: Something worth checking where it applies
+    description: >
+      Suggested checks carry breadth without gating. Put things here that are
+      worth doing on most targets but not all — a required check that does not
+      apply to the table in front of the agent gets closed hollow, which is
+      exactly what the evidence rail exists to prevent. Keep required_checks to
+      the handful without which the investigation is meaningless.
 findings_schema: standard_v1
 """
 
@@ -84,7 +94,7 @@ def _dump(tpl: WorkflowTemplate) -> str:
             "suggested_guard_profile",
             "setup_inputs",
             "required_checks",
-            "open_stages",
+            "suggested_checks",
             "findings_schema",
         )
         if data.get(key) not in ("", [], None)

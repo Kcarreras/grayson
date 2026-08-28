@@ -9,6 +9,7 @@ will feel.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -58,14 +59,7 @@ def lint_workflows(overrides_dir: Path | None) -> dict:
                 "no required_checks — sessions will have no evidence-gated "
                 "checkpoints, so nothing enforces the investigation's shape",
             )
-        for check in tpl.required_checks:
-            if not check.description.strip():
-                warn(
-                    file,
-                    tpl.name,
-                    f"checkpoint '{check.key}' has no description — agents close "
-                    "checkpoints better when the intent is written down",
-                )
+        _lint_template(tpl, file, warn)
     return {
         "ok": not errors,
         "checked": checked,
@@ -84,3 +78,68 @@ def _template_for_file(
         return None
     name = data.get("name") if isinstance(data, dict) else None
     return by_name.get(name)
+
+
+def lint_template(tpl: WorkflowTemplate) -> list[str]:
+    """Semantic warnings for one template, core or library.
+
+    Core templates are canonical and non-editable, so their quality is grayson's
+    to keep: the same rules run over the built-ins in the test suite.
+    """
+    out: list[str] = []
+    _lint_template(tpl, "", lambda _f, _n, message: out.append(message))
+    return out
+
+
+def _lint_template(tpl: WorkflowTemplate, file: str, warn: Callable[..., None]) -> None:
+    all_checks = tpl.required_checks + tpl.suggested_checks
+    keys = {c.key for c in all_checks}
+    for check in all_checks:
+        if not check.description.strip():
+            warn(
+                file,
+                tpl.name,
+                f"checkpoint '{check.key}' has no description — agents close "
+                "checkpoints better when the intent is written down",
+            )
+        for dep in check.depends_on:
+            if dep not in keys:
+                warn(
+                    file,
+                    tpl.name,
+                    f"checkpoint '{check.key}' depends on '{dep}', which this workflow "
+                    "does not define — the dependency can never be satisfied",
+                )
+            elif dep == check.key:
+                warn(file, tpl.name, f"checkpoint '{check.key}' depends on itself")
+    dupes = sorted(k for k in keys if [c.key for c in all_checks].count(k) > 1)
+    if dupes:
+        warn(
+            file,
+            tpl.name,
+            f"checkpoint key(s) {', '.join(dupes)} appear in both required_checks and "
+            "suggested_checks — a check is one or the other",
+        )
+    # A required input that no checkpoint works from is a question asked of the
+    # user and then ignored. Checked against declared linkage, not prose: whether
+    # a description "mentions" an input is not something a matcher can judge, and
+    # a lint that cries wolf is a lint people learn to skip.
+    declared = {k for c in all_checks for k in c.uses_inputs}
+    input_keys = set(tpl.input_keys())
+    for check in all_checks:
+        for key in check.uses_inputs:
+            if key not in input_keys:
+                warn(
+                    file,
+                    tpl.name,
+                    f"checkpoint '{check.key}' declares uses_inputs: '{key}', which is "
+                    "not a setup input of this workflow",
+                )
+    for setup_input in tpl.setup_inputs:
+        if setup_input.required and setup_input.key not in declared:
+            warn(
+                file,
+                tpl.name,
+                f"required setup input '{setup_input.key}' is not used by any checkpoint "
+                "(uses_inputs) — either put it to work or stop asking the user for it",
+            )

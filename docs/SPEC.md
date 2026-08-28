@@ -170,7 +170,11 @@ setup → analysis → synthesis → review → fixes → verification → close
    executed; the pass/fail verdict rides on that evidence (`verified` /
    `verification_failed`).
 7. **closed** — session summary generated; durable learnings promoted to the knowledge
-   library (user-confirmed facts marked as such).
+   library (user-confirmed facts marked as such). Closing records an **outcome**:
+   `findings` (closed on accepted findings) or `clean` (required checks cleared and
+   nothing found worth acting on). A clean close is a user action — a human vouching
+   for a negative result — and exists so that a run which finds nothing has a way to
+   finish that is not "invent a finding". A forced close records no outcome at all.
 
 Any stage can loop back (verification failure → fixes/analysis). All transitions are
 recorded in the event log with actor (user / agent worker id) and timestamp.
@@ -306,20 +310,49 @@ required_checks:            # checkpoints that must close WITH evidence
   - replicate_anomaly       # reproduce the phenomenon in a query
   - scope_blast_radius      # how widespread; which partitions/dates/keys
   - upstream_trace          # walk lineage until source isolated
+    depends_on: [replicate_anomaly]   # no cause-hunting until it reproduces
   - rule_out_alternatives   # ≥2 competing explanations tested
-open_stages: [analysis]     # unconstrained agent work happens here
+suggested_checks:           # breadth, surfaced but never gated
+  - onset_dating            # when the anomaly first appears
 findings_schema: bug_hunter_v1   # closed-ended output structure
 ```
 
+Analysis is the open stage: beyond the required checks, agents are unconstrained.
+Required checks gate; **suggested checks** carry breadth without gating, so a workflow
+can name thirty fundamentals without demanding all thirty close with evidence on a
+five-column lookup table. `depends_on` expresses the rare genuine ordering.
+
 v1 templates: `bug-hunter`, `pipeline-qa`, `table-health`, `semantic-rule-qa`,
-`migration-parity`. Each defines setup inputs, required checks, intervention patterns,
+`migration-parity`, `table-onboarding`, `feature-readiness`. Each defines setup inputs, required checks, intervention patterns,
 and a findings schema. `migration-parity` doubles as the built-in verification stage for
 every other workflow.
 
 **Checkpoints** close only via `grayson checkpoint complete <name> --evidence q_017,q_023`
 — grayson verifies the cited queries exist, succeeded, and touched relevant objects.
+A check that genuinely does not apply to the target is **waived** by a user with a
+mandatory reason (agents request one via an intervention); waived satisfies the gate but
+is reported as its own status, never as complete. Without that exit, an inapplicable
+required check leaves the agent only one route past the gate — a query chosen to satisfy
+the relevance test — which is precisely the laundering the gate exists to stop.
 **Findings** are pydantic-validated documents: summary, severity, affected objects,
 evidence (query ids), reproduction, proposed remediation, confidence + open questions.
+
+## 9b. Profiling primitive
+
+The descriptive battery is identical on every table, so it is generated rather than
+hand-written: `grayson profile table` emits DESCRIBE, one wide aggregate SELECT per
+batch of columns, one UNION ALL of value frequencies for low-cardinality columns, and
+one sample — three or four statements where the naive shape is one query per column
+per statistic. Everything runs the ordinary guarded path, so the artifacts are evidence
+and their query ids close checkpoints; grayson computes the numbers and states flat
+`observations`, and interprets nothing.
+
+Quantiles and pairwise correlation are computed locally over a cached sample instead
+(`profile stats`, `profile correlate`): portable SQL cannot express them, and pairwise
+over N columns is quadratic in warehouse cost. The trade is explicit in the response —
+`computed: "local"`, a confidence ceiling, and a caveat — because the sample's query id
+is audited evidence while the statistic derived from it is not, and a correlation looks
+like a measurement of the table when it is a measurement of the sample.
 
 ## 9a. QA view library
 

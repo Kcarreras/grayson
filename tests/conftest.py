@@ -27,7 +27,12 @@ class FakeExecutor:
         self.calls.append((sql, timeout_seconds))
         if self.status != "ok":
             return ExecutionResult(status=self.status, error=self.error)
-        if "INFORMATION_SCHEMA.TABLES" in sql.upper():
+        if sql.strip().upper().startswith(("DESCRIBE", "DESC ")):
+            rows = [
+                {"name": "ID", "type": "NUMBER", "kind": "COLUMN"},
+                {"name": "VAL", "type": "VARCHAR", "kind": "COLUMN"},
+            ]
+        elif "INFORMATION_SCHEMA.TABLES" in sql.upper():
             rows = [
                 {
                     "TABLE_CATALOG": "DB",
