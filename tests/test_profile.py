@@ -176,3 +176,35 @@ def test_spearman_catches_monotone_but_nonlinear():
 def test_unknown_method_rejected():
     with pytest.raises(ValueError, match="pearson or spearman"):
         correlations(["A"], [(1.0,)], "kendall")
+
+
+def test_oddly_named_columns_are_skipped_not_fatal(session):
+    """One quoted-identifier column ("order id") must not sink the battery —
+    it is skipped and said so, and every other column still profiles."""
+    from grayson.executor.snow import ExecutionResult
+
+    class OddDescribe(FakeExecutor):
+        def execute(self, sql, timeout_seconds=0):
+            if sql.strip().upper().startswith(("DESCRIBE", "DESC ")):
+                rows = [
+                    {"name": "order id", "type": "NUMBER", "kind": "COLUMN"},
+                    {"name": "VAL", "type": "VARCHAR", "kind": "COLUMN"},
+                ]
+                return ExecutionResult(
+                    status="ok", rows=rows, columns=list(rows[0].keys()), duration_ms=5
+                )
+            return super().execute(sql, timeout_seconds)
+
+    doc = profile_table(session, "DB.S.T1", executor=OddDescribe())
+    assert doc["columns_skipped"] == ["order id"]
+    assert [c["column"] for c in doc["columns"]] == ["VAL"]
+
+
+def test_duplicate_column_names_are_skipped_not_miscomputed():
+    """`columns.index` binds a duplicated name to its first occurrence, which
+    would present a confidently wrong r — ambiguous names sit out instead."""
+    rows = [(float(i), float(100 - i), float(i), float(i) * 2) for i in range(60)]
+    out = correlations(["X", "X", "Y", "Z"], rows)
+    assert {tuple(sorted(p["columns"])) for p in out["pairs"]} == {("Y", "Z")}
+    assert out["columns_considered"] == ["Y", "Z"]
+    assert any("duplicate" in s.get("reason", "") for s in out["skipped"])

@@ -32,6 +32,18 @@ class ProfileError(ValueError):
     pass
 
 
+def _plan_sql(fn, *args, **kwargs):
+    """Generate profile SQL, surfacing plan errors as ProfileError.
+
+    Callers of the profile battery catch ProfileError; a ProfilePlanError
+    escaping here would be a traceback instead of a clean refusal.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except ProfilePlanError as e:
+        raise ProfileError(str(e.args[0] if e.args else e)) from e
+
+
 def _run(session: Session, sql: str, label: str, executor: Executor | None) -> dict:
     out = run_statement(session, sql, label=label, executor=executor)
     if out.get("status") != "executed":
@@ -79,6 +91,17 @@ def profile_table(
     except ProfilePlanError as e:
         raise ProfileError(str(e.args[0] if e.args else e)) from e
 
+    # a column whose name cannot be embedded in generated SQL (quoted
+    # identifiers with spaces, hyphens, quotes) is skipped and said so — one
+    # oddly-named column must not sink the whole battery with a plan error
+    skipped = [c.name for c in columns if not plan.profilable(c.name)]
+    columns = [c for c in columns if plan.profilable(c.name)]
+    if not columns:
+        raise ProfileError(
+            f"no profilable columns in {table}: every column name needs quoting "
+            f"grayson does not generate (skipped: {', '.join(skipped)})"
+        )
+
     evidence = [describe_qid]
     facts: dict[str, dict] = {c.name: {"type": c.raw_type, "kind": c.kind} for c in columns}
     row_total: int | None = None
@@ -86,7 +109,7 @@ def profile_table(
     for batch in plan.batches(columns):
         if not batch:
             continue
-        sql, alias_map = plan.aggregate_sql(table, batch)
+        sql, alias_map = _plan_sql(plan.aggregate_sql, table, batch)
         out = _run(session, sql, f"profile: aggregates {table}", executor)
         evidence.append(out["qid"])
         rows = session.cache.preview(out["qid"], limit=1)
@@ -107,6 +130,12 @@ def profile_table(
         "evidence": evidence,
         "queries_run": len(evidence),
     }
+    if skipped:
+        out_doc["columns_skipped"] = skipped
+        out_doc["columns_skipped_note"] = (
+            "these column names need quoting grayson does not generate; profile "
+            "them with hand-written guarded queries if they matter"
+        )
 
     if frequencies:
         low_card = [
@@ -116,7 +145,7 @@ def profile_table(
             and _as_int(facts[c.name].get("distinct")) is not None
             and 0 < _as_int(facts[c.name].get("distinct")) <= plan.MAX_DISTINCT_FOR_FREQUENCIES
         ]
-        sql = plan.frequency_sql(table, low_card)
+        sql = _plan_sql(plan.frequency_sql, table, low_card)
         if sql is not None:
             freq = _run(session, sql, f"profile: value frequencies {table}", executor)
             evidence.append(freq["qid"])
@@ -133,7 +162,7 @@ def profile_table(
     if sample:
         smp = _run(
             session,
-            plan.sample_sql(table, columns, sample_rows),
+            _plan_sql(plan.sample_sql, table, columns, sample_rows),
             f"profile: sample {table}",
             executor,
         )

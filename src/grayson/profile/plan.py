@@ -82,6 +82,11 @@ class ProfilePlanError(ValueError):
     pass
 
 
+def profilable(name: str) -> bool:
+    """Whether a column name is safe to embed in generated profile SQL."""
+    return bool(_IDENT_RE.match(name))
+
+
 def quote(name: str) -> str:
     """Double-quote an identifier, refusing anything that isn't a plain one.
 

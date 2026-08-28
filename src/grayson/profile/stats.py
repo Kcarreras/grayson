@@ -157,16 +157,25 @@ def correlations(columns: list[str], rows: list[tuple], method: str = "pearson")
     if method not in ("pearson", "spearman"):
         raise ValueError(f"method must be pearson or spearman, got {method!r}")
     numeric = numeric_columns(columns, rows)
-    index = {name: columns.index(name) for name in numeric}
-    names = sorted(numeric)
     pairs = []
     skipped = []
+    # a duplicated name is ambiguous: `columns.index` would silently bind every
+    # pair to the first occurrence, presenting a confidently wrong r — skip it
+    # and say so instead
+    duplicates = sorted(name for name in numeric if columns.count(name) > 1)
+    for name in duplicates:
+        skipped.append(
+            {"columns": [name], "reason": "duplicate column name in the sample — ambiguous"}
+        )
+    names = sorted(name for name in numeric if name not in duplicates)
+    # parse each column once, aligned to rows — re-parsing per pair is
+    # O(pairs x rows) float() calls, a many-second stall on wide tables
+    index = {name: columns.index(name) for name in names}
+    parsed = {name: [_numeric(row[index[name]]) for row in rows] for name in names}
     for i, a in enumerate(names):
         for b in names[i + 1 :]:
             xs, ys = [], []
-            for row in rows:
-                x = _numeric(row[index[a]])
-                y = _numeric(row[index[b]])
+            for x, y in zip(parsed[a], parsed[b], strict=True):
                 if x is not None and y is not None:
                     xs.append(x)
                     ys.append(y)
