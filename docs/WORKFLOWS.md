@@ -41,24 +41,19 @@ Seven ship built-in:
 | `table-onboarding` | Build the base descriptor for an undocumented table |
 | `feature-readiness` | Assess a feature table / training set before it feeds a model |
 
-`feature-readiness` is the ML-prep workflow, and it is deliberately **not** a
-generic "EDA" workflow. Descriptive profiling of one table already lives in
-`table-health` and `table-onboarding`; a third workflow doing the same
-statistics differently would be a junk drawer. What was actually missing is the
-*decision*: is this set safe to train on? So its checkpoints are the things that
+`feature-readiness` is the ML-prep workflow. Descriptive profiling of one table lives in
+`table-health` and `table-onboarding` What it offers is the
+*decision*: is this set safe to train on? Its checkpoints are the things that
 sink a model — population and grain, label distribution and base rate,
-missingness **mechanism** rather than rate, redundancy, and the one nobody runs
-by hand: leakage and point-in-time correctness. Its schema requires a
-`leakage_assessment` that says what was tested, because "not assessed" is how
-that check gets skipped.
+missingness **mechanism** rather than rate, redundancy, and leakage and point-in-time correctness. Its schema requires a
+`leakage_assessment` that says what was tested.
 
 `bug-hunter` opens by checking the *expectation* itself — a large share of
 reported anomalies are misunderstandings of the grain or of a deliberate rule,
 and finding that out costs one query here and a day of lineage walking later.
 Its findings schema takes a `resolution`: `root_caused`, or `inconclusive` with
-what is still open. An investigation that reproduces and bounds an anomaly
-without isolating it is a real result, and a schema that accepts only a
-confident answer will be given one.
+what is still open. An investigation that reproduces and bounds an anomaly, and a schema that accepts only a
+confident answer.
 
 `migration-parity` doubles as the verification stage for every other workflow.
 
@@ -69,12 +64,11 @@ only with a grayson release. Customization forks under a new name.
 ## Findings schemas and severity
 
 Each workflow validates its claims against a closed-ended schema, and the schema
-is the only enforceable quality lever on the open-ended end of the range. Six
-ship: `standard_v1`, `bug_hunter_v1`, `parity_v1`, `pipeline_qa_v1`,
-`rule_qa_v1`, `feature_readiness_v1`. Two use a discriminator to keep their
-demands honest — `bug_hunter_v1` asks for a `resolution` (`root_caused` or
-`inconclusive`, the latter needing `remaining_hypotheses`), and `rule_qa_v1` asks
-for a `finding_kind`, because an accuracy estimate must carry its sample size and
+is the enforceable quality lever on the open-ended end of the range. There are six:
+`standard_v1`, `bug_hunter_v1`, `parity_v1`, `pipeline_qa_v1`,
+`rule_qa_v1`, `feature_readiness_v1`. Two use a discriminator — `bug_hunter_v1` 
+asks for a `resolution` (`root_caused` or `inconclusive`, the latter needing `remaining_hypotheses`),
+and `rule_qa_v1` asks for a `finding_kind`, because an accuracy estimate must carry its sample size and
 sampling frame while an unreachable-category defect has no sample behind it at
 all.
 
@@ -91,7 +85,7 @@ top two rungs cost the specificity a real severe finding already has:
 
 ## Team workflows: fork, edit, share
 
-The library's `workflows/` directory extends the catalog with the team's own
+The library's `workflows/` directory extends the catalog with your team's own
 templates, shared by git like everything else in the library
 ([LIBRARY.md](LIBRARY.md)). Each carries provenance in the YAML itself:
 `created_by` (the author's `grayson user` id) and, for forks, `forked_from`
@@ -109,11 +103,10 @@ each harness's native skills directory (`.claude/skills/` for Claude Code,
 Codex, which has no skills mechanism, gets an AGENTS.md section, and a
 reference copy always lands at `.grayson/WORKFLOW_AUTHOR.md`). It walks the
 agent through interviewing the user — purpose, fork-or-fresh, setup inputs,
-the "meaningless without" test for required checks, breadth as suggested
-checks, schema — then the draft → lint → preview → sign-off → push loop, with
-every step going through the CLI so validation and ownership stay
-server-side. It ships with grayson rather than the library so the interview
-can never drift from what `workflow lint` enforces.
+required checks, breadth as suggested checks, schema — then the draft → lint → preview → sign-off → push loop,
+with every step going through the CLI so validation and ownership stay
+server-side. Keeping it in the packang ensures tje interview can never 
+drift from what `workflow lint` enforces, so tread lightly making adjustments.
 
 `workflow preview` renders any template the standard human-readable way —
 setup inputs, gating checks with their order and the answers each works from,
