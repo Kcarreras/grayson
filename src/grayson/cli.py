@@ -224,7 +224,13 @@ def init(path: Path = typer.Argument(Path("."), help="Directory to initialize.")
     except OSError as e:
         fail(f"cannot create a workspace at '{path.resolve()}': {e}. cd to a writable directory")
         return
-    emit({"initialized": str(ws.root), "next": "edit grayson.toml, then `grayson doctor`"})
+    emit(
+        {
+            "initialized": str(ws.root),
+            "next": "edit grayson.toml, then `grayson doctor` — or run `grayson setup` "
+            "for the guided pass (connection, user id, library, harness)",
+        }
+    )
 
 
 @app.command()
@@ -439,11 +445,13 @@ def _doctor_report() -> dict:
         except (OSError, subprocess.TimeoutExpired) as e:
             checks.append({"check": "connection", "ok": False, "detail": str(e)})
     if ws and ws.config.library_path:
+        linked = ws.config.library_path.is_dir()
         checks.append(
             {
                 "check": "library",
-                "ok": ws.config.library_path.is_dir(),
-                "detail": str(ws.config.library_path),
+                "ok": linked,
+                "detail": str(ws.config.library_path)
+                + (" — content health: `grayson library doctor`" if linked else ""),
             }
         )
     return {"ok": all(c["ok"] for c in checks), "checks": checks}
@@ -1152,6 +1160,42 @@ def workflow_show(name: str) -> None:
         fail(str(e.args[0] if e.args else e))
 
 
+@workflow_app.command("preview")
+def workflow_preview(name: str) -> None:
+    """Render a workflow the standard human-readable way — the form to show a
+    user before they commit to it: setup inputs, gating checks (with order and
+    which answers each works from), suggested breadth, and the session shape.
+    Agents drafting or proposing workflows paste the `text` block to the user
+    for confirmation; library workflows also carry their lint findings."""
+    from grayson.workflows.authoring import render_preview
+    from grayson.workflows.registry import core_names
+
+    try:
+        ws = Workspace.find()
+        overrides = ws.workflows_dir
+    except FileNotFoundError:
+        overrides = None
+    try:
+        tpl = get_workflow(name, overrides)
+    except WorkflowNotFound as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    out: dict = {"name": tpl.name, "core": tpl.name in core_names()}
+    if not out["core"] and overrides is not None:
+        from grayson.workflows import lint_workflows
+
+        report = lint_workflows(overrides)
+        mine = [
+            e
+            for e in report["errors"] + report["warnings"]
+            if e.get("name") == tpl.name or e.get("file") == f"{tpl.name}.yaml"
+        ]
+        if mine:
+            out["lint"] = mine
+    out["text"] = render_preview(tpl)
+    emit(out)
+
+
 @workflow_app.command("new")
 def workflow_new(
     name: str = typer.Argument(..., help="Workflow name (lowercase, hyphens), e.g. orders-health."),
@@ -1181,7 +1225,8 @@ def workflow_new(
             **({"forked_from": fork} if fork else {}),
             "lint": lint_workflows(ws.workflows_dir),
             "next": "edit the YAML (or use the console's Workflows tab), then "
-            "`grayson workflow lint` and `grayson library push`",
+            "`grayson workflow lint`, confirm the shape with `grayson workflow "
+            "preview <name>`, and `grayson library push`",
         }
     )
 

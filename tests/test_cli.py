@@ -503,3 +503,19 @@ def test_actor_user_flag_requires_a_terminal(workspace, fake_snow_env, sid):
     # nothing here may claim the human's name
     assert any(e["actor"] == "agent" for e in stage_events)
     assert not any(e["actor"] == "user" for e in stage_events)
+
+
+def test_workflow_preview_cli(workspace):
+    out = invoke("workflow", "preview", "table-health")
+    assert out["core"] is True
+    assert "Setup inputs" in out["text"] and "Required checks" in out["text"]
+    # a library workflow carries its lint findings in the same response
+    invoke("workflow", "new", "empty-flow")
+    (workspace.workflows_dir / "empty-flow.yaml").write_text(
+        "name: empty-flow\ntitle: Empty\nfindings_schema: standard_v1\n", encoding="utf-8"
+    )
+    out = invoke("workflow", "preview", "empty-flow")
+    assert out["core"] is False
+    assert any("no required_checks" in e["problem"] for e in out["lint"])
+    err = invoke_err("workflow", "preview", "no-such-workflow")
+    assert "no-such-workflow" in err["error"]

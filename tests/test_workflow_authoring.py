@@ -121,3 +121,26 @@ def test_can_edit_matrix(workspace):
     assert can_edit(mine, "kcg") is True
     assert can_edit(mine, "mkoval2") is False
     assert can_edit(mine, None) is False
+
+
+def test_preview_renders_the_confirmation_form():
+    from grayson.workflows.authoring import render_preview
+    from grayson.workflows.registry import get_workflow
+
+    text = render_preview(get_workflow("bug-hunter", None))
+    # everything a human needs to sign off: inputs, gates with order and the
+    # answers they work from, breadth, and the session shape
+    assert "bug-hunter" in text
+    assert "Setup inputs" in text and "anomaly_description (required)" in text
+    assert "Required checks" in text and "after: replicate_anomaly" in text
+    assert "uses: expectation" in text
+    assert "Suggested checks" in text and "onset_dating" in text
+    assert "Session shape" in text and "bug_hunter_v1" in text
+
+
+def test_preview_of_a_gateless_workflow_says_so():
+    from grayson.workflows.authoring import render_preview
+    from grayson.workflows.models import WorkflowTemplate
+
+    text = render_preview(WorkflowTemplate(name="empty", title="Empty"))
+    assert "nothing will gate" in text

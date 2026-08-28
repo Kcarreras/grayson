@@ -99,7 +99,16 @@ lineage.
 
 ```bash
 grayson workflow new orders-slim-health --fork table-health
+grayson workflow preview orders-slim-health   # the standard confirmation form
 ```
+
+`workflow preview` renders any template the standard human-readable way —
+setup inputs, gating checks with their order and the answers each works from,
+suggested breadth, and the session shape — with the file's lint findings
+attached for library workflows. It is the form to show a user before they
+commit to a workflow: an agent drafting or proposing one pastes the preview
+for sign-off, and a human deciding between workflows reads it instead of raw
+YAML.
 
 Editing is ownership-aware, enforced server-side in the console: workflows
 you created edit in place; a collaborator's workflow — or a core template —

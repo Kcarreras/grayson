@@ -46,7 +46,10 @@ they are equivalent. Never query Snowflake except through grayson.
   user actions; you ask, they decide.
 
 ## Workflow
-1. Discover: `grayson workflow list`; read the knowledge library for the target tables
+1. Discover: `grayson workflow list` (and `grayson workflow preview <name>` — the
+   standard human-readable rendering of a template; paste its `text` to the user
+   whenever they should choose between workflows or sign off on one). Read the
+   knowledge library for the target tables
    (`grayson knowledge show DB.SCHEMA.TABLE` — its `completeness` report shows what is
    still undescribed). Ask the user for anything the data can't tell you. Save durable
    one-off answers with `grayson knowledge add`, and record the structured base

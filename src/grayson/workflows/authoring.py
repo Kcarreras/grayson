@@ -201,3 +201,61 @@ def save_workflow_yaml(
     workflows_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(_dump(tpl), encoding="utf-8")
     return tpl
+
+
+def render_preview(tpl: WorkflowTemplate) -> str:
+    """Deterministic, human-readable rendering of a template for confirmation.
+
+    The standard shape a workflow is shown in before someone commits to it —
+    the console renders the same template visually; this is the terminal/chat
+    form. Agents drafting workflows paste this to the user for sign-off, so it
+    must show everything that matters: what the human is asked up front, what
+    gates, in what order, from which answers, and what merely suggests.
+    """
+    heading = f"{tpl.name} — {tpl.title or tpl.name}"
+    lines = [heading, "=" * min(72, len(heading))]
+    if tpl.description.strip():
+        lines += [tpl.description.strip(), ""]
+    provenance = []
+    if tpl.created_by:
+        provenance.append(f"created by {tpl.created_by}")
+    if tpl.forked_from:
+        provenance.append(f"forked from {tpl.forked_from}")
+    lines.append(
+        f"guard profile: {tpl.suggested_guard_profile} | findings schema: {tpl.findings_schema}"
+        + (f" | {', '.join(provenance)}" if provenance else "")
+    )
+    lines += ["", "Setup inputs — answers the human gives at session start"]
+    for i in tpl.setup_inputs:
+        req = "required" if i.required else "optional"
+        lines.append(f"  - {i.key} ({req}): {' '.join(i.prompt.split())}")
+    if not tpl.setup_inputs:
+        lines.append("  (none)")
+    lines += [
+        "",
+        "Required checks — each gates review until closed with evidence "
+        "(or waived by a human with a reason)",
+    ]
+    for n, c in enumerate(tpl.required_checks, 1):
+        qualifiers = []
+        if c.depends_on:
+            qualifiers.append(f"after: {', '.join(c.depends_on)}")
+        if c.uses_inputs:
+            qualifiers.append(f"uses: {', '.join(c.uses_inputs)}")
+        suffix = f"  [{'; '.join(qualifiers)}]" if qualifiers else ""
+        lines.append(f"  {n}. {c.key} — {c.title}{suffix}")
+        if c.description.strip():
+            lines.append(f"       {' '.join(c.description.split())}")
+    if not tpl.required_checks:
+        lines.append("  (none — nothing will gate; sessions can close without evidence of work)")
+    lines += ["", "Suggested checks — breadth; never gate, done where they apply"]
+    for c in tpl.suggested_checks:
+        lines.append(f"  - {c.key} — {c.title}")
+    if not tpl.suggested_checks:
+        lines.append("  (none)")
+    lines += [
+        "",
+        "Session shape: setup inputs -> guarded queries -> required checks (order above) -> "
+        f"findings ({tpl.findings_schema}) -> user accepts/rejects -> fixes/verification -> close",
+    ]
+    return "\n".join(lines)
