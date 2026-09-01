@@ -362,7 +362,9 @@ def test_closed_sessions_list_shows_the_outcome(client, session):
 
 def test_session_guard_controls_update_the_snapshot(client, session):
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert "Adjust the live guard" in page
+    # one control: the guard display IS the form while the session is open
+    assert f'action="/session/{session.id}/guard' in page
+    assert page.count("Guard profile") == 1 and page.count("Strict scope") == 1
     r = client.post(
         f"/session/{session.id}/guard?t={TOKEN}",
         data={"guard_profile": "strict", "strict_scope": "true"},
@@ -374,13 +376,14 @@ def test_session_guard_controls_update_the_snapshot(client, session):
     ev = next(e for e in session.events(10) if e["type"] == "guard_changed")
     assert ev["actor"] == "user"
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert "strict scope on" in page
+    assert '<option value="true" selected>on</option>' in page  # reflects the change
 
 
 def test_session_guard_controls_hidden_once_closed(client, session):
     session.set_meta("stage", "closed")
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert "Adjust the live guard" not in page
+    assert f'action="/session/{session.id}/guard' not in page
+    assert "Guard profile" in page and "Strict scope" in page  # still displayed, read-only
     r = client.post(f"/session/{session.id}/guard?t={TOKEN}", data={"guard_profile": "strict"})
     assert r.status_code == 400  # the snapshot is part of the record now
 
@@ -496,3 +499,46 @@ def test_knowledge_page_descriptor_and_column_edits(client, workspace):
     doc = ks.read("DB.S.T1")
     assert doc["grain"] == "one row per order"
     assert doc["owners"] == ["data-eng", "kcg"]
+
+
+def _close_with_report(session, workspace):
+    qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    for key in engine.workflow_for(session).required_check_keys():
+        engine.complete_checkpoint(session, key, [qid], "done")
+    engine.close_session(
+        session, actor="user", note="looked sound", overrides_dir=workspace.workflows_dir
+    )
+
+
+def test_report_record_renders_locally_and_from_the_library(client, session, workspace, tmp_path):
+    # Regression: a session's published report sat in the records list labelled
+    # "proposal" and 500ed on click — the record page had no report branch.
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from grayson.library import set_library_config
+    from grayson.workspace import Workspace
+
+    _close_with_report(session, workspace)
+    listing = client.get(f"/records?t={TOKEN}").text
+    assert "session report" in listing and "closed clean" in listing
+    page = client.get(f"/records/{session.id}/report/report?t={TOKEN}")
+    assert page.status_code == 200
+    assert "Session report" in page.text and "looked sound" in page.text
+    assert "closed clean" in page.text
+
+    # a teammate's workspace: same library records, no local session
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "grayson.toml").write_text(
+        (workspace.root / "grayson.toml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    shutil.copytree(workspace.records_dir, lib / "records")
+    set_library_config(other, lib, False)
+    other_client = TestClient(build_app(Workspace(other), token=TOKEN), base_url="http://127.0.0.1")
+    page = other_client.get(f"/records/{session.id}/report/report?t={TOKEN}")
+    assert page.status_code == 200
+    assert "from a teammate" in page.text and "Session report" in page.text

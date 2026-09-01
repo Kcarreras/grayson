@@ -407,3 +407,17 @@ def test_off_scope_evidence_is_persisted_on_the_checkpoint(session):
     assert cp["evidence_off_scope"] == [out["qid"]]
     listed = {c["key"]: c for c in session.checkpoints()}
     assert listed["upstream_trace"]["evidence_off_scope"] == [out["qid"]]
+
+
+def test_describe_counts_as_evidence_touching_scope(session):
+    # Regression: DESCRIBE/SHOW COLUMNS recorded no tables, so the very first
+    # query of an onboarding session was judged "out of scope" as evidence
+    # despite naming the target table.
+    from conftest import FakeExecutor
+    from grayson.core.run import run_statement
+
+    out = run_statement(session, "DESCRIBE TABLE DB.S.T1", executor=FakeExecutor())
+    assert out["tables"] == ["DB.S.T1"]
+    cp = engine.complete_checkpoint(session, "replicate_anomaly", [out["qid"]], "profiled")
+    assert cp["status"] == "complete"
+    assert not cp.get("evidence_off_scope")

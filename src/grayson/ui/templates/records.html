@@ -10,9 +10,10 @@
   <input type="hidden" name="t" value="{{ token }}">
   <input type="search" name="q" value="{{ q or '' }}" placeholder="Search titles, summaries, payloads…">
   <select name="kind" style="width: auto;">
-    <option value="" {{ "selected" if not kind }}>Findings + proposals</option>
+    <option value="" {{ "selected" if not kind }}>Everything</option>
     <option value="finding" {{ "selected" if kind == "finding" }}>Findings only</option>
     <option value="proposal" {{ "selected" if kind == "proposal" }}>Proposals only</option>
+    <option value="report" {{ "selected" if kind == "report" }}>Session reports only</option>
   </select>
   <button class="btn secondary sm" type="submit">Search</button>
   {% if q or kind %}<a class="btn ghost sm" href="/records?t={{ token }}">Clear</a>{% endif %}
@@ -35,6 +36,10 @@
         {% elif r.accepted %}<span class="badge ok">accepted</span>{% endif %}
         {% if r.supersedes %}<span class="badge todo">replaces {{ r.supersedes }}</span>{% endif %}
         {% if r.rejected %}<span class="badge bad">rejected</span>{% endif %}
+      {% elif r.kind == "report" %}
+        <span class="badge plain">session report</span>
+        {% if r.outcome == "clean" %}<span class="badge ok">closed clean</span>
+        {% elif r.outcome == "findings" %}<span class="badge plain">closed on findings</span>{% endif %}
       {% else %}
         <span class="badge plain">proposal</span>
         {% if r.verdict == "pass" %}<span class="badge ok">verified</span>
