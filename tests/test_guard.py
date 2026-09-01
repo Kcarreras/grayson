@@ -232,3 +232,44 @@ def test_cte_names_not_scope_checked():
 def test_tables_reported():
     v = verdict("SELECT * FROM db.s.a JOIN db.s.b USING (id)")
     assert set(v.tables) == {"DB.S.A", "DB.S.B"}
+
+
+# -- metadata statements name their table ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DESCRIBE TABLE DB.S.T1",
+        "DESC TABLE DB.S.T1",
+        "DESCRIBE VIEW DB.S.T1",
+        "SHOW COLUMNS IN TABLE DB.S.T1",
+        "SHOW COLUMNS IN DB.S.T1",
+    ],
+)
+def test_metadata_statements_record_their_table(sql):
+    # The DESCRIBE that opens an onboarding session must count as evidence
+    # that touched the target: it is recorded on the query row like a SELECT.
+    ctx = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
+    v = validate_statement(sql, GuardSettings(), ctx)
+    assert v.allowed, v.reason
+    assert v.tables == ["DB.S.T1"]
+    assert v.warnings == []
+
+
+def test_metadata_read_of_out_of_scope_table_is_blocked_in_strict_mode():
+    ctx = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
+    v = validate_statement("DESCRIBE TABLE DB.S.OTHER", GuardSettings(), ctx)
+    assert not v.allowed and v.rule == "out_of_scope"
+    # lenient scope: allowed, but it says so
+    v = validate_statement(
+        "SHOW COLUMNS IN DB.S.OTHER", GuardSettings(), GuardContext(scope_tables={"DB.S.T1"})
+    )
+    assert v.allowed and v.tables == ["DB.S.OTHER"]
+    assert any("outside the session scope" in w for w in v.warnings)
+
+
+def test_schema_level_listings_stay_tableless():
+    ctx = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
+    v = validate_statement("SHOW TABLES IN SCHEMA DB.S", GuardSettings(), ctx)
+    assert v.allowed and v.tables == []

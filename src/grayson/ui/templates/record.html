@@ -66,7 +66,75 @@
   {% endif %}
 </div>
 
+{% elif kind == "report" %}
+{% set rs = record.session or {} %}
+{% set ready = record.readiness or {} %}
+<div class="row split">
+  <h1>Session report · {{ rs.title or session_title or session_id }}</h1>
+  <span class="row">
+    {% if rs.outcome == "clean" %}<span class="badge ok">closed clean</span>
+    {% elif rs.outcome == "findings" %}<span class="badge plain">closed on findings</span>
+    {% elif rs.stage %}<span class="badge plain">{{ rs.stage }}</span>{% endif %}
+    {% if rs.workflow %}<span class="badge plain">{{ rs.workflow }}</span>{% endif %}
+  </span>
+</div>
+<div class="card">
+  <div class="kv">
+    <div class="item"><b>Targets</b> {{ (rs.targets or []) | join(", ") or "—" }}</div>
+    <div class="item"><b>Queries executed</b> {{ ready.queries_executed or 0 }}</div>
+    <div class="item"><b>Findings accepted</b> {{ ready.findings_accepted or 0 }}</div>
+    {% if ready.waived_checks %}<div class="item"><b>Waived</b>
+      {{ ready.waived_checks | map(attribute="key") | join(", ") }}</div>{% endif %}
+    {% if record.generated_at %}<div class="item"><b>Generated</b>
+      <span class="mono">{{ record.generated_at }}</span></div>{% endif %}
+  </div>
+  {% if rs.outcome_note %}<div class="ink2 small" style="margin-top: 8px;">{{ rs.outcome_note }}</div>{% endif %}
+</div>
+{% if record.narrative %}
+<h2>Narrative</h2>
+<div class="card">
+  <div class="sections">{% for sec in record.narrative | sections %}
+    <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
+      <div class="sec-b">{{ sec.body | para }}</div></div>{% endfor %}</div>
+</div>
+{% endif %}
+{% if record.checkpoints %}
+<h2>Checkpoints</h2>
+<div class="card">
+  {% for c in record.checkpoints %}
+  <div class="row" style="margin: 4px 0; gap: 8px;">
+    <span class="badge {{ 'ok' if c.status == 'complete' else 'plain' }}">{{ c.status }}</span>
+    <span>{{ c.title or c.key }}</span>
+    {% if c.evidence %}<span class="faint small">{% for q in c.evidence %}<span class="chip">{{ q }}</span> {% endfor %}</span>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% if record.findings %}
+<h2>Findings</h2>
+<div class="card">
+  {% for f in record.findings %}
+  <div class="row" style="margin: 4px 0; gap: 8px;">
+    <a href="/records/{{ session_id }}/finding/{{ f.fid }}?t={{ token }}">{{ f.fid }} · {{ f.title }}</a>
+    <span class="badge {{ 'ok' if f.accepted else 'bad' if f.rejected else 'plain' }}">{{ "accepted" if f.accepted else "rejected" if f.rejected else "recorded" }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% if record.proposals %}
+<h2>Proposals</h2>
+<div class="card">
+  {% for p in record.proposals %}
+  <div class="row" style="margin: 4px 0; gap: 8px;">
+    <a href="/records/{{ session_id }}/proposal/{{ p.pid }}?t={{ token }}">{{ p.pid }} · {{ p.title }}</a>
+    <span class="badge plain">{{ p.status }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% else %}
+{% set payload = record.payload or {} %}
 <div class="row split">
   <h1>{{ record.pid }} · {{ record.title }}</h1>
   <span class="row">
@@ -79,17 +147,17 @@
 <div class="card">
   {% if record.finding_fid %}<div class="faint small">addresses finding
     <span class="chip">{{ record.finding_fid }}</span></div>{% endif %}
-  {% if record.payload.rationale %}
-  <div class="sections">{% for sec in record.payload.rationale | sections %}
+  {% if payload.rationale %}
+  <div class="sections">{% for sec in payload.rationale | sections %}
     <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
       <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
   {% endif %}
   {% if record.kind == "file_diff" %}
-    <div class="muted small mono">target file: {{ record.payload.target_file }}</div>
-    {% if record.payload.diff %}<pre>{{ record.payload.diff }}</pre>{% endif %}
-    {% if record.payload.new_content %}<pre>{{ record.payload.new_content }}</pre>{% endif %}
+    <div class="muted small mono">target file: {{ payload.target_file }}</div>
+    {% if payload.diff %}<pre>{{ payload.diff }}</pre>{% endif %}
+    {% if payload.new_content %}<pre>{{ payload.new_content }}</pre>{% endif %}
   {% else %}
-    <pre>{{ record.payload.ddl }}</pre>
+    <pre>{{ payload.ddl }}</pre>
   {% endif %}
   {% if record.verification %}
   <h2>Verification</h2>

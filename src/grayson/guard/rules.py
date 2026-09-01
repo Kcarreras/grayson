@@ -216,7 +216,25 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
 
     # -- root statement type allowlist
     if isinstance(tree, exp.Describe | exp.Show):
-        return GuardVerdict(allowed=True, executed_sql=sql)
+        # Metadata reads of ONE table (DESCRIBE TABLE, SHOW COLUMNS IN ...) name
+        # that table like a SELECT does: it is recorded on the query row, so a
+        # checkpoint can cite the DESCRIBE that opened the investigation as
+        # evidence that touched scope, and strict scope applies to it — column
+        # names of an out-of-scope table are still a read. Schema/database-level
+        # listings (SHOW TABLES IN SCHEMA ...) stay table-less.
+        meta_tables: list[str] = []
+        meta_warnings: list[str] = []
+        target = _metadata_target(tree)
+        if target is not None:
+            rejected = _scope_check_table(target, context, set(), meta_tables, meta_warnings)
+            if rejected is not None:
+                return rejected
+        return GuardVerdict(
+            allowed=True,
+            executed_sql=sql,
+            tables=sorted(set(meta_tables)),
+            warnings=meta_warnings,
+        )
     if not isinstance(tree, exp.Select | _SET_OPERATION):
         return _reject(
             "statement_type",
@@ -273,48 +291,9 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
         )
 
     for t in tree.find_all(exp.Table):
-        name = (t.name or "").upper()
-        if not name:
-            continue  # function-backed source, handled above
-        catalog = (t.catalog or "").upper()
-        schema = (t.db or "").upper()
-        if not catalog and not schema and name in cte_names:
-            continue
-        fq = ".".join(p for p in (catalog, schema, name) if p)
-        if fq in DENIED_TABLES:
-            return _reject(
-                "denied_table",
-                f"'{fq}' is not allowed",
-                "warehouse query/login history is privileged audit data; agents work "
-                "from grayson's own cache and audit trail — the user reviews history "
-                "via `grayson audit reconcile`",
-            )
-        tables.append(fq)
-        if schema in ALWAYS_ALLOWED_SCHEMAS or catalog in ALWAYS_ALLOWED_CATALOGS:
-            continue
-        if fq in context.scope_tables:
-            continue
-        schema_key = f"{catalog}.{schema}" if catalog else schema
-        if schema and any(fnmatch(schema_key, g.upper()) for g in context.allowed_globs):
-            continue
-        if context.strict_scope:
-            # Unqualified names cannot be verified against scope; in strict mode
-            # that ambiguity is itself a block (Snowflake resolves them against
-            # the connection's current namespace, i.e. potentially anything).
-            detail = (
-                f"table '{fq}' is outside the session scope (strict mode)"
-                if schema
-                else f"unqualified table '{fq}' cannot be scope-verified (strict mode)"
-            )
-            return _reject(
-                "out_of_scope",
-                detail,
-                "register the table at session start or ask the user to widen scope",
-            )
-        if not schema:
-            warnings.append(f"unqualified table '{fq}' cannot be scope-checked")
-        else:
-            warnings.append(f"table '{fq}' is outside the session scope")
+        rejected = _scope_check_table(t, context, cte_names, tables, warnings)
+        if rejected is not None:
+            return rejected
 
     # -- budget warn threshold
     if settings.budget_warn and context.executed_count + 1 >= settings.budget_warn:
@@ -341,6 +320,85 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
         injected_limit=injected,
         aggregate_only=aggregate_only,
     )
+
+
+def _metadata_target(tree: exp.Expression) -> exp.Table | None:
+    """The one table a DESCRIBE / SHOW COLUMNS statement reads metadata of —
+    None for schema- or database-level listings, whose "scope" sqlglot also
+    parses as a Table node but which name no table."""
+
+    def _kind(value: object, default: str) -> str:
+        if isinstance(value, exp.Expression):
+            return value.sql().upper()
+        return str(value or default).upper()
+
+    if isinstance(tree, exp.Describe):
+        target = tree.this
+        kind = _kind(tree.args.get("kind"), "TABLE")
+    elif isinstance(tree, exp.Show):
+        target = tree.args.get("scope")
+        kind = _kind(tree.args.get("scope_kind"), "")
+    else:
+        return None
+    if kind in {"TABLE", "VIEW"} and isinstance(target, exp.Table):
+        return target
+    return None
+
+
+def _scope_check_table(
+    t: exp.Table,
+    context: GuardContext,
+    cte_names: set[str],
+    tables: list[str],
+    warnings: list[str],
+) -> GuardVerdict | None:
+    """Record one table reference and check it against denylist and scope.
+
+    Appends the qualified name to `tables` (and any advisory to `warnings`);
+    returns a rejection verdict when the reference must not run, else None."""
+    name = (t.name or "").upper()
+    if not name:
+        return None  # function-backed source, handled by the caller
+    catalog = (t.catalog or "").upper()
+    schema = (t.db or "").upper()
+    if not catalog and not schema and name in cte_names:
+        return None
+    fq = ".".join(p for p in (catalog, schema, name) if p)
+    if fq in DENIED_TABLES:
+        return _reject(
+            "denied_table",
+            f"'{fq}' is not allowed",
+            "warehouse query/login history is privileged audit data; agents work "
+            "from grayson's own cache and audit trail — the user reviews history "
+            "via `grayson audit reconcile`",
+        )
+    tables.append(fq)
+    if schema in ALWAYS_ALLOWED_SCHEMAS or catalog in ALWAYS_ALLOWED_CATALOGS:
+        return None
+    if fq in context.scope_tables:
+        return None
+    schema_key = f"{catalog}.{schema}" if catalog else schema
+    if schema and any(fnmatch(schema_key, g.upper()) for g in context.allowed_globs):
+        return None
+    if context.strict_scope:
+        # Unqualified names cannot be verified against scope; in strict mode
+        # that ambiguity is itself a block (Snowflake resolves them against
+        # the connection's current namespace, i.e. potentially anything).
+        detail = (
+            f"table '{fq}' is outside the session scope (strict mode)"
+            if schema
+            else f"unqualified table '{fq}' cannot be scope-verified (strict mode)"
+        )
+        return _reject(
+            "out_of_scope",
+            detail,
+            "register the table at session start or ask the user to widen scope",
+        )
+    if not schema:
+        warnings.append(f"unqualified table '{fq}' cannot be scope-checked")
+    else:
+        warnings.append(f"table '{fq}' is outside the session scope")
+    return None
 
 
 def _table_function_sources(tree: exp.Expression) -> list[exp.Expression]:
