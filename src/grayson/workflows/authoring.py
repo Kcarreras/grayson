@@ -91,6 +91,7 @@ def _dump(tpl: WorkflowTemplate) -> str:
         "created_by",
         "forked_from",
         "suggested_guard_profile",
+        "suggested_strict_scope",
         "setup_inputs",
         "required_checks",
         "suggested_checks",
@@ -222,8 +223,14 @@ def render_preview(tpl: WorkflowTemplate) -> str:
         provenance.append(f"created by {tpl.created_by}")
     if tpl.forked_from:
         provenance.append(f"forked from {tpl.forked_from}")
+    strict = (
+        ""
+        if tpl.suggested_strict_scope is None
+        else f" | strict scope: {tpl.suggested_strict_scope}"
+    )
     lines.append(
-        f"guard profile: {tpl.suggested_guard_profile} | findings schema: {tpl.findings_schema}"
+        f"guard profile: {tpl.suggested_guard_profile}{strict} | "
+        f"findings schema: {tpl.findings_schema}"
         + (f" | {', '.join(provenance)}" if provenance else "")
     )
     lines += ["", "Setup inputs — answers the human gives at session start"]

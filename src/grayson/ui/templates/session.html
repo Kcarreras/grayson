@@ -74,6 +74,21 @@
     <button class="btn sm" type="submit">Close as clean</button>
   </form>
 </div>
+{% elif s.stage != "closed" %}
+<div class="card" style="margin: 12px 0;">
+  <div class="overline" style="margin-bottom: 6px;">Close this session</div>
+  <div class="muted small" style="margin-bottom: 10px;">
+    Closing is yours, not the agent's — and the gates still decide: with the required
+    checks complete it closes on accepted findings (or clean, if nothing was found), and
+    an unready session is refused with the reason shown here.
+  </div>
+  <form class="row" method="post" action="/session/{{ s.id }}/close?t={{ token }}"
+        onsubmit="return confirm('Close session {{ s.id }}? The outcome is recorded and its report publishes to the library.');">
+    <input type="text" name="note" placeholder="closing note for the record (optional)"
+           style="width: auto; flex: 1 1 280px;">
+    <button class="btn sm" type="submit">Close session</button>
+  </form>
+</div>
 {% endif %}
 
 <div class="kv" style="margin: 12px 0;">
@@ -82,6 +97,24 @@
   <div class="item"><b>Strict scope</b> {{ "on" if s.strict_scope else "off" }} {{ help("strict_scope") }}</div>
   <div class="item"><b>Created</b> <span class="mono">{{ s.created_at }}</span></div>
 </div>
+
+{% if s.stage != "closed" %}
+<form class="row" method="post" action="/session/{{ s.id }}/guard?t={{ token }}"
+      style="gap: 6px; margin: -4px 0 12px; align-items: center;">
+  <span class="muted small">Adjust the live guard (a user action, logged; applies from
+    the next statement):</span>
+  <select name="guard_profile" style="width: auto;">
+    {% for name in guard_profiles %}
+    <option value="{{ name }}" {{ "selected" if name == s.guard_profile }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  <select name="strict_scope" style="width: auto;">
+    <option value="false" {{ "selected" if not s.strict_scope }}>strict scope off</option>
+    <option value="true" {{ "selected" if s.strict_scope }}>strict scope on</option>
+  </select>
+  <button class="btn secondary sm" type="submit">Apply</button>
+</form>
+{% endif %}
 
 {% if setup_inputs %}
 <div class="card">

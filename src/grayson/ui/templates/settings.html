@@ -55,8 +55,43 @@
 <form id="pf-{{ name }}" method="post" action="/settings/profile/{{ name }}?t={{ token }}"></form>
 {% endfor %}
 <div class="faint small" style="margin-top: 8px;">0 = that control is off. Changes apply
-to <i>new</i> sessions; a running session keeps the settings it started with
-(its budget cap is adjustable from the session itself).</div>
+to <i>new</i> sessions; a running session keeps the snapshot it started with —
+adjustable from the session's own page (guard profile, strict scope, budget cap),
+where each change is logged as a user action.</div>
+</div>
+
+<h2>Per-workflow session defaults</h2>
+<div class="card scroll">
+<table>
+<tr><th>Workflow</th><th>Guard profile</th><th>Strict scope</th><th></th></tr>
+{% for name in workflow_names %}
+{% set wd = cfg.workflow_defaults.get(name, {}) %}
+<tr>
+  <td class="mono">{{ name }}</td>
+  <td><select form="wd-{{ name }}" name="guard_profile" style="width: auto;">
+    <option value="">inherit</option>
+    {% for p in cfg.guard_profiles %}
+    <option value="{{ p }}" {{ "selected" if wd.get("guard_profile") == p }}>{{ p }}</option>
+    {% endfor %}
+  </select></td>
+  <td><select form="wd-{{ name }}" name="strict_scope" style="width: auto;">
+    <option value="">inherit</option>
+    <option value="true" {{ "selected" if wd.get("strict_scope") == true }}>on</option>
+    <option value="false" {{ "selected" if wd.get("strict_scope") == false }}>off</option>
+  </select></td>
+  <td><button form="wd-{{ name }}" class="btn secondary sm" type="submit">Save</button></td>
+</tr>
+{% endfor %}
+</table>
+{% for name in workflow_names %}
+<form id="wd-{{ name }}" method="post" action="/settings/workflow/{{ name }}?t={{ token }}"></form>
+{% endfor %}
+<div class="faint small" style="margin-top: 8px;">What a session starts with when no flag
+says otherwise: an explicit flag at session start always wins; <i>inherit</i> falls back
+to the last-used/template suggestion (guard profile) or the template's own suggestion,
+then the workspace default (strict scope). table-onboarding suggests strict scope on out
+of the box — its shape is bounded, so an out-of-scope read is a wrong turn, not
+exploration.</div>
 </div>
 
 <h2>Team library</h2>

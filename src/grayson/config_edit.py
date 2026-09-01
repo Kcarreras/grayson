@@ -12,6 +12,7 @@ canonical comments regenerated); every other line of the file is preserved.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -154,6 +155,41 @@ def set_values(root: Path, changes: dict[str, Any]) -> dict:
     return {"changed": applied}
 
 
+def set_workflow_defaults(
+    root: Path,
+    workflow: str,
+    guard_profile: str | None = None,
+    strict_scope: bool | None = None,
+) -> dict:
+    """Set (or clear) one workflow's per-workspace session defaults.
+
+    Each call states the workflow's full defaults: a None field inherits the
+    normal resolution and is not written; both None removes the section. The
+    console settings form maps onto this directly — every save is the whole
+    row as shown."""
+    if not re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", workflow):
+        raise ConfigError(
+            f"workflow name {workflow!r} must be 1-64 lowercase letters, digits or '-'"
+        )
+    if guard_profile is not None:
+        cfg = WorkspaceConfig.load(root / CONFIG_FILENAME)
+        if guard_profile not in cfg.guard_profiles:
+            known = ", ".join(sorted(cfg.guard_profiles))
+            raise ConfigError(f"unknown guard profile '{guard_profile}' (known: {known})")
+    cfg_path, _data = _raw(root)
+    values: dict[str, Any] = {}
+    if guard_profile is not None:
+        values["guard_profile"] = guard_profile
+    if strict_scope is not None:
+        values["strict_scope"] = strict_scope
+    header = f"workflow_defaults.{workflow}"
+    text = cfg_path.read_text(encoding="utf-8")
+    # an empty block deletes the section: no defaults left means no section
+    text = _replace_section(text, header, _section_block(header, values) if values else [])
+    cfg_path.write_text(text, encoding="utf-8")
+    return {"workflow": workflow, "defaults": values}
+
+
 def set_guard_profile(root: Path, name: str, updates: dict[str, Any]) -> dict:
     """Create or edit one named guard profile (partial updates allowed)."""
     if not name.replace("_", "").replace("-", "").isalnum():
@@ -187,6 +223,10 @@ def config_summary(root: Path) -> dict:
             name: gs.model_dump() for name, gs in sorted(cfg.guard_profiles.items())
         },
         "scopes": cfg.scopes.model_dump(),
+        "workflow_defaults": {
+            name: wd.model_dump(exclude_none=True)
+            for name, wd in sorted(cfg.workflow_defaults.items())
+        },
         "library": {
             "path": str(cfg.library_path) if cfg.library_path else None,
             "auto_push": cfg.library_auto_push,

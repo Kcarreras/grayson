@@ -139,11 +139,22 @@ def build_server(workspace: Workspace) -> Any:
                     "has no work yet — continuing with it. Pass new=true to force "
                     "a separate one.",
                 }
-        last_used = None if guard_profile else suggest_guard_profile(workspace, tables)
-        chosen = guard_profile or last_used or tpl.suggested_guard_profile
+        # same resolution as `grayson session start`: explicit arg > workspace
+        # per-workflow default (settings) > last-used > template suggestion
+        wf_defaults = workspace.config.workflow_defaults.get(tpl.name)
+        wf_profile = wf_defaults.guard_profile if wf_defaults else None
+        last_used = (
+            None if (guard_profile or wf_profile) else suggest_guard_profile(workspace, tables)
+        )
+        chosen = guard_profile or wf_profile or last_used or tpl.suggested_guard_profile
         if chosen not in workspace.config.guard_profiles:
             chosen = tpl.suggested_guard_profile
         settings = workspace.config.resolve_profile(chosen)
+        if strict_scope is None:
+            if wf_defaults and wf_defaults.strict_scope is not None:
+                strict_scope = wf_defaults.strict_scope
+            elif tpl.suggested_strict_scope is not None:
+                strict_scope = tpl.suggested_strict_scope
         s = Session.create(
             workspace,
             workflow=workflow,

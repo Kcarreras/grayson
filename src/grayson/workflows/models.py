@@ -42,6 +42,11 @@ class WorkflowTemplate(BaseModel):
     title: str = ""
     description: str = ""
     suggested_guard_profile: str = "moderate"
+    #: workflows with a bounded shape (table-onboarding: one declared table,
+    #: nothing open-ended) suggest strict scope; None leaves the workspace
+    #: default in charge. Like the guard profile, a suggestion — flags and
+    #: per-workflow workspace settings both outrank it.
+    suggested_strict_scope: bool | None = None
     setup_inputs: list[SetupInput] = Field(default_factory=list)
     required_checks: list[CheckDef] = Field(default_factory=list)
     #: breadth without gates. A workflow that must cover thirty fundamentals

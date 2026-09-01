@@ -358,3 +358,72 @@ def test_closed_sessions_list_shows_the_outcome(client, session):
     page = client.get(f"/?t={TOKEN}").text
     assert "Closed sessions" in page
     assert "clean" in page
+
+
+def test_session_guard_controls_update_the_snapshot(client, session):
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Adjust the live guard" in page
+    r = client.post(
+        f"/session/{session.id}/guard?t={TOKEN}",
+        data={"guard_profile": "strict", "strict_scope": "true"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert session.strict_scope is True
+    assert session.guard_settings.auto_limit == 1000  # the strict profile, snapshotted
+    ev = next(e for e in session.events(10) if e["type"] == "guard_changed")
+    assert ev["actor"] == "user"
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "strict scope on" in page
+
+
+def test_session_guard_controls_hidden_once_closed(client, session):
+    session.set_meta("stage", "closed")
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Adjust the live guard" not in page
+    r = client.post(f"/session/{session.id}/guard?t={TOKEN}", data={"guard_profile": "strict"})
+    assert r.status_code == 400  # the snapshot is part of the record now
+
+
+def test_close_button_gates_still_decide(client, session):
+    # unready: the close is refused and the reason shown in place
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Close this session" in page
+    r = client.post(f"/session/{session.id}/close?t={TOKEN}", data={"note": ""})
+    assert r.status_code == 400
+    assert session.stage != "closed"
+    # cleared checks, nothing found: the same button closes (clean outcome)
+    _clear_checks(session)
+    r = client.post(
+        f"/session/{session.id}/close?t={TOKEN}",
+        data={"note": "looked sound"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert session.stage == "closed" and session.outcome == "clean"
+
+
+def test_settings_per_workflow_defaults_roundtrip(client, workspace):
+    page = client.get(f"/settings?t={TOKEN}").text
+    assert "Per-workflow session defaults" in page
+    r = client.post(
+        f"/settings/workflow/table-onboarding?t={TOKEN}",
+        data={"guard_profile": "strict", "strict_scope": "true"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    workspace.reload_config()
+    wd = workspace.config.workflow_defaults["table-onboarding"]
+    assert wd.guard_profile == "strict" and wd.strict_scope is True
+    # inherit clears back to the normal resolution
+    r = client.post(
+        f"/settings/workflow/table-onboarding?t={TOKEN}",
+        data={"guard_profile": "", "strict_scope": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    workspace.reload_config()
+    assert "table-onboarding" not in workspace.config.workflow_defaults
+    # an unknown workflow is refused
+    r = client.post(f"/settings/workflow/nope?t={TOKEN}", data={})
+    assert r.status_code == 400
