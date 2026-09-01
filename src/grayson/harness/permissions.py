@@ -115,8 +115,9 @@ def guard_rules_display(harness: str) -> list[str]:
         ]
     if harness == "cursor":
         return [
-            f"{ev} hook → {_CURSOR_SCRIPT_REL} (hard-deny `snow`, Snowflake "
-            "credential reads, and `.grayson/` access)"
+            f"{ev} hook → {_CURSOR_SCRIPT_REL} (hard-deny, fail-closed: `snow`/"
+            "`snowsql`, connector imports, Snowflake credential and private-key "
+            "reads, and `.grayson/` access)"
             for ev in _CURSOR_HOOK_EVENTS
         ]
     return list(GUARD_DENY_RULES)
@@ -314,72 +315,159 @@ def _copilot_remove_guard(root: Path) -> dict:
 
 _CURSOR_HOOK_EVENTS = ("beforeShellExecution", "beforeReadFile")
 _CURSOR_SCRIPT_REL = ".cursor/hooks/grayson-guard.py"
-_CURSOR_HOOK_ENTRY = {"command": f"./{_CURSOR_SCRIPT_REL}"}
+_CURSOR_HOOK_COMMAND = f"./{_CURSOR_SCRIPT_REL}"
+# failClosed: Cursor's default is fail-OPEN — a crashed or slow guard waves
+# the action through, the wrong way for a guard to fail. With failClosed a
+# timeout denies, so the generous timeout costs a confusing refusal at worst,
+# never a hole.
+_CURSOR_HOOK_ENTRY = {"command": _CURSOR_HOOK_COMMAND, "failClosed": True, "timeout": 10}
 
 _CURSOR_NOTE = (
     "hard-deny, but version-dependent (recent Cursor IDE; hooks need an "
     "executable script, so POSIX) and IDE-only — the cursor-agent CLI has its "
-    "own permission config; the hook fails open on malformed events; pair "
-    "with a read-only Snowflake role for the guarantee that survives a bypass"
+    "own permission config; the hook fails CLOSED (a malformed event or a "
+    "crashed guard denies); pair with a read-only Snowflake role for the "
+    "guarantee that survives a bypass"
 )
+
+
+def _cursor_entry_is_ours(entry: object) -> bool:
+    """Ours by command, whatever the entry's other keys: older grayson wrote
+    `{command}` alone, this one adds failClosed/timeout, and apply upgrades
+    the old shape in place instead of stacking a second registration."""
+    return isinstance(entry, dict) and entry.get("command") == _CURSOR_HOOK_COMMAND
+
 
 _CURSOR_HOOK_SCRIPT = r'''#!/usr/bin/env python3
 """grayson harness guard hook for Cursor (managed by `grayson harness guard`).
 
-Hard-denies agent shell commands invoking the Snowflake CLI (`snow`), reads
-of Snowflake credential/config directories (~/.snowflake/, ~/.snowsql/ — the
-connection details there are all an agent needs to reach the warehouse
-without `snow` at all), and any shell or file access touching `.grayson/`
-state: warehouse access must go through grayson, where it is parsed, capped,
-and audited. Fails open — a
-malformed event is allowed rather than wedging the agent; this layer is
-friction + visibility, not containment (docs/SECURITY.md).
+Hard-denies agent shell commands invoking the Snowflake CLI (`snow`/`snowsql`)
+or reaching Snowflake through a connector import or its REST API, reads of
+Snowflake credential stores and private keys (~/.snowflake/, ~/.snowsql/,
+connections.toml, *.p8/*.pem/*.key — the connection details there are all an
+agent needs to reach the warehouse without `snow` at all), and shell or file
+access touching `.grayson/` state — except PROTOCOL.md and WORKFLOW_AUTHOR.md,
+which grayson writes there to be read. Warehouse access must go through
+grayson, where it is parsed, capped, and audited.
+
+Commands are normalized before matching (quotes and backslashes stripped), so
+`sn""ow` and `sn\ow` collapse to `snow` before the check. Fails CLOSED: the
+hook entry registers failClosed, and an unreadable payload denies explicitly —
+a crashed or slow guard must not wave the action through. Still friction +
+visibility, not containment (docs/SECURITY.md).
 """
 
 import json
 import re
 import sys
 
-DENY = [
+#: shell tokens that mean "reaching the warehouse directly", checked against
+#: the normalized command
+COMMAND_DENY = [
     (
-        re.compile(r"(^|[\s;&|(`/])snow\b"),
+        re.compile(r"(^|[\s;&|(`/])snow(sql)?\b", re.IGNORECASE),
         "direct `snow` use is blocked: all warehouse access goes through grayson",
     ),
     (
-        re.compile(r"\.snowflake\b|\.snowsql\b"),
-        "Snowflake credentials/config are off-limits: the connection details "
-        "are all an agent needs to reach the warehouse without `snow`",
-    ),
-    (
-        re.compile(r"\.grayson\b"),
-        ".grayson/ state is read via grayson tools only",
+        re.compile(r"snowflake[._-]connector|import\s+snowflake|snowflake\.com/api", re.IGNORECASE),
+        "reaching Snowflake around grayson (connector import / REST API) is "
+        "blocked: all warehouse access goes through grayson",
     ),
 ]
 
-# event keys inspected across hook types; unknown shapes fall through to allow
-KEYS = ("command", "file_path", "path")
+#: credential stores, matched in commands and read paths alike
+CREDENTIAL_RE = re.compile(r"\.snowflake\b|\.snowsql\b|connections\.toml", re.IGNORECASE)
+CREDENTIAL_WHY = (
+    "Snowflake credentials/config are off-limits: the connection details "
+    "are all an agent needs to reach the warehouse without `snow`"
+)
+
+#: private-key suffixes, checked against read paths only (a command mentioning
+#: `.key` is too ambiguous to hard-deny; the read of the file itself is not)
+KEY_SUFFIXES = (".p8", ".pem", ".key")
+
+STATE_RE = re.compile(r"\.grayson\b", re.IGNORECASE)
+#: reference docs grayson writes into .grayson/ to be read
+STATE_ALLOWED = (".grayson/protocol.md", ".grayson/workflow_author.md")
+STATE_WHY = ".grayson/ state is read via grayson tools only"
+
+
+def normalize(text):
+    r"""Collapse the quoting tricks that defeat naive matching: `sn""ow`,
+    `sn\ow` and `sn'ow'` are all `snow` to the shell, so they are to us too.
+    Not complete — nothing is — but it removes the evasions that cost nothing."""
+    stripped = re.sub(r"""["'\\]""", "", text)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def state_denied(text):
+    lowered = text.replace("\\", "/").lower()
+    if STATE_RE.search(lowered) is None:
+        return False
+    return not any(allowed in lowered for allowed in STATE_ALLOWED)
+
+
+def check_command(command):
+    normalized = normalize(command)
+    for pattern, why in COMMAND_DENY:
+        if pattern.search(normalized):
+            return why
+    if CREDENTIAL_RE.search(normalized):
+        return CREDENTIAL_WHY
+    if state_denied(normalized):
+        return STATE_WHY
+    return None
+
+
+def check_path(path):
+    normalized = normalize(path).replace("\\", "/")
+    if CREDENTIAL_RE.search(normalized):
+        return CREDENTIAL_WHY
+    if normalized.lower().endswith(KEY_SUFFIXES):
+        return (
+            "private key files are off-limits: under key-pair auth the key is "
+            "all an agent needs to reach the warehouse without `snow`"
+        )
+    if state_denied(normalized):
+        return STATE_WHY
+    return None
+
+
+def respond(why):
+    if why is None:
+        payload = {"permission": "allow"}
+    else:
+        message = f"grayson guard: {why}"
+        # both key spellings: Cursor's examples differ between camelCase and
+        # snake_case across versions, and the wrong one is silently ignored
+        payload = {
+            "permission": "deny",
+            "userMessage": message,
+            "agentMessage": f"grayson guard denied this: {why}",
+            "user_message": message,
+            "agent_message": f"grayson guard denied this: {why}",
+        }
+    print(json.dumps(payload))
 
 
 def main() -> None:
     try:
         event = json.load(sys.stdin)
-        texts = [str(event.get(k, "")) for k in KEYS if event.get(k)]
+        if not isinstance(event, dict):
+            raise ValueError("event is not an object")
     except Exception:
-        print(json.dumps({"permission": "allow"}))
+        # the hook entry registers failClosed, so a crash would deny anyway;
+        # being explicit keeps Cursor's hook log readable
+        respond("could not read the hook payload (denied rather than waved through)")
         return
-    for pattern, why in DENY:
-        if any(pattern.search(text) for text in texts):
-            print(
-                json.dumps(
-                    {
-                        "permission": "deny",
-                        "userMessage": f"grayson guard: {why}",
-                        "agentMessage": f"grayson guard denied this: {why}",
-                    }
-                )
-            )
-            return
-    print(json.dumps({"permission": "allow"}))
+    why = None
+    command = event.get("command")
+    if command:
+        why = check_command(str(command))
+    for key in ("file_path", "path"):
+        if why is None and event.get(key):
+            why = check_path(str(event[key]))
+    respond(why)
 
 
 if __name__ == "__main__":
@@ -406,7 +494,7 @@ def _cursor_guard_status(root: Path) -> dict:
     present = [
         ev
         for ev in _CURSOR_HOOK_EVENTS
-        if isinstance(hooks.get(ev), list) and _CURSOR_HOOK_ENTRY in hooks[ev]
+        if isinstance(hooks.get(ev), list) and any(_cursor_entry_is_ours(e) for e in hooks[ev])
     ]
     missing = [ev for ev in _CURSOR_HOOK_EVENTS if ev not in present]
     script_present = _cursor_script_path(root).is_file()
@@ -429,14 +517,20 @@ def _cursor_apply_guard(root: Path) -> dict:
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError(f"{path}: 'hooks' must be an object")
-    added = []
+    added, upgraded = [], []
     for ev in _CURSOR_HOOK_EVENTS:
         entries = hooks.setdefault(ev, [])
         if not isinstance(entries, list):
             raise ValueError(f"{path}: 'hooks.{ev}' must be a list")
-        if _CURSOR_HOOK_ENTRY not in entries:
+        ours = [i for i, e in enumerate(entries) if _cursor_entry_is_ours(e)]
+        if not ours:
             entries.append(dict(_CURSOR_HOOK_ENTRY))
             added.append(ev)
+        elif entries[ours[0]] != _CURSOR_HOOK_ENTRY:
+            # an entry an older grayson wrote (no failClosed/timeout yet):
+            # upgrade in place rather than stacking a second registration
+            entries[ours[0]] = dict(_CURSOR_HOOK_ENTRY)
+            upgraded.append(ev)
     script = _cursor_script_path(root)
     script_written = (
         not script.is_file() or script.read_text(encoding="utf-8") != _CURSOR_HOOK_SCRIPT
@@ -450,6 +544,7 @@ def _cursor_apply_guard(root: Path) -> dict:
         "supported": True,
         "file": str(path),
         "added": added,
+        "upgraded": upgraded,
         "script": str(script),
         "script_written": script_written,
         "rules": guard_rules_display("cursor"),
@@ -466,8 +561,9 @@ def _cursor_remove_guard(root: Path) -> dict:
         if isinstance(hooks, dict):
             for ev in _CURSOR_HOOK_EVENTS:
                 entries = hooks.get(ev)
-                if isinstance(entries, list) and _CURSOR_HOOK_ENTRY in entries:
-                    kept = [e for e in entries if e != _CURSOR_HOOK_ENTRY]
+                # by command, so entries an older grayson wrote go too
+                if isinstance(entries, list) and any(_cursor_entry_is_ours(e) for e in entries):
+                    kept = [e for e in entries if not _cursor_entry_is_ours(e)]
                     removed.append(ev)
                     if kept:
                         hooks[ev] = kept
