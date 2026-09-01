@@ -63,13 +63,20 @@ class ReportProfile(BaseModel):
 
     @field_validator("sections")
     @classmethod
-    def _known_sections(cls, v: list[str]) -> list[str]:
-        unknown = [s for s in v if s not in REPORT_SECTIONS]
-        if unknown:
-            raise ValueError(
-                f"unknown report section(s) {unknown} — known: {', '.join(REPORT_SECTIONS)}"
-            )
+    def _sections_are_strings(cls, v: list[str]) -> list[str]:
+        # Unknown section names load fine and are skipped at render time — a
+        # newer grayson's default.yaml (with a section this version doesn't
+        # have) must not make the profile un-loadable here. unknown_sections()
+        # surfaces them so a typo is visible, not an error.
+        bad = [s for s in v if not isinstance(s, str)]
+        if bad:
+            raise ValueError(f"sections must be strings, got {bad}")
         return v
+
+    def unknown_sections(self) -> list[str]:
+        """Sections this grayson doesn't render — a newer profile's additions,
+        or typos. Skipped at render; surfaced by callers as a warning."""
+        return [s for s in self.sections if s not in REPORT_SECTIONS]
 
 
 def load_profile(reports_dir: Path, name: str = "default") -> ReportProfile:
@@ -173,7 +180,9 @@ def render_markdown(report: dict, profile: ReportProfile | None = None) -> str:
         lines += [profile.header.strip(), ""]
     lines += _identity_block(report)
     for section in profile.sections:
-        lines += _SECTION_RENDERERS[section](report, profile)
+        renderer = _SECTION_RENDERERS.get(section)
+        if renderer is not None:  # unknown sections skip — see unknown_sections()
+            lines += renderer(report, profile)
     ready = report["readiness"]
     lines += [
         f"Open checks remaining: {', '.join(ready['open_checks']) or 'none'}",

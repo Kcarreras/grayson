@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from grayson.util import utcnow
+from grayson.util import atomic_write_text, utcnow
 
 if TYPE_CHECKING:
     from grayson.core.session import Session
@@ -23,6 +23,11 @@ _VIEW_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2
 
 
 class ViewEntry(BaseModel):
+    # extra="allow": fields a newer grayson adds to an entry survive an older
+    # one's rewrite — model_dump() carries them back out (the round-trip
+    # contract of docs/LIBRARY.md "Format stability").
+    model_config = ConfigDict(extra="allow")
+
     name: str
     purpose: str = ""
 
@@ -64,11 +69,22 @@ class ViewRegistry:
 
     def _save(self, views: list[ViewEntry]) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
-        payload = {"views": [v.model_dump() for v in views]}
-        self.registry_path.write_text(
+        # Unknown top-level keys round-trip: a newer grayson (or a hand edit)
+        # may keep data beside "views"; a rewrite never strips what it doesn't know.
+        existing: dict = {}
+        if self.registry_path.is_file():
+            try:
+                existing = yaml.safe_load(self.registry_path.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError:
+                existing = {}
+        payload = {
+            "views": [v.model_dump() for v in views],
+            **{k: v for k, v in existing.items() if k != "views" and isinstance(k, str)},
+        }
+        atomic_write_text(
+            self.registry_path,
             "# QA view library registry (managed by `grayson views`)\n"
             + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
-            encoding="utf-8",
         )
 
     def list(self) -> list[ViewEntry]:

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+from grayson.util import atomic_write_text
 from grayson.workflows.models import WorkflowTemplate
 from grayson.workflows.registry import core_names, load_override_report
 
@@ -83,22 +84,22 @@ def _check_name_free(workflows_dir: Path, name: str) -> None:
 def _dump(tpl: WorkflowTemplate) -> str:
     """Stable, human-editable YAML: field order matches how people read templates."""
     data = tpl.model_dump()
-    ordered = {
-        key: data[key]
-        for key in (
-            "name",
-            "title",
-            "description",
-            "created_by",
-            "forked_from",
-            "suggested_guard_profile",
-            "setup_inputs",
-            "required_checks",
-            "suggested_checks",
-            "findings_schema",
-        )
-        if data.get(key) not in ("", [], None)
-    }
+    known = (
+        "name",
+        "title",
+        "description",
+        "created_by",
+        "forked_from",
+        "suggested_guard_profile",
+        "setup_inputs",
+        "required_checks",
+        "suggested_checks",
+        "findings_schema",
+    )
+    ordered = {key: data[key] for key in known if data.get(key) not in ("", [], None)}
+    # unknown top-level fields (a newer grayson's, or a hand edit's) ride at the
+    # end rather than being stripped by the rewrite
+    ordered.update({k: v for k, v in data.items() if k not in known})
     return yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True, width=88)
 
 
@@ -134,7 +135,7 @@ def create_workflow(
             text = text.replace(
                 "suggested_guard_profile:", f"created_by: {user_id}\nsuggested_guard_profile:", 1
             )
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
     return path
 
 
@@ -199,7 +200,7 @@ def save_workflow_yaml(
     if not tpl.created_by and user_id:
         tpl = tpl.model_copy(update={"created_by": user_id})
     workflows_dir.mkdir(parents=True, exist_ok=True)
-    path.write_text(_dump(tpl), encoding="utf-8")
+    atomic_write_text(path, _dump(tpl))
     return tpl
 
 

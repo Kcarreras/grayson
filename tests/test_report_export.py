@@ -214,13 +214,19 @@ def test_profile_controls_sections_and_audience(workspace, fake_snow_env, sid):
     assert run["qid"] in report["checkpoints"][0]["evidence"]
 
 
-def test_unknown_profile_and_unknown_section_fail_loudly(workspace, fake_snow_env, sid):
+def test_unknown_profile_fails_loudly_unknown_section_tolerated(workspace, fake_snow_env, sid):
     err = invoke_err("session", "report", sid, "--profile", "nope")
     assert "no report profile" in err["error"]
+    # An unknown section is a newer grayson's profile (or a typo): the profile
+    # still loads, the section is skipped at render, and the warning names it.
     (workspace.reports_dir).mkdir(parents=True, exist_ok=True)
-    (workspace.reports_dir / "bad.yaml").write_text("sections: [not_a_section]\n", encoding="utf-8")
-    err = invoke_err("session", "report", sid, "--profile", "bad")
-    assert "unknown report section" in err["error"]
+    (workspace.reports_dir / "newer.yaml").write_text(
+        "sections: [checkpoints, from_the_future]\n", encoding="utf-8"
+    )
+    out = invoke("session", "report", sid, "--markdown", "--profile", "newer")
+    assert "from_the_future" in out["profile_warnings"][0]
+    assert "## Checkpoints" in out["markdown"]
+    assert "from_the_future" not in out["markdown"]
 
 
 def test_report_publishes_to_library_records_at_close(workspace):

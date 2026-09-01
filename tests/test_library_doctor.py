@@ -106,3 +106,15 @@ def test_cli_exits_nonzero_on_errors(workspace, ks):
     result = runner.invoke(app, ["library", "doctor"])
     assert result.exit_code == 1
     assert json.loads(result.output)["ok"] is False
+
+
+def test_newer_record_format_is_flagged_not_silently_served(workspace):
+    rec = workspace.records_dir / "s1" / "f_0001.json"
+    rec.parent.mkdir(parents=True, exist_ok=True)
+    rec.write_text(
+        json.dumps({"kind": "finding", "format": 2, "id": "f_0001", "title": "x"}),
+        encoding="utf-8",
+    )
+    report = library_doctor(workspace)
+    assert report["ok"] is False
+    assert "newer" in report["records"]["errors"][0]["problem"]

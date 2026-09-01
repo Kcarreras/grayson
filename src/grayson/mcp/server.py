@@ -791,6 +791,32 @@ def serve_stdio(workspace: Workspace) -> None:
     mcp.run(transport="stdio")
 
 
+class HealthzASGI:
+    """Unauthenticated liveness endpoint, outermost so container platforms can
+    probe the process without holding the bearer token. Reports process
+    liveness only — never library content or tool state."""
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if (
+            scope.get("type") == "http"
+            and scope.get("path") == "/healthz"
+            and scope.get("method") in ("GET", "HEAD")
+        ):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b'{"status": "ok"}'})
+            return
+        await self.app(scope, receive, send)
+
+
 class BearerAuthASGI:
     """Minimal bearer-token wall around the streamable-HTTP MCP app.
 
@@ -798,6 +824,10 @@ class BearerAuthASGI:
     credentials live (a service account, a container) while the agent runs
     where they don't — the credential-isolation deployment. The token gates
     the tool surface itself; the isolation comes from the process boundary.
+
+    Default-deny by scope type: only plain HTTP (checked) and lifespan pass.
+    A websocket (or any future scope type) is refused outright rather than
+    slipping past a wall that only inspected `http`.
     """
 
     def __init__(self, app: Any, token: str):
@@ -805,7 +835,8 @@ class BearerAuthASGI:
         self._expected = f"Bearer {token}"
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
-        if scope.get("type") == "http":
+        scope_type = scope.get("type")
+        if scope_type == "http":
             import secrets
 
             headers = {k.lower(): v for k, v in scope.get("headers") or []}
@@ -828,6 +859,12 @@ class BearerAuthASGI:
                     }
                 )
                 return
+        elif scope_type == "websocket":
+            await receive()  # websocket.connect
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        elif scope_type != "lifespan":
+            return
         await self.app(scope, receive, send)
 
 
@@ -836,10 +873,12 @@ def serve_http(mcp: Any, host: str, port: int, token: str | None) -> None:
 
     With a token, requests must present it as a bearer. token=None disables
     the wall — ONLY for deployment behind a gateway that already authenticates
-    callers (and typically owns the Authorization header itself)."""
+    callers (and typically owns the Authorization header itself). GET /healthz
+    answers 200 without a token either way (liveness only, no content)."""
     import uvicorn
 
     app = mcp.streamable_http_app(host=host)
     if token:
         app = BearerAuthASGI(app, token)
+    app = HealthzASGI(app)
     uvicorn.run(app, host=host, port=port, log_level="warning")

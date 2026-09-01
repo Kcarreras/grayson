@@ -194,7 +194,9 @@ class KnowledgeStore:
             + f"# {doc['table']}\n"
             + (f"\n{notes}\n" if notes else "")
         )
-        path.write_text(text, encoding="utf-8")
+        from grayson.util import atomic_write_text
+
+        atomic_write_text(path, text)
 
     def add_fact(
         self,

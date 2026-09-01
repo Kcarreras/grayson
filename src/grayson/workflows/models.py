@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+#: every template model tolerates and round-trips unknown fields: a newer
+#: grayson's additions survive an older one's edit-and-save (the round-trip
+#: contract of docs/LIBRARY.md "Format stability").
+_ROUND_TRIP = ConfigDict(extra="allow")
 
 
 class SetupInput(BaseModel):
+    model_config = _ROUND_TRIP
+
     key: str
     prompt: str
     required: bool = True
 
 
 class CheckDef(BaseModel):
+    model_config = _ROUND_TRIP
+
     key: str
     title: str
     description: str = ""
@@ -27,6 +36,8 @@ class CheckDef(BaseModel):
 
 
 class WorkflowTemplate(BaseModel):
+    model_config = _ROUND_TRIP
+
     name: str
     title: str = ""
     description: str = ""

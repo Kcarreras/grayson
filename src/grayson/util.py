@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 from datetime import UTC, datetime
@@ -32,9 +33,22 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def write_json(path: Path, obj: Any) -> None:
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write via a same-directory temp file + rename, so an interrupted write
+    (container kill, full disk) leaves the old file intact, never a truncated
+    one. Library formats are read by humans and other grayson versions —
+    a half-written doc is worse than a stale one."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def write_json(path: Path, obj: Any) -> None:
+    atomic_write_text(path, json.dumps(obj, indent=2, default=str))
 
 
 def ensure_within(root: Path, candidate: Path) -> Path:

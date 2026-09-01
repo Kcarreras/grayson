@@ -25,6 +25,12 @@ from grayson.workspace import Workspace
 
 RECORD_KINDS = ("finding", "proposal", "report")
 
+#: published-record format version, stamped on every record written. The same
+#: contract as knowledge docs (docs/LIBRARY.md "Format stability"): additive-only
+#: within a version, unstamped means format 1, a newer stamp loads best-effort
+#: (fields are additive) and `library doctor` flags it for upgrade.
+RECORDS_FORMAT = 1
+
 
 def _finding_row(base: dict, f: dict) -> dict:
     return {
@@ -111,18 +117,18 @@ def _publish(workspace: Workspace, row: dict, record: dict, message: str) -> Non
     """
     from grayson.identity import get_user_id
     from grayson.library import maybe_auto_push
-    from grayson.util import utcnow
+    from grayson.util import atomic_write_text, utcnow
 
     try:
         path = _record_path(workspace.records_dir, row["session_id"], row["id"])
-        path.parent.mkdir(parents=True, exist_ok=True)
         doc = {
+            "format": RECORDS_FORMAT,
             **{k: v for k, v in row.items() if k != "source"},
             "author": get_user_id(),
             "published_at": utcnow(),
             "record": record,
         }
-        path.write_text(json.dumps(doc, indent=2, default=str) + "\n", encoding="utf-8")
+        atomic_write_text(path, json.dumps(doc, indent=2, default=str) + "\n")
         maybe_auto_push(workspace, message)
     except OSError:
         return
@@ -195,9 +201,10 @@ def publish_report(session: Session) -> None:
         meta = session.meta_all()
         ready = report["readiness"]
         summary = _outcome_summary(meta, ready)
+        from grayson.util import atomic_write_text
+
         md_path = ws.records_dir / session.id / "report.md"
-        md_path.parent.mkdir(parents=True, exist_ok=True)
-        md_path.write_text(_render(report, profile), encoding="utf-8")
+        atomic_write_text(md_path, _render(report, profile))
         row = {
             **_session_base(session.id, meta),
             "kind": "report",

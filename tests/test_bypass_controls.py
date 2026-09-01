@@ -332,6 +332,58 @@ def test_bearer_auth_wall():
     assert ok.status_code == 200 and ok.text == "ok"
 
 
+def test_bearer_wall_denies_websocket_scopes():
+    # The wall default-denies by scope type: a websocket upgrade must be closed,
+    # not passed through to the app because only `http` was inspected.
+    import asyncio
+
+    from grayson.mcp.server import BearerAuthASGI
+
+    reached = []
+
+    async def inner(scope, receive, send):
+        reached.append(scope["type"])
+
+    sent = []
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    async def send(message):
+        sent.append(message)
+
+    wall = BearerAuthASGI(inner, "sekrit")
+    asyncio.run(wall({"type": "websocket", "path": "/mcp"}, receive, send))
+    assert sent == [{"type": "websocket.close", "code": 1008}]
+    assert reached == []
+
+
+def test_healthz_answers_without_token():
+    from fastapi.testclient import TestClient
+
+    from grayson.mcp.server import BearerAuthASGI, HealthzASGI
+
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    client = TestClient(HealthzASGI(BearerAuthASGI(inner, "sekrit")))
+    health = client.get("/healthz")
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    # everything else still hits the wall
+    assert client.get("/mcp").status_code == 401
+    assert client.post("/healthz").status_code == 401  # liveness is GET/HEAD only
+
+
+def test_mcp_serve_rejects_empty_library_value():
+    # The container entrypoint passes --library "$GRAYSON_LIBRARY_URL"; unset env
+    # must produce an error naming the env var, not workspace-discovery noise.
+    result = runner.invoke(app, ["mcp", "serve", "--knowledge-only", "--library", ""])
+    assert result.exit_code == 1
+    assert "GRAYSON_LIBRARY_URL" in result.output
+
+
 def test_http_flags_mutually_exclusive(workspace):
     result = runner.invoke(
         app, ["mcp", "serve", "--http", "--no-token", "--token", "x", "--knowledge-only"]
