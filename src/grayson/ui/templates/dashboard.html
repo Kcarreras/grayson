@@ -40,7 +40,8 @@
     {% else %}<span class="badge ok">checks complete</span>{% endif %}
     {% if row.findings %}<span class="badge plain">{{ row.findings }} finding{{ "s" if row.findings != 1 }}</span>{% endif %}
   </div>
-  <div class="muted small" style="margin-top: 10px;">
+  {# long fully-qualified names wrap inside the card instead of overflowing it #}
+  <div class="muted small" style="margin-top: 10px; overflow-wrap: anywhere;">
     {{ s.targets | join(", ") or "no target tables" }}</div>
 </div>
 {% endfor %}

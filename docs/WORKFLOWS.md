@@ -18,6 +18,12 @@ Checkpoints come in two kinds, with an escape hatch for the third case:
   start and in the console; the agent does the ones that fit the tables in
   front of it. This is how a workflow names thirty fundamentals without
   demanding all thirty on a five-column lookup table.
+
+A setup input can declare `adds_scope: true`: the tables the human names in
+its answer join the session's readable scope at start. That is how a
+strict-scoped workflow gets deliberate context — table-onboarding's
+`related_tables` input asks for upstream/downstream neighbours, and exactly
+those become readable beside the target instead of the scope loosening.
 - **Waiving** covers a *required* check that genuinely does not apply. The
   agent asks via an intervention; a human waives with a reason. Waived
   satisfies the gate and never renders as complete.

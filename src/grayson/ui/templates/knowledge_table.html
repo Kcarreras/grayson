@@ -6,9 +6,11 @@
 <p class="small"><a href="/knowledge?t={{ token }}">← Knowledge Library</a></p>
 <div class="row split">
   <h1 class="mono">{{ doc.table }}</h1>
-  {% if comp.base_complete %}<span class="badge ok">base complete</span>
-  {% else %}<span class="badge plain">{{ comp.missing | length }} gaps</span>{% endif %}
-  {{ help("base_descriptor") }}
+  <span class="row" style="gap: 8px; align-items: center;">
+    {% if comp.base_complete %}<span class="badge ok">base complete</span>
+    {% else %}<span class="badge plain">{{ comp.missing | length }} gaps</span>{% endif %}
+    {{ help("base_descriptor") }}
+  </span>
 </div>
 {% if not comp.base_complete %}
 <div class="muted small">Still undescribed: {{ comp.missing | join(", ") | replace("_", " ") }}</div>
@@ -21,6 +23,21 @@
   {% if doc.definition_files %}
     <div class="item"><b>Defined in</b> <span class="mono">{{ doc.definition_files | join(", ") }}</span></div>{% endif %}
 </div>
+
+<details class="fold" style="margin: 12px 0;" {{ "open" if not comp.base_complete }}>
+  <summary class="muted small">Describe this table — grain, freshness, owners
+    (your edits, confirmed by definition)</summary>
+  <form class="row" method="post" action="/knowledge/{{ doc.table }}/descriptor?t={{ token }}"
+        style="gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+    <input name="grain" value="{{ doc.grain or '' }}" placeholder="grain — one row per…"
+           style="width: auto; flex: 2 1 240px;">
+    <input name="freshness" value="{{ doc.freshness or '' }}" placeholder="freshness — loaded…"
+           style="width: auto; flex: 1 1 160px;">
+    <input name="owners" value="{{ doc.owners | join(', ') }}" placeholder="owners (comma-separated)"
+           style="width: auto; flex: 1 1 160px;">
+    <button class="btn secondary sm" type="submit">Save</button>
+  </form>
+</details>
 
 {% if graph %}
 <h2>Relationships</h2>
@@ -59,16 +76,23 @@
 <h2>Columns ({{ comp.columns_described }}/{{ comp.columns_total }} described)</h2>
 <div class="card scroll">
 <table>
-<tr><th>Column</th><th>Type</th><th>Description</th></tr>
+<tr><th>Column</th><th>Type</th><th>Description</th><th></th></tr>
 {% for c in doc.columns %}
 <tr>
   <td class="mono">{{ c.name }}</td>
   <td class="muted mono small">{{ c.type or "" }}</td>
-  <td class="{{ '' if c.description else 'faint' }}">{{ c.description or "not described yet" }}</td>
+  <td><input form="col-{{ loop.index }}" name="description" value="{{ c.description or '' }}"
+        placeholder="not described yet" style="width: 100%; min-width: 220px;"></td>
+  <td><button form="col-{{ loop.index }}" class="btn secondary sm" type="submit">Save</button></td>
 </tr>
 {% endfor %}
 </table>
 </div>
+{% for c in doc.columns %}
+<form id="col-{{ loop.index }}" method="post" action="/knowledge/{{ doc.table }}/column?t={{ token }}">
+  <input type="hidden" name="name" value="{{ c.name }}">
+</form>
+{% endfor %}
 {% endif %}
 
 <h2>Facts {{ help("fact_status") }}</h2>
@@ -77,7 +101,16 @@
 <div class="card">
   <div class="row split">
     <span>{{ f.fact }}</span>
-    <span class="badge {{ 'ok' if f.status == 'user_confirmed' else 'act' if f.status == 'data_inferred' else 'plain' }}">{{ f.status | replace("_", " ") }}</span>
+    <span class="row" style="gap: 6px; align-items: center;">
+      <span class="badge {{ 'ok' if f.status == 'user_confirmed' else 'act' if f.status == 'data_inferred' else 'plain' }}">{{ f.status | replace("_", " ") }}</span>
+      {% if f.status != "user_confirmed" %}
+      <form class="inline" method="post"
+            action="/knowledge/{{ doc.table }}/fact/{{ f.id }}/confirm?t={{ token }}">
+        <button class="btn secondary sm" type="submit"
+                title="Mark this as knowledge a human vouches for">Confirm</button>
+      </form>
+      {% endif %}
+    </span>
   </div>
   <div class="faint small" style="margin-top: 4px;">
     {{ f.created_by }} · {{ f.created_at }}
@@ -87,12 +120,27 @@
 </div>
 {% endfor %}
 
+<form class="row" method="post" action="/knowledge/{{ doc.table }}/fact?t={{ token }}"
+      style="gap: 6px; margin: 8px 0 0;">
+  <input name="fact" placeholder="add a fact you know to be true — recorded as user-confirmed"
+         style="width: auto; flex: 1 1 320px;">
+  <button class="btn secondary sm" type="submit">Add fact</button>
+</form>
+
 {% if doc.open_questions %}
 <h2>Open questions</h2>
 <div class="card">
+<div class="muted small" style="margin-bottom: 8px;">Answer what you know — the question
+  retires and your answer becomes a confirmed fact future sessions start with.</div>
 {% for oq in doc.open_questions %}
-  <div class="row" style="margin: 4px 0;"><span class="badge attn plain">?</span>
-    <span class="ink2">{{ oq }}</span></div>
+  <form class="row" method="post" action="/knowledge/{{ doc.table }}/question?t={{ token }}"
+        style="gap: 6px; margin: 6px 0; align-items: center;">
+    <span class="badge attn plain">?</span>
+    <span class="ink2" style="flex: 1 1 260px;">{{ oq }}</span>
+    <input type="hidden" name="question" value="{{ oq }}">
+    <input name="answer" placeholder="your answer" style="width: auto; flex: 1 1 220px;">
+    <button class="btn secondary sm" type="submit">Answer</button>
+  </form>
 {% endfor %}
 </div>
 {% endif %}

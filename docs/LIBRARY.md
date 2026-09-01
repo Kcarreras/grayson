@@ -32,10 +32,19 @@ and points the workspace at the clone. Collaborators run the same command.
 
 Facts about tables carry a status — `proposed` / `data_inferred` /
 `user_confirmed` — and agents can never mark a fact user-confirmed:
-confirmation is a human action (console, or `grayson knowledge confirm`).
-Structured base descriptors (grain, columns, relationships, freshness,
-owners) live beside free-form facts; each table's completeness report shows
-what is still undescribed.
+confirmation is a human action (a Confirm button on the console's table page,
+or `grayson knowledge confirm`). Structured base descriptors (grain, columns,
+relationships, freshness, owners) live beside free-form facts; each table's
+completeness report shows what is still undescribed.
+
+The table page is editable where a human is the authority: write facts
+directly (recorded user-confirmed — you *are* the confirmation), fill in
+column descriptions and the grain/freshness/owners descriptor, and answer
+open questions inline — the question retires and the answer becomes a
+confirmed fact. Agents get the same lightweight path for questions a user
+simply answers in chat: `grayson knowledge answer` (MCP: `knowledge_answer`)
+records the relayed answer as a `proposed` fact and retires the question, no
+session required — confirmation still waits for the human.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/knowledge_dark.png">

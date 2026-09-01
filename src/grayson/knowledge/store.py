@@ -234,6 +234,53 @@ class KnowledgeStore:
         self._write(fqn, doc)
         return fact.model_dump()
 
+    def answer_open_question(
+        self,
+        fqn: str,
+        question: str,
+        answer: str,
+        status: FactStatus = "proposed",
+        created_by: str = "agent",
+        evidence: list[str] | None = None,
+    ) -> dict:
+        """Resolve one open question with an answer, atomically: the answer is
+        recorded as a fact (question and answer together, so it reads standalone
+        in future briefings) and the question leaves the open list.
+
+        No session required — this is the lightweight path for a question a
+        human can simply answer. Provenance rules unchanged: an agent relaying
+        the user's answer records it `proposed`; confirmation stays a user
+        action (console or `knowledge confirm`)."""
+        doc = self.read(fqn)
+        open_qs = [str(q) for q in doc.get("open_questions") or []]
+        needle = question.strip().lower()
+        matches = [q for q in open_qs if q.strip().lower() == needle]
+        if not matches:  # substring convenience, but only when unambiguous
+            matches = [q for q in open_qs if needle in q.lower()]
+        if not matches:
+            raise KeyError(
+                f"no open question matching {question!r} on {fqn.upper()} "
+                f"(open: {open_qs or 'none'})"
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"{question!r} matches {len(matches)} open questions on {fqn.upper()} — "
+                f"be more specific: {matches}"
+            )
+        resolved = matches[0]
+        fact_text = f"{resolved.rstrip('?')}? — {answer.strip()}"
+        fact = self.add_fact(
+            fqn, fact_text, status=status, created_by=created_by, evidence=evidence
+        )
+        doc = self.read(fqn)  # re-read: add_fact rewrote the doc
+        doc["open_questions"] = [q for q in (doc.get("open_questions") or []) if str(q) != resolved]
+        self._write(fqn, doc)
+        return {
+            "question": resolved,
+            "fact": fact,
+            "open_questions_left": len(doc["open_questions"]),
+        }
+
     def confirm_fact(self, fqn: str, fact_id: str, by: str = "user") -> dict:
         from grayson.identity import get_user_id
 

@@ -225,6 +225,111 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             },
         )
 
+    def _knowledge_write(fqn: str, message: str, write) -> Any:
+        """One console knowledge edit: perform it, auto-push, return to the page.
+
+        The console is the surface where a human unambiguously is the human, so
+        writes here carry user provenance — the counterpart of the CLI's
+        interactive-terminal gate."""
+        from grayson.library import maybe_auto_push
+
+        store = KnowledgeStore(workspace.knowledge_dir)
+        try:
+            write(store)
+        except (KnowledgeDocError, ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=str(e.args[0] if e.args else e)) from e
+        maybe_auto_push(workspace, message)
+        return _redirect(f"/knowledge/{fqn}")
+
+    @app.post("/knowledge/{fqn}/fact/{fact_id}/confirm")
+    def knowledge_confirm_fact(request: Request, fqn: str, fact_id: str) -> Any:
+        _check(request)
+        return _knowledge_write(
+            fqn,
+            f"grayson knowledge: confirm {fact_id} on {fqn.upper()}",
+            lambda store: store.confirm_fact(fqn, fact_id),
+        )
+
+    @app.post("/knowledge/{fqn}/fact")
+    async def knowledge_add_fact(request: Request, fqn: str) -> Any:
+        """A human writing a fact directly: added and confirmed in one action —
+        the same two steps the provenance rail requires of everyone, just from
+        the one caller who *is* the confirming authority."""
+        _check(request)
+        from grayson.identity import get_user_id
+
+        form = await request.form()
+        fact = str(form.get("fact", "")).strip()
+        if not fact:
+            raise HTTPException(status_code=400, detail="fact text is required")
+
+        def write(store: KnowledgeStore) -> None:
+            added = store.add_fact(fqn, fact, created_by=get_user_id() or "user")
+            store.confirm_fact(fqn, added["id"])
+
+        return _knowledge_write(fqn, f"grayson knowledge: fact for {fqn.upper()}", write)
+
+    @app.post("/knowledge/{fqn}/question")
+    async def knowledge_answer_question(request: Request, fqn: str) -> Any:
+        _check(request)
+        from grayson.identity import get_user_id
+
+        form = await request.form()
+        question = str(form.get("question", "")).strip()
+        answer = str(form.get("answer", "")).strip()
+        if not question or not answer:
+            raise HTTPException(status_code=400, detail="question and answer are required")
+
+        def write(store: KnowledgeStore) -> None:
+            result = store.answer_open_question(
+                fqn, question, answer, created_by=get_user_id() or "user"
+            )
+            store.confirm_fact(fqn, result["fact"]["id"])  # answered by the human directly
+
+        return _knowledge_write(fqn, f"grayson knowledge: answer on {fqn.upper()}", write)
+
+    @app.post("/knowledge/{fqn}/column")
+    async def knowledge_describe_column(request: Request, fqn: str) -> Any:
+        _check(request)
+        form = await request.form()
+        name = str(form.get("name", "")).strip()
+        description = str(form.get("description", "")).strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="column name is required")
+
+        def write(store: KnowledgeStore) -> None:
+            doc = store.read(fqn)
+            columns = [dict(c) for c in doc.get("columns") or []]
+            for col in columns:
+                if str(col.get("name", "")).upper() == name.upper():
+                    col["description"] = description
+                    break
+            else:
+                columns.append({"name": name, "description": description})
+            store.set_profile(fqn, {"columns": columns})
+
+        return _knowledge_write(fqn, f"grayson knowledge: column {name} on {fqn.upper()}", write)
+
+    @app.post("/knowledge/{fqn}/descriptor")
+    async def knowledge_edit_descriptor(request: Request, fqn: str) -> Any:
+        _check(request)
+        form = await request.form()
+        updates: dict[str, Any] = {}
+        for key in ("grain", "freshness"):
+            if key in form:
+                updates[key] = str(form.get(key, "")).strip()
+        if "owners" in form:
+            updates["owners"] = [
+                o.strip() for o in str(form.get("owners", "")).split(",") if o.strip()
+            ]
+        if not updates:
+            raise HTTPException(status_code=400, detail="nothing to update")
+
+        def write(store: KnowledgeStore) -> None:
+            store.set_profile(fqn, updates)
+
+        return _knowledge_write(fqn, f"grayson knowledge: profile {fqn.upper()}", write)
+
     # -- checks -----------------------------------------------------------
 
     @app.get("/checks", response_class=HTMLResponse)

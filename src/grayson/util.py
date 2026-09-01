@@ -51,6 +51,12 @@ def write_json(path: Path, obj: Any) -> None:
     atomic_write_text(path, json.dumps(obj, indent=2, default=str))
 
 
+def parse_table_list(value: str) -> list[str]:
+    """Table names from free text a human typed: comma/whitespace separated,
+    uppercased, deduplicated, order kept."""
+    return list(dict.fromkeys(t.strip().upper() for t in re.split(r"[,\s]+", value) if t.strip()))
+
+
 def ensure_within(root: Path, candidate: Path) -> Path:
     """Resolve candidate and require it to live under root (no traversal escapes)."""
     resolved = candidate.resolve()
