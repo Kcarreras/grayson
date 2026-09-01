@@ -30,11 +30,24 @@ class ScopeConfig(BaseModel):
     strict: bool = False
 
 
+class WorkflowDefaults(BaseModel):
+    """Per-workflow session defaults ([workflow_defaults.<name>] in grayson.toml).
+
+    Set by the team in the console settings; an unset field inherits the usual
+    resolution (explicit flag > this > last-used/template suggestion), so a
+    workflow like table-onboarding can default to strict scope without taking
+    the choice away at session start."""
+
+    guard_profile: str | None = None
+    strict_scope: bool | None = None
+
+
 class WorkspaceConfig(BaseModel):
     connection: str = "default"
     default_guard_profile: str = "moderate"
     guard_profiles: dict[str, GuardSettings] = Field(default_factory=dict)
     scopes: ScopeConfig = Field(default_factory=ScopeConfig)
+    workflow_defaults: dict[str, WorkflowDefaults] = Field(default_factory=dict)
     library_path: Path | None = None
     library_auto_push: bool = False
 
@@ -50,6 +63,11 @@ class WorkspaceConfig(BaseModel):
             default_guard_profile=data.get("defaults", {}).get("guard_profile", "moderate"),
             guard_profiles=profiles,
             scopes=ScopeConfig(**data.get("scopes", {})),
+            workflow_defaults={
+                name: WorkflowDefaults(**vals)
+                for name, vals in data.get("workflow_defaults", {}).items()
+                if isinstance(vals, dict)
+            },
             library_path=Path(library).expanduser() if library else None,
             library_auto_push=bool(data.get("library", {}).get("auto_push", False)),
         )

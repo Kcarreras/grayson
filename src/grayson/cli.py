@@ -635,12 +635,22 @@ def session_start(
                 }
             )
             return
-    # Precedence for the base profile: explicit flag > last-used on these tables
-    # > workflow suggestion. Per-setting overrides then apply on top.
-    last_used = None if guard_profile else suggest_guard_profile(ws, tables)
-    chosen_profile = guard_profile or last_used or tpl.suggested_guard_profile
+    # Precedence for the base profile: explicit flag > this workspace's
+    # per-workflow default (settings) > last-used on these tables > workflow
+    # suggestion. Per-setting overrides then apply on top.
+    wf_defaults = ws.config.workflow_defaults.get(tpl.name)
+    wf_profile = wf_defaults.guard_profile if wf_defaults else None
+    last_used = None if (guard_profile or wf_profile) else suggest_guard_profile(ws, tables)
+    chosen_profile = guard_profile or wf_profile or last_used or tpl.suggested_guard_profile
     if chosen_profile not in ws.config.guard_profiles:
         chosen_profile = tpl.suggested_guard_profile
+    # Strict scope: explicit flag > per-workflow default > the template's own
+    # suggestion > the workspace-wide scopes.strict (applied in Session.create).
+    if strict_scope is None:
+        if wf_defaults and wf_defaults.strict_scope is not None:
+            strict_scope = wf_defaults.strict_scope
+        elif tpl.suggested_strict_scope is not None:
+            strict_scope = tpl.suggested_strict_scope
     try:
         settings = ws.config.resolve_profile(chosen_profile)
     except KeyError as e:
@@ -672,7 +682,13 @@ def session_start(
     result = {
         "session": session.summary(),
         "guard_profile_source": (
-            "flag" if guard_profile else "last_used" if last_used else "workflow_default"
+            "flag"
+            if guard_profile
+            else "workspace_workflow_default"
+            if wf_profile
+            else "last_used"
+            if last_used
+            else "workflow_default"
         ),
         "workflow": {
             "name": tpl.name,
@@ -803,6 +819,48 @@ def session_budget(
     s.set_meta("guard", settings.model_dump_json())
     s.log_event("user", "budget_changed", {"budget_cap": cap})
     emit({"id": session_id, "guard": settings.model_dump()})
+
+
+@session_app.command("guard")
+def session_guard(
+    session_id: str,
+    guard_profile: str = typer.Option(
+        None, "--guard-profile", help="Switch the session to this named profile."
+    ),
+    strict_scope: bool = typer.Option(None, "--strict-scope/--no-strict-scope"),
+) -> None:
+    """Change a live session's guard profile and/or strict scope (a user action).
+
+    A session snapshots its guard at start; workspace settings changes apply to
+    future sessions only. This is the deliberate, logged way to change the
+    snapshot mid-flight — it takes effect from the next statement, and the
+    change is an event in the audit trail like a budget raise.
+    """
+    if guard_profile is None and strict_scope is None:
+        fail("nothing to change — pass --guard-profile and/or --strict-scope/--no-strict-scope")
+        return
+    ws = _workspace()
+    s = _session(session_id)
+    if s.stage == "closed":
+        fail("session is closed — its guard snapshot is part of the record now")
+        return
+    require_interactive("changing a live session's guard")
+    changes: dict[str, object] = {}
+    if guard_profile is not None:
+        try:
+            settings = ws.config.resolve_profile(guard_profile)
+        except KeyError as e:
+            fail(str(e.args[0]))
+            return
+        s.set_meta("guard", settings.model_dump_json())
+        s.set_meta("guard_profile", guard_profile)
+        changes["guard_profile"] = guard_profile
+        changes["guard"] = settings.model_dump()
+    if strict_scope is not None:
+        s.set_meta("strict_scope", json.dumps(strict_scope))
+        changes["strict_scope"] = strict_scope
+    s.log_event("user", "guard_changed", changes)
+    emit({"id": s.id, **changes})
 
 
 @session_app.command("events")
@@ -1786,6 +1844,38 @@ def config_set(
         fail(str(e))
         return
     emit({**result, "config": config_summary(ws.root)})
+
+
+@config_app.command("workflow-defaults")
+def config_workflow_defaults(
+    workflow: str = typer.Argument(..., help="Workflow the defaults apply to."),
+    guard_profile: str = typer.Option(
+        None, "--guard-profile", help="Profile new sessions of this workflow start with."
+    ),
+    strict_scope: bool = typer.Option(None, "--strict-scope/--no-strict-scope"),
+) -> None:
+    """Set one workflow's session defaults for this workspace (a user command).
+
+    Each call states the workflow's full defaults: an omitted flag inherits the
+    usual resolution again (explicit flag at session start > this > last-used or
+    the template's suggestion), and omitting both clears the entry. The console
+    settings page edits the same thing."""
+    from grayson.config_edit import ConfigError, set_workflow_defaults
+    from grayson.workflows import list_workflows
+
+    ws = _workspace()
+    known = {t.name for t in list_workflows(ws.workflows_dir)}
+    if workflow not in known:
+        fail(f"unknown workflow '{workflow}' (known: {', '.join(sorted(known))})")
+        return
+    try:
+        emit(
+            set_workflow_defaults(
+                ws.root, workflow, guard_profile=guard_profile, strict_scope=strict_scope
+            )
+        )
+    except ConfigError as e:
+        fail(str(e))
 
 
 @config_app.command("profile")

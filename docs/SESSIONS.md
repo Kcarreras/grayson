@@ -160,11 +160,31 @@ loosen its own guards has no guards.
 grayson config show
 grayson config set defaults.guard_profile=strict scopes.strict=true
 grayson config profile overnight --auto-limit 0 --budget-cap 500
+grayson config workflow-defaults table-health --guard-profile strict --strict-scope
 ```
 
 Guard profiles bundle three cost controls — auto-`LIMIT`, per-statement
 timeout, per-session query budget — selected per session. Scope is per
 session: out-of-scope reads warn by default; `strict` blocks them.
+
+Defaults resolve per workflow: an explicit flag at session start always wins,
+then the workspace's per-workflow defaults (above; also editable on the
+Settings page), then the last-used profile on those tables or the template's
+own suggestion. Bounded workflows can suggest strict scope themselves —
+`table-onboarding` ships with it on, because an out-of-scope read there is a
+wrong turn, not exploration.
+
+A session **snapshots** its guard at start; settings changes apply to future
+sessions only. Changing a live session is deliberate and logged — a user
+action from the session's own page in the console, or:
+
+```bash
+grayson session guard <id> --guard-profile strict --strict-scope
+grayson session budget <id> --cap 200
+```
+
+Both take effect from the next statement and land in the audit trail as
+`guard_changed` / `budget_changed` events.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/settings_dark.png">

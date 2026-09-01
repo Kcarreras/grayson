@@ -433,11 +433,13 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     def _settings_context(error: str | None = None) -> dict:
         from grayson.config_edit import config_summary
         from grayson.library import library_status
+        from grayson.workflows import list_workflows
 
         workspace.reload_config()
         return {
             "nav": "settings",
             "cfg": config_summary(workspace.root),
+            "workflow_names": sorted(t.name for t in list_workflows(workspace.workflows_dir)),
             "lib": library_status(workspace),
             "error": error,
         }
@@ -486,6 +488,28 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             }
             set_guard_profile(workspace.root, name, updates)
         except (ConfigError, ValueError) as e:
+            return templates.TemplateResponse(
+                request, "settings.html", _settings_context(error=str(e)), status_code=400
+            )
+        return _redirect("/settings")
+
+    @app.post("/settings/workflow/{name}")
+    async def settings_workflow(request: Request, name: str) -> Any:
+        """One workflow's session defaults, saved whole: 'inherit' clears a
+        field back to the usual resolution (flag > this > last-used/template)."""
+        _check(request)
+        from grayson.config_edit import ConfigError, set_workflow_defaults
+        from grayson.workflows import list_workflows
+
+        form = await request.form()
+        profile = str(form.get("guard_profile", "")).strip() or None
+        strict = {"true": True, "false": False}.get(str(form.get("strict_scope", "")).strip())
+        try:
+            known = {t.name for t in list_workflows(workspace.workflows_dir)}
+            if name not in known:
+                raise ConfigError(f"unknown workflow '{name}'")
+            set_workflow_defaults(workspace.root, name, guard_profile=profile, strict_scope=strict)
+        except ConfigError as e:
             return templates.TemplateResponse(
                 request, "settings.html", _settings_context(error=str(e)), status_code=400
             )
@@ -642,6 +666,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         queries = s.query_log(100)
         return {
             "nav": "sessions",
+            "guard_profiles": sorted(workspace.config.guard_profiles),
             "s": s.summary(),
             "setup_inputs": s.setup_inputs(),
             "readiness": engine.readiness(s, workspace.workflows_dir),
@@ -686,6 +711,64 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "q_warnings": json.loads(row["warnings"]) if row.get("warnings") else [],
             },
         )
+
+    @app.post("/session/{sid}/guard")
+    async def session_guard_update(request: Request, sid: str) -> Any:
+        """Change a live session's guard snapshot — profile and/or strict scope.
+
+        The console is the surface where a human unambiguously is the human, so
+        this is the UI twin of `grayson session guard`: applied to the snapshot,
+        effective from the next statement, logged as a user event."""
+        _check(request)
+        s = _session(sid)
+        current = s.summary()
+        if current["stage"] == "closed":
+            return templates.TemplateResponse(
+                request,
+                "session.html",
+                _session_context(s, "session is closed — its guard snapshot is part of the record"),
+                status_code=400,
+            )
+        form = await request.form()
+        workspace.reload_config()
+        changes: dict[str, Any] = {}
+        profile = str(form.get("guard_profile", "")).strip()
+        if profile and profile != current["guard_profile"]:
+            try:
+                settings = workspace.config.resolve_profile(profile)
+            except KeyError as e:
+                return templates.TemplateResponse(
+                    request, "session.html", _session_context(s, str(e.args[0])), status_code=400
+                )
+            s.set_meta("guard", settings.model_dump_json())
+            s.set_meta("guard_profile", profile)
+            changes["guard_profile"] = profile
+            changes["guard"] = settings.model_dump()
+        strict_raw = str(form.get("strict_scope", "")).strip()
+        strict = {"true": True, "false": False}.get(strict_raw)
+        if strict is not None and strict != current["strict_scope"]:
+            s.set_meta("strict_scope", json.dumps(strict))
+            changes["strict_scope"] = strict
+        if changes:
+            s.log_event("user", "guard_changed", changes)
+        return _redirect(f"/session/{sid}")
+
+    @app.post("/session/{sid}/close")
+    async def session_close_ui(request: Request, sid: str) -> Any:
+        """Close from the console — the human boundary; the gates still decide
+        the outcome (findings or clean) and refuse an unready session, with the
+        refusal shown in place."""
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        note = str(form.get("note", "")).strip()
+        try:
+            engine.close_session(s, "user", note, workspace.workflows_dir)
+        except EnforcementError as e:
+            return templates.TemplateResponse(
+                request, "session.html", _session_context(s, str(e)), status_code=400
+            )
+        return _redirect(f"/session/{sid}")
 
     @app.post("/session/{sid}/title")
     async def session_rename(request: Request, sid: str) -> Any:

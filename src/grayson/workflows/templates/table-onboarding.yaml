@@ -8,6 +8,9 @@ description: >
   "We don't know yet" is a valid, recordable outcome — capture open questions
   as facts rather than guessing.
 suggested_guard_profile: moderate
+# one declared table, nothing open-ended: out-of-scope reads are a wrong
+# turn here, not exploration, so block instead of warn by default
+suggested_strict_scope: true
 setup_inputs:
   - key: table
     prompt: The fully-qualified table to onboard.
