@@ -1,15 +1,28 @@
 # Team knowledge appliance — see docs/DEPLOYMENT.md recipe 2.
+# Edit the two environment values before deploying: the container refuses to
+# start with either missing rather than guessing.
 services:
   grayson-knowledge:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     environment:
-      GRAYSON_LIBRARY_URL: git@github.com:your-org/qa-library.git
+      GRAYSON_LIBRARY_URL: git@your-git-host:your-org/qa-library.git
       GRAYSON_MCP_TOKEN: change-me-to-a-long-random-token
     volumes:
-      # read-only deploy key for the qa-library repo (never a personal key)
-      - ./deploy_key:/home/grayson/.ssh/id_ed25519:ro
+      # read-only deploy key for the qa-library repo (never a personal key);
+      # the entrypoint copies it into place with the perms ssh requires
+      - ./deploy_key:/run/secrets/grayson_deploy_key:ro
+      # optional: pin your git host's key instead of trust-on-first-use
+      # - ./known_hosts:/run/secrets/grayson_known_hosts:ro
     ports:
       - "8850:8850"
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8850/healthz', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

@@ -72,3 +72,21 @@ def test_coverage_gaps(reg):
     reg.register(ViewEntry(name="V1", source_tables=["DB.S.A"]))
     cov = reg.coverage_check(["DB.S.A", "DB.S.B"])
     assert cov["gaps"] == ["DB.S.B"] and not cov["fully_covered"]
+
+
+def test_unknown_fields_round_trip_through_a_rewrite(reg):
+    # The docs/LIBRARY.md round-trip contract: what a newer grayson (or a hand
+    # edit) wrote survives this version's full-registry rewrite — entry fields
+    # and top-level keys alike.
+    import yaml
+
+    reg.register(ViewEntry(name="V1", purpose="a"))
+    data = yaml.safe_load(reg.registry_path.read_text(encoding="utf-8"))
+    data["views"][0]["freshness_sla"] = "hourly"  # a newer grayson's entry field
+    data["team_notes"] = "hand-maintained"  # unknown top-level key
+    reg.registry_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    reg.register(ViewEntry(name="V2", purpose="b"))  # triggers a full rewrite
+    saved = yaml.safe_load(reg.registry_path.read_text(encoding="utf-8"))
+    v1 = next(v for v in saved["views"] if v["name"] == "V1")
+    assert v1["freshness_sla"] == "hourly"
+    assert saved["team_notes"] == "hand-maintained"

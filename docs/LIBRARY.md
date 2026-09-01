@@ -19,6 +19,11 @@ and points the workspace at the clone. Collaborators run the same command.
 
 - `--auto-push` commits and pushes every library write; otherwise
   `grayson library push` batches.
+- Concurrent pushes are handled: when a teammate pushed first, the rejected
+  push rebases the library commit onto theirs and retries once. On a genuine
+  conflict (both edited the same lines) the write stays committed locally and
+  the sync result says to `grayson library pull`, resolve, and `push` —
+  nothing is lost either way. Agent surfaces should check `library_sync.ok`.
 - `grayson library status|pull` keep the clone fresh.
 - `grayson library extract` splits a solo workspace's assets into a new repo.
 - Git auth stays inside git — grayson never handles those credentials.
@@ -55,7 +60,9 @@ contract — the code adapts to the files, never the reverse:
   (or a hand edit) wrote — a rewrite never strips fields it doesn't know.
 - **Docs are stamped** (`format: N`; unstamped means format 1). A newer doc
   loads best-effort but is **refused for rewrite**, with an upgrade message —
-  never silent loss.
+  never silent loss. Published records carry the same stamp; a record from a
+  newer grayson serves best-effort (fields are additive) and `doctor` flags
+  it for upgrade.
 - **Breaking changes ship only with `grayson library migrate`:** clean git
   tree required, one labeled commit, run deliberately by a human. Never
   implicit on read; git history is the rollback.

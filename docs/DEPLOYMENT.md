@@ -45,12 +45,17 @@ published records — read-only over HTTP. No warehouse credentials exist in
 this container at all; the only secret is a **read-only deploy key** for the
 qa-library repo and the bearer token clients present.
 
+The image builds from a digest-pinned Red Hat UBI 9 base with Python
+dependencies installed from `uv.lock` — two builds of one commit are the same
+appliance. It refuses to start with `GRAYSON_LIBRARY_URL` or
+`GRAYSON_MCP_TOKEN` missing, naming the missing setting, rather than guessing.
+
 ```bash
 docker build -f docker/Dockerfile -t grayson .
 docker run -d --name grayson-knowledge \
-  -e GRAYSON_LIBRARY_URL=git@github.com:your-org/qa-library.git \
+  -e GRAYSON_LIBRARY_URL=git@your-git-host:your-org/qa-library.git \
   -e GRAYSON_MCP_TOKEN=<long-random-token> \
-  -v /path/to/deploy_key:/home/grayson/.ssh/id_ed25519:ro \
+  -v /path/to/deploy_key:/run/secrets/grayson_deploy_key:ro \
   -p 8850:8850 grayson
 ```
 
@@ -63,12 +68,24 @@ claude mcp add --transport http grayson-knowledge \
 ```
 
 Notes:
+- **Liveness**: `GET /healthz` answers `200` without a token (process
+  liveness only, no library content) — point your platform's probe at it.
+  The image also carries a Docker `HEALTHCHECK` using the same endpoint.
+- The deploy key is mounted read-only anywhere (`GRAYSON_DEPLOY_KEY` points
+  at it; `/run/secrets/grayson_deploy_key` is the default) — the entrypoint
+  copies it into place with the ownership and permissions ssh requires, so
+  the image works under an arbitrary platform-assigned UID (e.g. OpenShift).
+- Host keys: mount your git host's `known_hosts` (`GRAYSON_KNOWN_HOSTS`, or
+  `/run/secrets/grayson_known_hosts`) for strict checking; without one the
+  appliance trusts the host key on first use per container.
 - The container clones the library at startup and fast-forwards on each
   restart; if git auth breaks later it keeps serving the existing clone and
   `library_info` reports the staleness.
 - The token gates the tool surface; there is nothing warehouse-shaped behind
   it to escalate to. For access beyond a trusted network, front the port with
-  TLS (any reverse proxy) — the server itself speaks plain HTTP.
+  TLS (any reverse proxy) — the server itself speaks plain HTTP. Behind a
+  gateway that authenticates every caller, `GRAYSON_MCP_NO_TOKEN=1` disables
+  the built-in wall (same rules as `--no-token` above).
 - Provision the deploy key read-only. The appliance never needs push.
 
 ## 3. Credential-isolated full server (single identity)

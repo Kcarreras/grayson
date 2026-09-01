@@ -117,3 +117,67 @@ def test_knowledge_set_rejects_unknown_and_bad_fields(workspace):
         app, ["knowledge", "set", "DB.S.T1", "--json", '{"columns": ["ORDER_ID"]}']
     )
     assert bad_cols.exit_code == 1
+
+
+def test_rejected_push_rebases_and_retries(workspace, tmp_path):
+    # Two analysts auto-pushing to one library: the second push is rejected
+    # non-fast-forward; push_library rebases the small library commit onto the
+    # teammate's and retries, so the write publishes without manual git.
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    assert _git("init", "--bare", str(origin)).returncode == 0
+    clone_dest = tmp_path / "lib-clone"
+    invoke("library", "link", str(origin), "--dest", str(clone_dest), "--auto-push")
+    _git("config", "user.email", "t@example.com", cwd=clone_dest)
+    _git("config", "user.name", "t", cwd=clone_dest)
+
+    # a teammate pushes first
+    other = tmp_path / "other-clone"
+    assert _git("clone", str(origin), str(other)).returncode == 0
+    _git("config", "user.email", "o@example.com", cwd=other)
+    _git("config", "user.name", "o", cwd=other)
+    (other / "note.md").write_text("teammate got here first\n", encoding="utf-8")
+    _git("add", "-A", cwd=other)
+    _git("commit", "-m", "teammate note", cwd=other)
+    assert _git("push", "-u", "origin", "HEAD", cwd=other).returncode == 0
+
+    added = invoke("knowledge", "add", "DB.S.T1", "--fact", "amounts are gross, not net")
+    sync = added["library_sync"]
+    assert sync["ok"] is True
+    assert sync["rebased"] is True
+    log = _git("log", "--oneline", cwd=origin)
+    assert "teammate note" in log.stdout and "grayson knowledge" in log.stdout
+
+
+def test_repo_status_throttles_fetch(tmp_path, monkeypatch):
+    from grayson import library as lib_mod
+
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    assert _git("init", "--bare", str(origin)).returncode == 0
+    seed = tmp_path / "seed"
+    assert _git("clone", str(origin), str(seed)).returncode == 0
+    _git("config", "user.email", "t@example.com", cwd=seed)
+    _git("config", "user.name", "t", cwd=seed)
+    (seed / "README.md").write_text("seed\n", encoding="utf-8")
+    _git("add", "-A", cwd=seed)
+    _git("commit", "-m", "seed", cwd=seed)
+    assert _git("push", "-u", "origin", "HEAD", cwd=seed).returncode == 0
+
+    clone = tmp_path / "clone"
+    assert _git("clone", str(origin), str(clone)).returncode == 0
+
+    calls: list[str] = []
+    real_git = lib_mod._git
+
+    def counting_git(repo, *args, **kwargs):
+        calls.append(args[0])
+        return real_git(repo, *args, **kwargs)
+
+    monkeypatch.setattr(lib_mod, "_git", counting_git)
+    first = lib_mod.repo_status(clone)
+    assert first["fetch_cached"] is False and calls.count("fetch") == 1
+    # within the TTL the fresh FETCH_HEAD stands in for another network trip
+    second = lib_mod.repo_status(clone)
+    assert second["fetch_cached"] is True and calls.count("fetch") == 1
+    assert second["fetch_ok"] is True

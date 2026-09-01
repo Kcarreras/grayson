@@ -888,6 +888,12 @@ def session_report(
     except ReportError as e:
         fail(str(e))
         return
+    ignored = prof.unknown_sections()
+    if ignored:
+        report["profile_warnings"] = [
+            f"section(s) not rendered by this grayson (newer profile, or a typo): "
+            f"{', '.join(ignored)}"
+        ]
     if markdown or out is not None:
         text = render_markdown(report, prof)
         if markdown:
@@ -2644,6 +2650,15 @@ def mcp_serve(
     the harness end to end. The two flags compose."""
     if library and not knowledge_only:
         fail("--library only applies with --knowledge-only")
+        return
+    if library is not None and not library.strip():
+        # The container entrypoint passes --library "$GRAYSON_LIBRARY_URL"; an
+        # unset env var must name itself, not fall through to workspace discovery
+        # and die on "no grayson.toml found".
+        fail(
+            "--library was given an empty value — pass a qa-library git URL or local "
+            "path (in the container image, set GRAYSON_LIBRARY_URL)"
+        )
         return
 
     if knowledge_only:

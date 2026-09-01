@@ -1,0 +1,12 @@
+# Keep the build context to what the wheel needs: source, metadata, lockfile.
+.git
+.venv
+.pytest_cache
+.ruff_cache
+__pycache__
+**/__pycache__
+*.pyc
+tests/
+docs/img/
+docker/deploy_key
+docker/known_hosts

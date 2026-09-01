@@ -144,3 +144,18 @@ def test_preview_of_a_gateless_workflow_says_so():
 
     text = render_preview(WorkflowTemplate(name="empty", title="Empty"))
     assert "nothing will gate" in text
+
+
+def test_unknown_fields_round_trip_through_a_save(workspace):
+    # The docs/LIBRARY.md round-trip contract for workflow YAML: a field a
+    # newer grayson added — top-level or nested in a check — survives this
+    # version's edit-and-save instead of being stripped by the rewrite.
+    create_workflow(workspace.workflows_dir, "mine", user_id="kcg")
+    path = workspace.workflows_dir / "mine.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["escalation_policy"] = "page-the-oncall"
+    data["required_checks"][0]["owner_team"] = "data-platform"
+    save_workflow_yaml(workspace.workflows_dir, "mine", yaml.safe_dump(data), user_id="kcg")
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert saved["escalation_policy"] == "page-the-oncall"
+    assert saved["required_checks"][0]["owner_team"] == "data-platform"

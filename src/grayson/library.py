@@ -18,6 +18,10 @@ from grayson.workspace import Workspace
 
 LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks", "records", "reports")
 
+#: how recently a `git fetch` must have run for repo_status to reuse it
+#: instead of paying another network round-trip
+_FETCH_TTL_SECONDS = 60.0
+
 _REMOTE_RE = re.compile(r"^[\w.-]+@[\w.-]+:")  # scp-style git remote (git@host:org/repo)
 
 
@@ -183,11 +187,42 @@ def push_library(
     committed = commit.returncode == 0
     # -u origin HEAD: works on the first push of a fresh clone and thereafter
     push = _git(lib, "push", "-u", "origin", "HEAD", timeout=120)
-    return {
+    result = {
         "ok": push.returncode == 0,
         "committed": committed,
         "detail": (push.stdout + push.stderr).strip()[-500:],
     }
+    if push.returncode != 0 and _push_was_rejected(push):
+        # The normal concurrent-team case: a teammate pushed first. Rebase our
+        # small library commits onto theirs and try once more; on a conflict,
+        # abort cleanly — the write is committed locally, nothing is lost.
+        rebase = _git(lib, "pull", "--rebase", timeout=120)
+        if rebase.returncode == 0:
+            push = _git(lib, "push", "-u", "origin", "HEAD", timeout=120)
+            result = {
+                "ok": push.returncode == 0,
+                "committed": committed,
+                "rebased": True,
+                "detail": (push.stdout + push.stderr).strip()[-500:],
+            }
+        else:
+            _git(lib, "rebase", "--abort")
+            result = {
+                "ok": False,
+                "committed": committed,
+                "detail": "push rejected (a teammate pushed first) and the automatic "
+                "rebase hit a conflict — the write is committed locally; run "
+                "`grayson library pull`, resolve, then `grayson library push`. "
+                + (rebase.stdout + rebase.stderr).strip()[-300:],
+            }
+    return result
+
+
+def _push_was_rejected(push: subprocess.CompletedProcess) -> bool:
+    """A non-fast-forward rejection (someone pushed first), as opposed to a
+    network or auth failure a rebase cannot help with."""
+    err = (push.stdout + push.stderr).lower()
+    return "[rejected]" in err or "non-fast-forward" in err or "fetch first" in err
 
 
 def maybe_auto_push(workspace: Workspace, message: str, via: str | None = None) -> dict | None:
@@ -216,9 +251,21 @@ def repo_status(lib: Path) -> dict:
             "detail": "library path is not a git repo (local-only library)",
         }
     import contextlib
+    import time
 
     dirty = bool(_git(lib, "status", "--porcelain").stdout.strip())
-    fetch = _git(lib, "fetch", "--quiet", timeout=60)
+    # Throttle the network round-trip: `library_info` and doctor call this per
+    # request, and on a slow enterprise git host every call would pay a fetch.
+    # git updates .git/FETCH_HEAD's mtime on each fetch — a recent one stands in.
+    fetch_head = lib / ".git" / "FETCH_HEAD"
+    fetch_cached = False
+    with contextlib.suppress(OSError):
+        fetch_cached = time.time() - fetch_head.stat().st_mtime < _FETCH_TTL_SECONDS
+    if fetch_cached:
+        fetch_ok = True
+    else:
+        fetch = _git(lib, "fetch", "--quiet", timeout=60)
+        fetch_ok = fetch.returncode == 0
     behind = ahead = 0
     counts = _git(lib, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
     if counts.returncode == 0 and counts.stdout.strip():
@@ -231,7 +278,8 @@ def repo_status(lib: Path) -> dict:
         "dirty": dirty,
         "behind": behind,
         "ahead": ahead,
-        "fetch_ok": fetch.returncode == 0,
+        "fetch_ok": fetch_ok,
+        "fetch_cached": fetch_cached,
         "warning": (
             f"library is {behind} commit(s) behind origin — pull before starting"
             if behind
@@ -269,8 +317,10 @@ def library_pull(workspace: Workspace) -> dict:
 def _lint_records(records_dir: Path) -> dict:
     """Published records the readers would silently skip: broken JSON, or a
     shape record search does not recognize (library_records drops both without
-    a word — fine for serving, wrong for finding out)."""
-    from grayson.records import RECORD_KINDS
+    a word — fine for serving, wrong for finding out). Also the record a newer
+    grayson stamped with a format this one doesn't write — served best-effort
+    (fields are additive), but worth knowing an upgrade is due."""
+    from grayson.records import RECORD_KINDS, RECORDS_FORMAT
 
     errors: list[dict] = []
     checked = 0
@@ -289,6 +339,19 @@ def _lint_records(records_dir: Path) -> dict:
                         "file": rel,
                         "problem": "not a recognized record shape — record search "
                         "skips this file silently",
+                    }
+                )
+                continue
+            fmt = data.get("format", 1)
+            if not isinstance(fmt, int) or isinstance(fmt, bool):
+                errors.append({"file": rel, "problem": f"format is not an integer: {fmt!r}"})
+            elif fmt > RECORDS_FORMAT:
+                errors.append(
+                    {
+                        "file": rel,
+                        "problem": f"record format {fmt} is newer than this grayson "
+                        f"writes (format {RECORDS_FORMAT}) — served best-effort; "
+                        "upgrade grayson to be current",
                     }
                 )
     return {"ok": not errors, "checked": checked, "errors": errors}

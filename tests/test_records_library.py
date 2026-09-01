@@ -63,6 +63,7 @@ def test_accept_publishes_to_library(workspace, session):
     assert path.is_file()
     doc = json.loads(path.read_text(encoding="utf-8"))
     assert doc["kind"] == "finding" and doc["accepted"] is True
+    assert doc["format"] == 1  # stamped like knowledge docs — see docs/LIBRARY.md
     assert doc["author"] == "kcg"
     assert doc["record"]["payload"]["extra"]["root_cause"] == "join fan-out"
 

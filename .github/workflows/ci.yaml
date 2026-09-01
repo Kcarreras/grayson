@@ -1,0 +1,81 @@
+# Lint, format, tests on both supported Pythons, then build the knowledge
+# appliance image and smoke it end to end: refuses to start misconfigured,
+# serves /healthz without a token, walls everything else behind the bearer.
+name: ci
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # library tests commit to scratch git repos; runners, unlike any
+      # developer machine, ship without a git identity
+      - run: |
+          git config --global user.name ci
+          git config --global user.email ci@invalid.example
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+
+  appliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the knowledge appliance image
+        run: docker build -f docker/Dockerfile -t grayson-appliance:ci .
+      - name: Refuses to start misconfigured, naming the missing setting
+        run: |
+          set -e
+          if docker run --rm grayson-appliance:ci > /tmp/no-url.log 2>&1; then
+            echo "expected a startup refusal without GRAYSON_LIBRARY_URL"; exit 1
+          fi
+          grep -q "GRAYSON_LIBRARY_URL" /tmp/no-url.log
+          if docker run --rm -e GRAYSON_LIBRARY_URL=/library grayson-appliance:ci > /tmp/no-token.log 2>&1; then
+            echo "expected a startup refusal without GRAYSON_MCP_TOKEN"; exit 1
+          fi
+          grep -q "GRAYSON_MCP_TOKEN" /tmp/no-token.log
+      - name: Serve a library and smoke the endpoints
+        run: |
+          set -e
+          mkdir -p /tmp/klib
+          docker run -d --name appliance \
+            -e GRAYSON_LIBRARY_URL=/library -e GRAYSON_MCP_TOKEN=ci-token \
+            -v /tmp/klib:/library -p 8850:8850 grayson-appliance:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8850/healthz > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8850/healthz
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8850/mcp \
+            -H 'Content-Type: application/json' -d '{}')" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8850/mcp \
+            -H 'Authorization: Bearer ci-token' -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}')" = "200"
+      - name: Container reports healthy
+        run: |
+          set -e
+          status=starting
+          for i in $(seq 1 40); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' appliance)"
+            [ "$status" = "healthy" ] && break
+            sleep 3
+          done
+          echo "health: $status"
+          test "$status" = "healthy"
+      - name: Logs on failure
+        if: failure()
+        run: docker logs appliance 2>&1 || true
