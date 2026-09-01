@@ -362,7 +362,9 @@ def test_closed_sessions_list_shows_the_outcome(client, session):
 
 def test_session_guard_controls_update_the_snapshot(client, session):
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert "Adjust the live guard" in page
+    # one control: the guard display IS the form while the session is open
+    assert f'action="/session/{session.id}/guard' in page
+    assert page.count("Guard profile") == 1 and page.count("Strict scope") == 1
     r = client.post(
         f"/session/{session.id}/guard?t={TOKEN}",
         data={"guard_profile": "strict", "strict_scope": "true"},
@@ -374,13 +376,14 @@ def test_session_guard_controls_update_the_snapshot(client, session):
     ev = next(e for e in session.events(10) if e["type"] == "guard_changed")
     assert ev["actor"] == "user"
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert "strict scope on" in page
+    assert '<option value="true" selected>on</option>' in page  # reflects the change
 
 
 def test_session_guard_controls_hidden_once_closed(client, session):
     session.set_meta("stage", "closed")
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert "Adjust the live guard" not in page
+    assert f'action="/session/{session.id}/guard' not in page
+    assert "Guard profile" in page and "Strict scope" in page  # still displayed, read-only
     r = client.post(f"/session/{session.id}/guard?t={TOKEN}", data={"guard_profile": "strict"})
     assert r.status_code == 400  # the snapshot is part of the record now
 

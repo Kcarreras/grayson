@@ -93,28 +93,31 @@
 
 <div class="kv" style="margin: 12px 0;">
   <div class="item"><b>Target tables</b> {{ s.targets | join(", ") or "—" }} {{ help("target_tables") }}</div>
+  {% if s.stage != "closed" %}
+  {# the guard snapshot IS the control while the session is open: one place to
+     read it and change it (a user action, logged; applies from the next statement) #}
+  <form class="item row" method="post" action="/session/{{ s.id }}/guard?t={{ token }}"
+        style="gap: 6px; align-items: center;"
+        title="Change the live guard — a user action, logged; applies from the next statement">
+    <b>Guard profile</b>
+    <select name="guard_profile" style="width: auto;">
+      {% for name in guard_profiles %}
+      <option value="{{ name }}" {{ "selected" if name == s.guard_profile }}>{{ name }}</option>
+      {% endfor %}
+    </select> {{ help("guard_profile") }}
+    <b style="margin-left: 6px;">Strict scope</b>
+    <select name="strict_scope" style="width: auto;">
+      <option value="false" {{ "selected" if not s.strict_scope }}>off</option>
+      <option value="true" {{ "selected" if s.strict_scope }}>on</option>
+    </select> {{ help("strict_scope") }}
+    <button class="btn secondary sm" type="submit">Apply</button>
+  </form>
+  {% else %}
   <div class="item"><b>Guard profile</b> {{ s.guard_profile }} {{ help("guard_profile") }}</div>
   <div class="item"><b>Strict scope</b> {{ "on" if s.strict_scope else "off" }} {{ help("strict_scope") }}</div>
+  {% endif %}
   <div class="item"><b>Created</b> <span class="mono">{{ s.created_at }}</span></div>
 </div>
-
-{% if s.stage != "closed" %}
-<form class="row" method="post" action="/session/{{ s.id }}/guard?t={{ token }}"
-      style="gap: 6px; margin: -4px 0 12px; align-items: center;">
-  <span class="muted small">Adjust the live guard (a user action, logged; applies from
-    the next statement):</span>
-  <select name="guard_profile" style="width: auto;">
-    {% for name in guard_profiles %}
-    <option value="{{ name }}" {{ "selected" if name == s.guard_profile }}>{{ name }}</option>
-    {% endfor %}
-  </select>
-  <select name="strict_scope" style="width: auto;">
-    <option value="false" {{ "selected" if not s.strict_scope }}>strict scope off</option>
-    <option value="true" {{ "selected" if s.strict_scope }}>strict scope on</option>
-  </select>
-  <button class="btn secondary sm" type="submit">Apply</button>
-</form>
-{% endif %}
 
 {% if setup_inputs %}
 <div class="card">
