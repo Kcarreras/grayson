@@ -131,7 +131,7 @@ def test_cursor_hooks_apply_status_remove_roundtrip(tmp_path):
     script = tmp_path / ".cursor" / "hooks" / "grayson-guard.py"
     assert script.is_file() and script.stat().st_mode & 0o111  # executable
     data = json.loads(hooks_file.read_text())
-    entry = {"command": "./.cursor/hooks/grayson-guard.py"}
+    entry = {"command": "./.cursor/hooks/grayson-guard.py", "failClosed": True, "timeout": 10}
     assert entry in data["hooks"]["beforeShellExecution"]
     assert entry in data["hooks"]["beforeReadFile"]
     status = guard_status(tmp_path, harness="cursor")
@@ -176,12 +176,23 @@ def test_cursor_edited_script_is_kept_on_remove(tmp_path):
     [
         ({"command": "snow sql -q 'select 1'"}, "deny"),
         ({"command": "uv run snow --help"}, "deny"),
+        ({"command": 'sn""ow sql -q "select 1"'}, "deny"),  # quote evasion normalized away
+        ({"command": "sn\\ow --help"}, "deny"),  # backslash evasion too
+        ({"command": "snowsql -q 'select 1'"}, "deny"),  # the older CLI
+        ({"command": "python -c 'import snowflake.connector'"}, "deny"),  # around the CLI
+        ({"command": "cat ~/.snowflake/connections.toml"}, "deny"),
         ({"command": "cat .grayson/audit.jsonl"}, "deny"),
         ({"file_path": "/repo/.grayson/sessions/s_0001.json"}, "deny"),
+        ({"file_path": "/home/kc/.snowflake/connections.toml"}, "deny"),
+        ({"file_path": "/home/kc/keys/rsa_key.p8"}, "deny"),  # key-pair auth private key
+        ({"file_path": "/home/kc/certs/server.pem"}, "deny"),
         ({"command": "ls -la"}, "allow"),
         ({"command": "echo snowflake-is-a-word"}, "allow"),  # substring, not the CLI
+        ({"command": "jq .key data.json"}, "allow"),  # key SUFFIX gates reads, not commands
         ({"file_path": "/repo/src/main.py"}, "allow"),
-        ({}, "allow"),  # unknown shape fails open
+        ({"file_path": "/repo/.grayson/PROTOCOL.md"}, "allow"),  # written there to be read
+        ({"file_path": "/repo/.grayson/WORKFLOW_AUTHOR.md"}, "allow"),
+        ({}, "allow"),  # parseable but empty: nothing to judge
     ],
 )
 def test_cursor_hook_script_verdicts(tmp_path, event, verdict):
@@ -200,7 +211,9 @@ def test_cursor_hook_script_verdicts(tmp_path, event, verdict):
     assert json.loads(proc.stdout)["permission"] == verdict
 
 
-def test_cursor_hook_script_fails_open_on_garbage(tmp_path):
+def test_cursor_hook_script_fails_closed_on_garbage(tmp_path):
+    # The entry registers failClosed and the script matches it: an unreadable
+    # payload denies explicitly instead of waving the action through.
     import subprocess
     import sys as _sys
 
@@ -213,7 +226,34 @@ def test_cursor_hook_script_fails_open_on_garbage(tmp_path):
         text=True,
         check=True,
     )
-    assert json.loads(proc.stdout)["permission"] == "allow"
+    verdict = json.loads(proc.stdout)
+    assert verdict["permission"] == "deny"
+    assert "payload" in verdict["userMessage"]
+
+
+def test_cursor_apply_upgrades_legacy_entry_in_place(tmp_path):
+    # An older grayson wrote {"command": ...} alone (fail-open by Cursor's
+    # default); apply must upgrade that entry to failClosed+timeout without
+    # stacking a second registration, and remove must take either shape.
+    hooks_file = tmp_path / ".cursor" / "hooks.json"
+    hooks_file.parent.mkdir(parents=True)
+    legacy = {"command": "./.cursor/hooks/grayson-guard.py"}
+    hooks_file.write_text(
+        json.dumps({"version": 1, "hooks": {"beforeShellExecution": [legacy]}}),
+        encoding="utf-8",
+    )
+    result = apply_guard(tmp_path, harness="cursor")
+    assert result["upgraded"] == ["beforeShellExecution"]
+    assert result["added"] == ["beforeReadFile"]
+    data = json.loads(hooks_file.read_text())
+    entries = data["hooks"]["beforeShellExecution"]
+    assert len(entries) == 1  # upgraded in place, not duplicated
+    assert entries[0]["failClosed"] is True and entries[0]["timeout"] == 10
+    assert remove_guard(tmp_path, harness="cursor")["removed"] == [
+        "beforeShellExecution",
+        "beforeReadFile",
+    ]
+    assert guard_status(tmp_path, harness="cursor")["applied"] is False
 
 
 def test_broken_settings_surfaces_error(tmp_path):
