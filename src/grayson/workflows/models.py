@@ -16,6 +16,11 @@ class SetupInput(BaseModel):
     key: str
     prompt: str
     required: bool = True
+    #: the answer names tables that join the session's readable scope (as
+    #: scope_extra, like library views do). This is how a strict-scope workflow
+    #: gets deliberate context — the human names upstream/downstream tables at
+    #: setup and exactly those become readable, instead of loosening the scope.
+    adds_scope: bool = False
 
 
 class CheckDef(BaseModel):

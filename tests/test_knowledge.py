@@ -174,3 +174,35 @@ def test_garbage_format_key_is_a_named_doc_error(ks, workspace):
     path.write_text("---\ntable: DB.S.T\nformat: banana\n---\n", encoding="utf-8")
     with pytest.raises(KnowledgeDocError, match="format"):
         ks.read("DB.S.T")
+
+
+def test_answer_open_question(ks):
+    ks.set_profile("DB.S.T1", {"open_questions": ["What is the grain?", "Who owns loads?"]})
+    result = ks.answer_open_question("DB.S.T1", "what is the grain?", "one row per order")
+    assert result["question"] == "What is the grain?"
+    assert result["open_questions_left"] == 1
+    doc = ks.read("DB.S.T1")
+    assert doc["open_questions"] == ["Who owns loads?"]
+    fact = doc["facts"][0]
+    # the fact reads standalone: question and answer together
+    assert fact["fact"] == "What is the grain? — one row per order"
+    assert fact["status"] == "proposed"  # relayed, not confirmed
+
+
+def test_answer_open_question_substring_match(ks):
+    ks.set_profile("DB.S.T1", {"open_questions": ["Is AMOUNT gross or net of refunds?"]})
+    result = ks.answer_open_question("DB.S.T1", "gross or net", "gross — refunds land separately")
+    assert result["question"] == "Is AMOUNT gross or net of refunds?"
+    assert ks.read("DB.S.T1")["open_questions"] == []
+
+
+def test_answer_open_question_ambiguous_or_missing(ks):
+    ks.set_profile(
+        "DB.S.T1",
+        {"open_questions": ["Is the grain daily?", "Is the grain hourly upstream?"]},
+    )
+    with pytest.raises(ValueError, match="matches 2 open questions"):
+        ks.answer_open_question("DB.S.T1", "grain", "yes")
+    with pytest.raises(KeyError, match="no open question"):
+        ks.answer_open_question("DB.S.T1", "refunds", "n/a")
+    assert len(ks.read("DB.S.T1")["open_questions"]) == 2  # nothing changed

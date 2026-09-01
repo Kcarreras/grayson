@@ -17,9 +17,17 @@ setup_inputs:
     required: true
   - key: prior_context
     prompt: >
-      Anything already known — source system, owning team, suspected grain,
-      related tables. Leave empty if nothing is known.
+      Anything already known — source system, owning team, suspected grain.
+      Leave empty if nothing is known.
     required: false
+  - key: related_tables
+    prompt: >
+      Upstream sources or downstream consumers worth reading for context —
+      parents this joins to, tables this feeds. Under strict scope exactly
+      these become readable beside the target, so relationship mapping has
+      real neighbours to validate against. Leave empty to skip.
+    required: false
+    adds_scope: true
 required_checks:
   - key: structure_profiled
     title: Profile structure and content
@@ -40,8 +48,13 @@ required_checks:
     description: >
       Identify candidate join keys to sibling tables and validate them with
       match-rate evidence (orphans, fan-out). Record confirmed relationships
-      and ruled-out candidates alike.
+      and ruled-out candidates alike. Ask the user up front for upstream and
+      downstream tables worth reading (the related_tables input) — this
+      workflow runs strict-scoped, so only the target and the tables they
+      name are readable; if a promising neighbour surfaces mid-session, ask
+      rather than guessing around the scope wall.
     depends_on: [structure_profiled]
+    uses_inputs: [related_tables]
   - key: sensitivity_classified
     title: Classify sensitive columns
     description: >

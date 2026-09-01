@@ -22,7 +22,7 @@ from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request, validate_response
 from grayson.interventions.types import InterventionError
 from grayson.knowledge import KnowledgeStore, completeness
-from grayson.util import write_json
+from grayson.util import parse_table_list, write_json
 from grayson.views import ViewEntry, ViewRegistry, enter_session_scope
 from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
 from grayson.workspace import Workspace
@@ -679,6 +679,15 @@ def session_start(
     engine.seed_from_workflow(session, ws.workflows_dir)
     if provided:
         session.set_setup_inputs(provided, actor=default_actor())
+    context_scope: list[str] = []
+    for setup_input in tpl.setup_inputs:
+        if setup_input.adds_scope and str(provided.get(setup_input.key) or "").strip():
+            context_scope += parse_table_list(provided[setup_input.key])
+    if context_scope:
+        # declared context (e.g. upstream/downstream tables the user named at
+        # setup) is readable even under strict scope — deliberate, and logged
+        session.add_scope(context_scope)
+        session.log_event(default_actor(), "scope_from_inputs", {"tables": context_scope})
     result = {
         "session": session.summary(),
         "guard_profile_source": (
@@ -699,6 +708,8 @@ def session_start(
         },
         "setup_inputs": provided,
     }
+    if context_scope:
+        result["context_scope"] = context_scope
     missing_inputs = tpl.missing_required_inputs(provided)
     if missing_inputs:
         result["setup_inputs_missing"] = missing_inputs
@@ -1994,6 +2005,36 @@ def knowledge_add(
         return
     out = dict(result)
     _attach_library_sync(out, ws, f"grayson knowledge: fact for {table.upper()}")
+    emit(out)
+
+
+@knowledge_app.command("answer")
+def knowledge_answer(
+    table: str,
+    question: str = typer.Option(
+        ..., "--question", "-q", help="The open question (or a unique fragment of it)."
+    ),
+    answer: str = typer.Option(..., "--answer", "-a", help="The answer, in the user's words."),
+    status: str = typer.Option("proposed", "--status", help="proposed|data_inferred"),
+    by: str = typer.Option("agent", "--by"),
+    evidence: list[str] = typer.Option([], "--evidence", "-e"),
+) -> None:
+    """Resolve an open question with an answer — no session needed.
+
+    The question leaves the open list and the answer lands as a fact (question
+    and answer together, so future briefings read it standalone). Agents relay
+    the user's answer as `proposed`; marking it user-confirmed stays a user
+    action (`knowledge confirm`, or the console)."""
+    ws = _workspace()
+    try:
+        result = KnowledgeStore(ws.knowledge_dir).answer_open_question(
+            table, question, answer, status=status, created_by=by, evidence=list(evidence)
+        )
+    except (ValueError, KeyError) as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    out = dict(result)
+    _attach_library_sync(out, ws, f"grayson knowledge: answer on {table.upper()}")
     emit(out)
 
 

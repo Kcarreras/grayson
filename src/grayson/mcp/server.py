@@ -21,6 +21,7 @@ from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request
 from grayson.interventions.types import InterventionError
 from grayson.knowledge import KnowledgeStore, completeness
+from grayson.util import parse_table_list
 from grayson.views import ViewRegistry, enter_session_scope
 from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
 from grayson.workspace import Workspace
@@ -46,7 +47,9 @@ bar/line/scatter charts from cached artifacts that render live in the user's con
 each traceable to its executed query.
 If a target table has no recorded knowledge, settle grain/semantics with the user early
 (or run the table-onboarding workflow), and persist durable intervention answers with
-knowledge_add so future sessions start briefed.
+knowledge_add so future sessions start briefed. An open question in the library that the
+user can simply answer needs no session at all: relay their answer with knowledge_answer,
+which records it and retires the question (they confirm it in the console).
 Access warehouse data ONLY through these tools — never open warehouse or .grayson
 database/state files directly (including local or sandbox files); direct reads bypass
 the audit trail and produce nothing citable as evidence.
@@ -168,6 +171,14 @@ def build_server(workspace: Workspace) -> Any:
         engine.seed_from_workflow(s, workspace.workflows_dir)
         if provided:
             s.set_setup_inputs(provided, actor="agent")
+        context_scope: list[str] = []
+        for setup_input in tpl.setup_inputs:
+            if setup_input.adds_scope and str(provided.get(setup_input.key) or "").strip():
+                context_scope += parse_table_list(provided[setup_input.key])
+        if context_scope:
+            # user-declared context tables become readable under strict scope
+            s.add_scope(context_scope)
+            s.log_event("agent", "scope_from_inputs", {"tables": context_scope})
         snap = snapshot_metadata(s)
         current = {
             fq: info.get("last_altered")
@@ -191,6 +202,8 @@ def build_server(workspace: Workspace) -> Any:
             "knowledge_gaps": gaps,
             "external_checks": external,
         }
+        if context_scope:
+            out["context_scope"] = context_scope
         hints = []
         missing_inputs = tpl.missing_required_inputs(provided)
         if missing_inputs:
@@ -648,6 +661,32 @@ def build_server(workspace: Workspace) -> Any:
             )
             return _library_sync(out, f"grayson knowledge: fact for {table.upper()}")
         except ValueError as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Resolve one of a table's open questions with the user's answer — "
+        "no session needed. Ask the user (or relay what they just told you), pass their "
+        "answer in their words: the question leaves the open list and the answer is "
+        "recorded as a proposed fact (question + answer together). Confirmation stays "
+        "with the user (console or `grayson knowledge confirm`). `question` may be a "
+        "unique fragment of the open question's text."
+    )
+    def knowledge_answer(
+        table: str,
+        question: str,
+        answer: str,
+        status: str = "proposed",
+        evidence: list[str] | None = None,
+        by: str = "agent",
+    ) -> dict:
+        try:
+            out = dict(
+                KnowledgeStore(workspace.knowledge_dir).answer_open_question(
+                    table, question, answer, status=status, created_by=by, evidence=evidence
+                )
+            )
+            return _library_sync(out, f"grayson knowledge: answer on {table.upper()}")
+        except (ValueError, KeyError) as e:
             return _err(e)
 
     @mcp.tool(

@@ -236,7 +236,8 @@ def render_preview(tpl: WorkflowTemplate) -> str:
     lines += ["", "Setup inputs — answers the human gives at session start"]
     for i in tpl.setup_inputs:
         req = "required" if i.required else "optional"
-        lines.append(f"  - {i.key} ({req}): {' '.join(i.prompt.split())}")
+        scope = "; named tables join the session's readable scope" if i.adds_scope else ""
+        lines.append(f"  - {i.key} ({req}{scope}): {' '.join(i.prompt.split())}")
     if not tpl.setup_inputs:
         lines.append("  (none)")
     lines += [

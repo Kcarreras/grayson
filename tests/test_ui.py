@@ -427,3 +427,72 @@ def test_settings_per_workflow_defaults_roundtrip(client, workspace):
     # an unknown workflow is refused
     r = client.post(f"/settings/workflow/nope?t={TOKEN}", data={})
     assert r.status_code == 400
+
+
+def test_knowledge_page_confirm_and_add_fact(client, workspace):
+    from grayson.knowledge import KnowledgeStore
+
+    ks = KnowledgeStore(workspace.knowledge_dir)
+    added = ks.add_fact("DB.S.T1", "amounts are gross", status="proposed")
+    page = client.get(f"/knowledge/DB.S.T1?t={TOKEN}").text
+    assert "Confirm" in page
+    r = client.post(
+        f"/knowledge/DB.S.T1/fact/{added['id']}/confirm?t={TOKEN}", follow_redirects=False
+    )
+    assert r.status_code in (302, 303)
+    assert ks.fact("DB.S.T1", added["id"])["status"] == "user_confirmed"
+    # a human writing a fact directly lands user-confirmed (add + confirm, one action)
+    r = client.post(
+        f"/knowledge/DB.S.T1/fact?t={TOKEN}",
+        data={"fact": "loads land by 06:00 UTC"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    facts = ks.read("DB.S.T1")["facts"]
+    written = next(f for f in facts if f["fact"] == "loads land by 06:00 UTC")
+    assert written["status"] == "user_confirmed"
+
+
+def test_knowledge_page_answer_open_question(client, workspace):
+    from grayson.knowledge import KnowledgeStore
+
+    ks = KnowledgeStore(workspace.knowledge_dir)
+    ks.set_profile("DB.S.T1", {"open_questions": ["What is the grain?"]})
+    page = client.get(f"/knowledge/DB.S.T1?t={TOKEN}").text
+    assert "What is the grain?" in page and "Answer" in page
+    r = client.post(
+        f"/knowledge/DB.S.T1/question?t={TOKEN}",
+        data={"question": "What is the grain?", "answer": "one row per order"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    doc = ks.read("DB.S.T1")
+    assert doc["open_questions"] == []
+    fact = doc["facts"][0]
+    assert fact["fact"] == "What is the grain? — one row per order"
+    assert fact["status"] == "user_confirmed"  # answered by the human directly
+
+
+def test_knowledge_page_descriptor_and_column_edits(client, workspace):
+    from grayson.knowledge import KnowledgeStore
+
+    ks = KnowledgeStore(workspace.knowledge_dir)
+    ks.set_profile("DB.S.T1", {"columns": [{"name": "ORDER_ID", "type": "NUMBER"}]})
+    r = client.post(
+        f"/knowledge/DB.S.T1/column?t={TOKEN}",
+        data={"name": "ORDER_ID", "description": "primary key, one per order"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    cols = ks.read("DB.S.T1")["columns"]
+    assert cols[0]["description"] == "primary key, one per order"
+    assert cols[0]["type"] == "NUMBER"  # untouched
+    r = client.post(
+        f"/knowledge/DB.S.T1/descriptor?t={TOKEN}",
+        data={"grain": "one row per order", "freshness": "hourly", "owners": "data-eng, kcg"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    doc = ks.read("DB.S.T1")
+    assert doc["grain"] == "one row per order"
+    assert doc["owners"] == ["data-eng", "kcg"]
