@@ -334,10 +334,19 @@ def test_list_pages_carry_sort_and_filter_markup(client, workspace, rich_session
     (workspace.checks_dir / "airflow.json").write_text(
         json.dumps(
             [
-                {"check_id": "c_fail", "status": "fail", "tables": ["DB.S.T2"],
-                 "run_at": "2026-08-24T06:00:00Z", "ttl_hours": 1},
-                {"check_id": "c_pass", "status": "pass", "tables": ["DB.S.T2"],
-                 "run_at": "2026-08-24T06:00:00Z"},
+                {
+                    "check_id": "c_fail",
+                    "status": "fail",
+                    "tables": ["DB.S.T2"],
+                    "run_at": "2026-08-24T06:00:00Z",
+                    "ttl_hours": 1,
+                },
+                {
+                    "check_id": "c_pass",
+                    "status": "pass",
+                    "tables": ["DB.S.T2"],
+                    "run_at": "2026-08-24T06:00:00Z",
+                },
             ]
         ),
         encoding="utf-8",
