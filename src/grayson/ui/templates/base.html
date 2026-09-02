@@ -124,17 +124,29 @@ a.card:hover { text-decoration: none; border-color: var(--muted); transform: tra
   grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
 /* a lone chart stays a tile, not a banner */
 .chartcard { margin-bottom: 0; max-width: 640px; }
-details.chartcard > summary.chartsum, details.findcard > summary.chartsum {
+details.chartcard > summary.chartsum, details.findcard > summary.chartsum,
+details.foldcard > summary.chartsum {
   cursor: pointer; list-style: none;
   display: flex; align-items: center; gap: 8px; user-select: none; flex-wrap: wrap; }
 details.chartcard > summary.chartsum::-webkit-details-marker,
-details.findcard > summary.chartsum::-webkit-details-marker { display: none; }
+details.findcard > summary.chartsum::-webkit-details-marker,
+details.foldcard > summary.chartsum::-webkit-details-marker { display: none; }
 .chartsum .c-caret { color: var(--faint); font-size: 11px; flex: none;
   transition: transform .15s; }
 details.chartcard[open] > .chartsum .c-caret,
-details.findcard[open] > .chartsum .c-caret { transform: rotate(90deg); }
-details.chartcard:not([open]):hover, details.findcard:not([open]):hover {
-  border-color: var(--muted); }
+details.findcard[open] > .chartsum .c-caret,
+details.foldcard[open] > .chartsum .c-caret { transform: rotate(90deg); }
+details.chartcard:not([open]):hover, details.findcard:not([open]):hover,
+details.foldcard:not([open]):hover { border-color: var(--muted); }
+/* a whole section folds at its heading: the h2 is the summary */
+details.section > summary { list-style: none; cursor: pointer; user-select: none; }
+details.section > summary::-webkit-details-marker { display: none; }
+details.section > summary > h2 { display: flex; align-items: center; gap: 8px; }
+details.section > summary > h2::before { content: "▸"; color: var(--faint);
+  font-size: 11px; transition: transform .15s; }
+details.section[open] > summary > h2::before { transform: rotate(90deg); }
+details.section > summary:hover > h2 { color: var(--ink); }
+details.section:not([open]) { margin-bottom: 12px; }
 details.findcard.superseded { opacity: .62; }
 details.findcard.superseded[open] { opacity: .85; }
 @keyframes chart-in {
@@ -157,6 +169,22 @@ details.findcard.superseded[open] { opacity: .85; }
 .tile .num.attn { color: var(--attn); } .tile .num.ok { color: var(--ok); }
 .tile .lbl { font-size: 11px; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: .07em; margin-top: 2px; }
+/* a tile that counts a section is a link to it */
+a.tile { color: inherit; display: block; position: relative;
+  transition: border-color .15s, transform .15s, box-shadow .15s; }
+a.tile:hover, a.tile:focus-visible { text-decoration: none; border-color: var(--muted);
+  transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0, 0, 0, .10); }
+a.tile::after { content: "↓"; position: absolute; top: 10px; right: 12px;
+  color: var(--faint); font-size: 12px; opacity: 0; transition: opacity .15s; }
+a.tile:hover::after, a.tile:focus-visible::after { opacity: 1; }
+/* the landing spot of an in-page jump: clear of the sticky header, and lit
+   for a moment so the eye finds it */
+h2[id], details[id], .card[id] { scroll-margin-top: 66px; }
+.spot { animation: spot 1.6s ease-out; border-radius: var(--radius); }
+@keyframes spot {
+  0%, 40% { outline: 2px solid var(--act); outline-offset: 6px; }
+  100% { outline: 2px solid transparent; outline-offset: 6px; }
+}
 
 /* ---- badges ---------------------------------------------------------- */
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px;
@@ -226,6 +254,28 @@ details.fold > summary:hover { color: var(--ink); }
 details.fold > .fold-body { padding: 2px 18px 14px; border-top: 1px solid var(--border-soft); }
 details.inlinefold > summary { cursor: pointer; color: var(--act); font-size: 12.5px;
   list-style: none; user-select: none; }
+
+/* ---- session action bar ------------------------------------------------
+   Every way a session ends (or is moved by hand) sits on one row as a tab.
+   Nothing is hidden and nothing is open until the user picks one; the picked
+   panel carries the form, its confirmation and its gates. */
+.actions { padding: 12px 18px; }
+.actionhead { gap: 12px; align-items: center; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel2); padding: 2px; gap: 2px; position: relative; }
+.seg .seg-r { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.seg-b { padding: 4px 12px; border-radius: 6px; font-size: 12.5px; font-weight: 600;
+  color: var(--muted); cursor: pointer; user-select: none;
+  transition: background .12s, color .12s, box-shadow .12s; }
+.seg-b:hover { color: var(--ink); }
+.seg-b.on { background: var(--panel); color: var(--act); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.seg-b.danger:hover, .seg-b.danger.on { color: var(--bad); }
+.seg .seg-r:focus-visible + .seg-b { outline: 2px solid var(--act); outline-offset: 1px; }
+.seg-cancel { margin-left: auto; }
+.seg-cancel[hidden], .seg-hint[hidden] { display: none; }
+.actpanel { border-top: 1px solid var(--border-soft); margin-top: 12px; padding-top: 10px;
+  animation: fade-down .2s ease-out both; }
+.acttitle { font-weight: 600; font-size: 13px; color: var(--ink-2); }
 details.inlinefold > summary::-webkit-details-marker { display: none; }
 details.opening > :not(summary) { animation: fade-down .2s ease-out both; }
 @keyframes fade-down { from { opacity: 0; transform: translateY(-4px); } }
@@ -632,9 +682,9 @@ document.addEventListener("toggle", function (e) {
   }
 })();
 
-/* Collapsible tiles (charts, findings): the server opens the newest few; a
-   manual toggle is remembered per tile so the 10s live refresh doesn't fight
-   the user. */
+/* Collapsible tiles (charts, findings, sections): the server opens the newest
+   few; a manual toggle is remembered per tile so the 10s live refresh doesn't
+   fight the user. */
 (function () {
   var cards = document.querySelectorAll("details[data-fold]");
   if (!cards.length) return;
@@ -650,6 +700,72 @@ document.addEventListener("toggle", function (e) {
     });
   });
 })();
+/* In-page jumps (the stat tiles, "superseded by" links): the target unfolds
+   first if it or any ancestor is collapsed, then the page scrolls to it and
+   lights it for a moment. The hash is not kept, so the live refresh does not
+   jump back; a hash arriving from outside is honoured once, then dropped. */
+(function () {
+  function unfold(el) {
+    for (var d = el.closest("details"); d; d = d.parentElement && d.parentElement.closest("details")) {
+      if (!d.open) d.open = true;
+    }
+  }
+  function spot(el) {
+    el.classList.remove("spot"); void el.offsetWidth; el.classList.add("spot");
+    setTimeout(function () { el.classList.remove("spot"); }, 1700);
+  }
+  function jump(id) {
+    var el = id && document.getElementById(id);
+    if (!el) return false;
+    unfold(el);
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    spot(el);
+    return true;
+  }
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a || a.getAttribute("href").length < 2) return;
+    if (jump(decodeURIComponent(a.getAttribute("href").slice(1)))) e.preventDefault();
+  });
+  if (location.hash.length > 1) {
+    var el = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (el) { unfold(el); spot(el); }
+    if (history.replaceState) history.replaceState(null, "", location.pathname + location.search);
+  }
+})();
+
+/* Session action bar: the picked tab shows its panel; the pick is remembered
+   per page so the live refresh brings the same panel back. */
+(function () {
+  var bar = document.querySelector(".actions");
+  if (!bar) return;
+  var radios = bar.querySelectorAll(".seg-r");
+  var cancel = bar.querySelector(".seg-cancel");
+  var hint = bar.querySelector(".seg-hint");
+  var key = "grayson_act_" + location.pathname;
+  function render() {
+    var on = null;
+    radios.forEach(function (r) {
+      var lbl = bar.querySelector('label[for="' + r.id + '"]');
+      if (lbl) { lbl.classList.toggle("on", r.checked); lbl.setAttribute("aria-selected", r.checked); }
+      if (r.checked) on = r.value;
+    });
+    bar.querySelectorAll(".actpanel").forEach(function (p) { p.hidden = p.dataset.act !== on; });
+    if (cancel) cancel.hidden = !on;
+    if (hint) hint.hidden = !!on;
+    try { if (on) localStorage.setItem(key, on); else localStorage.removeItem(key); } catch (e) {}
+  }
+  radios.forEach(function (r) { r.addEventListener("change", render); });
+  if (cancel) cancel.addEventListener("click", function () {
+    radios.forEach(function (r) { r.checked = false; });
+    render();
+  });
+  var saved = null;
+  try { saved = localStorage.getItem(key); } catch (e) {}
+  radios.forEach(function (r) { if (r.value === saved) r.checked = true; });
+  render();
+})();
+
 </script>
 </body>
 </html>

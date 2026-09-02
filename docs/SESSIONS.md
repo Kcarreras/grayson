@@ -108,8 +108,8 @@ is **abandoned**: the third ending, and the honest label for "no result". It
 skips the gates on purpose, so it never reads as clean or as findings; the
 reason is recorded, open interventions are cancelled so nothing sits in
 "awaiting your input", and nothing publishes to the library. The console
-offers it beside *Close this session*; the closed list shows it as
-`abandoned`.
+offers it as the *Abandon* tab of the session actions bar at the foot of the
+page, beside *Close*; the closed list shows it as `abandoned`.
 
 ```bash
 grayson session abandon <sid> --reason "wrong target table; restarted as 2026…"
@@ -119,8 +119,8 @@ grayson session abandon <sid> --reason "wrong target table; restarted as 2026…
 trail, cache, charts. Records the session already published to the library
 (accepted findings, verified fixes, its report) are a separate matter: they
 stay unless you remove them too, which is the author's or a library admin's
-call ([LIBRARY.md](LIBRARY.md#removing-records)). The session page's *Delete
-this session* fold offers both together; from a terminal:
+call ([LIBRARY.md](LIBRARY.md#removing-records)). The *Delete* tab of the
+session actions bar offers both together; from a terminal:
 
 ```bash
 grayson session delete <sid> --yes             # the local session only

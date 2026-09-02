@@ -33,17 +33,23 @@
 
 {{ stage_timeline(s, stages, readiness, findings) }}
 
+{# each stat tile is a link to the section it counts; the base script scrolls
+   there and unfolds it first if it is collapsed #}
+{% set open_iv = interventions | selectattr("status","equalto","open") | list %}
 <div class="tiles">
-  <div class="tile"><div class="num">{{ s.queries_executed }}</div><div class="lbl">Queries run</div></div>
-  <div class="tile">
+  <a class="tile" href="#queries" title="Go to the query log"><div class="num">{{ s.queries_executed }}</div><div class="lbl">Queries run</div></a>
+  <a class="tile" href="#checkpoints" title="Go to the checkpoints">
     <div class="num {{ 'ok' if readiness.checks_complete }}">{{ checkpoints | selectattr("status","equalto","complete") | list | length }}/{{ checkpoints | length }}</div>
     <div class="lbl">Checkpoints{% if readiness.waived_checks %},
-      {{ readiness.waived_checks | length }} waived{% endif %}</div></div>
-  <div class="tile"><div class="num">{{ findings | length }}</div>
-    <div class="lbl">Findings ({{ findings | selectattr("accepted") | rejectattr("superseded_by") | list | length }} accepted)</div></div>
-  {% set open_iv = interventions | selectattr("status","equalto","open") | list %}
-  <div class="tile"><div class="num {{ 'attn' if open_iv }}">{{ open_iv | length }}</div>
-    <div class="lbl">Awaiting your input</div></div>
+      {{ readiness.waived_checks | length }} waived{% endif %}</div></a>
+  <a class="tile" href="#findings" title="Go to the findings"><div class="num">{{ findings | length }}</div>
+    <div class="lbl">Findings ({{ findings | selectattr("accepted") | rejectattr("superseded_by") | list | length }} accepted)</div></a>
+  {% if open_iv %}
+  <a class="tile" href="#awaiting" title="Go to the open questions"><div class="num attn">{{ open_iv | length }}</div>
+    <div class="lbl">Awaiting your input</div></a>
+  {% else %}
+  <div class="tile"><div class="num">0</div><div class="lbl">Awaiting your input</div></div>
+  {% endif %}
 </div>
 
 {% if s.stage == "closed" and s.outcome %}
@@ -111,7 +117,7 @@
 </div>
 
 {% if open_iv %}
-<h2>Needs your input {{ help("interventions") }}</h2>
+<h2 id="awaiting">Needs your input {{ help("interventions") }}</h2>
 {% for iv in open_iv %}
 <div class="card attn">
   <div class="row split">
@@ -126,14 +132,20 @@
 {% endif %}
 
 {% if setup_inputs %}
-<div class="card">
-  <div class="overline" style="margin-bottom: 6px;">Setup inputs {{ help("setup_inputs") }}</div>
-  <dl class="props">
+{# what the session was set up with: read once, then folded away. The fold is
+   remembered across the live refresh like the chart and finding tiles. #}
+<details class="card foldcard" id="setup" data-fold="setup" open>
+  <summary class="chartsum">
+    <span class="c-caret">▸</span>
+    <span class="overline">Setup inputs {{ help("setup_inputs") }}</span>
+    <span class="faint small" style="margin-left: auto;">{{ setup_inputs | length }}</span>
+  </summary>
+  <dl class="props" style="margin-top: 8px;">
     {% for key, value in setup_inputs.items() %}
     <dt>{{ key | replace("_", " ") }}</dt><dd>{{ value }}</dd>
     {% endfor %}
   </dl>
-</div>
+</details>
 {% endif %}
 
 {% if charts %}
@@ -183,7 +195,9 @@
 </div>
 {% endif %}
 
-<h2>Checkpoints {{ help("checkpoints") }}</h2>
+<details class="section" id="checkpoints" data-fold="checkpoints" open>
+<summary><h2>Checkpoints {{ help("checkpoints") }}
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ checkpoints | selectattr("status","equalto","complete") | list | length }} of {{ checkpoints | length }} complete{% if readiness.waived_checks %}, {{ readiness.waived_checks | length }} waived{% endif %}</span></h2></summary>
 <div class="card scroll">
 <table>
 <tr><th>Check</th><th>Status</th><th>Evidence {{ help("evidence") }}</th><th>Note</th></tr>
@@ -234,8 +248,9 @@
   </div>
 </div>
 {% endif %}
+</details>
 
-<h2>Findings {{ help("findings") }} <span class="faint" style="font-weight: 500; margin-left: 8px;">severity scale {{ help("severity") }}</span></h2>
+<h2 id="findings">Findings {{ help("findings") }} <span class="faint" style="font-weight: 500; margin-left: 8px;">severity scale {{ help("severity") }}</span></h2>
 {% for f in findings %}
 {# newest three stay open; older and superseded findings collapse to their
    title row. A manual toggle is remembered per finding in localStorage. #}
@@ -357,7 +372,7 @@
 {% endfor %}
 {% endif %}
 
-<h2>Query log {{ help("guard") }}</h2>
+<h2 id="queries">Query log {{ help("guard") }}</h2>
 <div class="card scroll" style="max-height: 360px; overflow-y: auto;">
 <table>
 {% set has_worker = queries | selectattr("worker") | list | length > 0 %}
@@ -391,11 +406,33 @@
   </div>
 </details>
 
-{% if s.stage != "closed" %}
-<details class="fold">
-  <summary>Close this session</summary>
-  <div class="fold-body">
-    <div class="muted small" style="margin: 8px 0 10px;">
+{# Session actions: one bar, one panel. Every ending is a tab the user picks
+   on purpose; the chosen panel keeps the same form, confirmation and gates as
+   before. The pick is remembered across the live refresh (base script). #}
+{% set open_session = s.stage != "closed" %}
+<div class="card actions" id="actions">
+  <div class="row actionhead">
+    <span class="overline">Session actions</span>
+    <div class="seg" role="tablist" aria-label="Session actions">
+      {% if open_session %}
+      <input type="radio" class="seg-r" name="sact" id="sact-close" value="close">
+      <label class="seg-b" for="sact-close" role="tab" title="Record the outcome and publish the report">Close</label>
+      <input type="radio" class="seg-r" name="sact" id="sact-abandon" value="abandon">
+      <label class="seg-b" for="sact-abandon" role="tab" title="End without a result">Abandon</label>
+      <input type="radio" class="seg-r" name="sact" id="sact-stage" value="stage">
+      <label class="seg-b" for="sact-stage" role="tab" title="Move the stage by hand">Set stage</label>
+      {% endif %}
+      <input type="radio" class="seg-r" name="sact" id="sact-delete" value="delete">
+      <label class="seg-b danger" for="sact-delete" role="tab" title="Remove the session from this workspace">Delete</label>
+    </div>
+    <span class="muted small seg-hint">Pick one to see what it does. Nothing happens until you confirm.</span>
+    <button type="button" class="btn ghost sm seg-cancel" hidden title="Put the panel away">✕</button>
+  </div>
+
+  {% if open_session %}
+  <div class="actpanel" data-act="close" role="tabpanel" hidden>
+    <div class="acttitle">Close this session</div>
+    <div class="muted small" style="margin: 4px 0 10px;">
       Closes on accepted findings, or clean if there are none. Refused while required
       checkpoints are open.
     </div>
@@ -406,12 +443,10 @@
       <button class="btn sm" type="submit">Close session</button>
     </form>
   </div>
-</details>
 
-<details class="fold">
-  <summary>Abandon this session</summary>
-  <div class="fold-body">
-    <div class="muted small" style="margin: 8px 0 10px;">
+  <div class="actpanel" data-act="abandon" role="tabpanel" hidden>
+    <div class="acttitle">Abandon this session</div>
+    <div class="muted small" style="margin: 4px 0 10px;">
       Ends a broken or mistaken session without a result. Skips the gates: recorded as
       <i>abandoned</i> with your reason, open questions cancelled, nothing published.
     </div>
@@ -422,12 +457,10 @@
       <button class="btn danger sm" type="submit">Abandon session</button>
     </form>
   </div>
-</details>
 
-<details class="fold">
-  <summary>Set stage manually</summary>
-  <div class="fold-body">
-    <div class="muted small" style="margin: 8px 0 10px;">
+  <div class="actpanel" data-act="stage" role="tabpanel" hidden>
+    <div class="acttitle">Set stage manually</div>
+    <div class="muted small" style="margin: 4px 0 10px;">
       Moves the stage directly; the agent is not told. Gates apply unless forced (audited).
       {{ help("stage") }}
     </div>
@@ -440,13 +473,11 @@
       <button class="btn secondary sm" type="submit">Set stage</button>
     </form>
   </div>
-</details>
-{% endif %}
+  {% endif %}
 
-<details class="fold">
-  <summary>Delete this session</summary>
-  <div class="fold-body">
-    <div class="muted small" style="margin: 8px 0 10px;">
+  <div class="actpanel" data-act="delete" role="tabpanel" hidden>
+    <div class="acttitle">Delete this session</div>
+    <div class="muted small" style="margin: 4px 0 10px;">
       Removes the session and everything under it from this workspace. Not undoable.
       {% if published.count %}
       It published <b>{{ published.count }}</b> record{{ "s" if published.count != 1 }}
@@ -467,7 +498,7 @@
       <button class="btn danger sm" type="submit">Delete session</button>
     </form>
   </div>
-</details>
+</div>
 <dialog id="chart-lightbox" class="lightbox" aria-label="Chart, enlarged">
   <div class="row split mb-2">
     <b id="lb-title"></b>
