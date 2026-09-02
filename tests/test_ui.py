@@ -379,6 +379,37 @@ def test_session_guard_controls_update_the_snapshot(client, session):
     assert '<option value="true" selected>on</option>' in page  # reflects the change
 
 
+def test_session_guard_reapplying_same_profile_picks_up_its_edits(client, session, workspace):
+    """The apply button must work like `grayson session guard`: a profile edited
+    in Settings after the session snapshotted it reaches the session when the
+    same name is applied again — the label alone is not the comparison."""
+    from grayson.config_edit import set_guard_profile
+
+    before = session.guard_settings.timeout_seconds
+    name = session.summary()["guard_profile"]
+    set_guard_profile(workspace.root, name, {"timeout_seconds": before + 500})
+    r = client.post(
+        f"/session/{session.id}/guard?t={TOKEN}",
+        data={"guard_profile": name},
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 303)
+    assert session.guard_settings.timeout_seconds == before + 500
+    ev = next(e for e in session.events(10) if e["type"] == "guard_changed")
+    assert ev["actor"] == "user"
+
+
+def test_session_guard_reapplying_unchanged_profile_logs_nothing(client, session):
+    name = session.summary()["guard_profile"]
+    for _ in range(2):  # first apply syncs the snapshot to the profile; second is a no-op
+        client.post(
+            f"/session/{session.id}/guard?t={TOKEN}",
+            data={"guard_profile": name},
+            follow_redirects=False,
+        )
+    assert len([e for e in session.events(10) if e["type"] == "guard_changed"]) == 1
+
+
 def test_session_guard_controls_hidden_once_closed(client, session):
     session.set_meta("stage", "closed")
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
