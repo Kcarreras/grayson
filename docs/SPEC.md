@@ -455,6 +455,18 @@ mattered facts with **provenance**:
 - Agents are instructed to ask (via interventions) when semantics can't be derived from
   data — answers become knowledge, so every session makes the next one faster.
 - Search: `grayson knowledge search <term>` (and MCP tool) over facts + glossary.
+- **Structure and definitions are dated observations, not testimony.** The column
+  list is synced from DESCRIBE (`knowledge sync`, MCP `knowledge_sync`): the warehouse
+  owns names/types/nullability, humans own descriptions, and `structure` records when
+  and on what evidence it was observed. Session start DESCRIBEs each target the library
+  describes and reports `knowledge_drift` (added/dropped/retyped columns). Where a
+  table is defined is a `definitions` entry — path, kind, repo, hash — filled by hand
+  or in bulk from a dbt manifest (`knowledge ingest --manifest`); a dated copy of the
+  compiled SQL or GET_DDL may sit beside the doc as `TABLE.dbt.sql` / `TABLE.ddl.sql`
+  for readers with no warehouse. The format-1 `definition_files` list is still written.
+- A passing fix verification records a `data_inferred` fact on the tables it touched,
+  citing both queries, so the fix is in the next session's briefing, not only in
+  `records search`.
 
 ## 11a. Team library & distribution model
 

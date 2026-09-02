@@ -65,6 +65,14 @@ they are equivalent. Never query Snowflake except through grayson.
    descriptor (grain, column definitions, relationships, freshness) with
    `grayson knowledge set`. If a target has no recorded knowledge at all, settle
    grain/semantics with the user early — or run the `table-onboarding` workflow first.
+   The recorded column list is a human artefact and falls behind the warehouse:
+   session start reports `knowledge_drift` (columns added, dropped, or retyped since
+   the library last looked). Treat drift as a lead, then run
+   `grayson knowledge sync <table> --session <sid>` — it merges DESCRIBE into the doc,
+   keeps every description, and the DESCRIBE's query id is its evidence. `knowledge show`
+   also returns `definitions` (where the table is defined: dbt model, view, DDL) and any
+   captured copy under `definition_snapshots` — read them before hypothesising about
+   why a table looks the way it does.
    Before diagnosing from scratch, check `grayson records search <term>`: a similar
    problem may already have a diagnosed cause and a verified fix on record. Also
    check external deterministic checks (`grayson checks status --table ...`, echoed
@@ -110,6 +118,12 @@ they are equivalent. Never query Snowflake except through grayson.
    for future sessions:
    `grayson knowledge add <table> --fact "..." --evidence <iid>` — the user confirms it
    from the console later.
+   Where a table is defined is knowledge too: record the dbt model, view, or job as a
+   definition (`grayson knowledge set <table> --json '{"definitions": [{"path": "models/x.sql",
+   "kind": "dbt_model"}]}'`); for a view, or when no definition repo exists,
+   `grayson knowledge sync <table> --session <sid> --ddl` captures GET_DDL beside the doc as
+   a dated snapshot. The user's dbt manifest fills these in bulk
+   (`grayson knowledge ingest --manifest target/manifest.json`, a user command).
 4b. Breadth: `workflow show <name>` lists **suggested checks** alongside the required
    ones. They gate nothing — they are the fundamentals the workflow expects you to
    consider. Do the ones that apply to these tables and close them like any other

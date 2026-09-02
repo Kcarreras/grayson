@@ -33,7 +33,10 @@ required_checks:
     title: Profile structure and content
     description: >
       Columns, types, row count, null rates, cardinalities, and value samples —
-      the factual baseline every hypothesis rests on.
+      the factual baseline every hypothesis rests on. Record the column list
+      from the warehouse itself (`knowledge sync`, through this session so its
+      DESCRIBE is the evidence) rather than typing it: the warehouse owns
+      names and types, humans own what they mean.
     uses_inputs: [table, prior_context]
   - key: grain_established
     title: Establish the grain
@@ -71,8 +74,11 @@ required_checks:
     title: Locate the definition and the owner
     description: >
       Find where this table is actually defined — the dbt model, the DDL, the
-      ingest job — and who owns it, and record them as definition_files and
-      owners. A descriptor without them cannot reach base_complete, and the
+      ingest job — and who owns it, and record them as definitions (path and
+      kind; a dbt manifest the user ingests fills these in bulk) and owners.
+      For a view, or when no definition repo exists, `knowledge sync --ddl`
+      captures the DDL beside the doc as a dated snapshot. A descriptor
+      without them cannot reach base_complete, and the
       next investigation has nowhere to look when the data disagrees with the
       documentation. Record what you searched and found nothing as an open
       question rather than leaving it blank.

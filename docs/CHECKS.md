@@ -108,6 +108,11 @@ the fully-qualified tables it depends on (the join key to sessions) and pulls
 the test's compiled SQL so agents can replicate it. Without a manifest the
 results still ingest, but with no `tables` they will not surface as leads.
 
+The same manifest carries the models' definitions. `grayson knowledge ingest
+--manifest target/manifest.json` records, per documented table, where the
+model lives and a copy of its compiled SQL, and fills column descriptions
+from `schema.yml` — see [LIBRARY.md](LIBRARY.md), "Where a table is defined".
+
 ## 3. Sharing through the team library
 
 Checks are plain files, shared exactly like knowledge and views:

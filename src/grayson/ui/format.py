@@ -158,6 +158,12 @@ GLOSSARY: dict[str, str] = {
         "definitions, relationships, freshness, and definition files. "
         "'base complete' means none are missing."
     ),
+    "definitions": (
+        "Where the table is actually defined — the dbt model, the view's SELECT, "
+        "the DDL. An entry is a pointer into the repo that owns it plus a hash and "
+        "date; a captured copy beside the doc is a dated snapshot, never the "
+        "authority."
+    ),
     "fact_status": (
         "Provenance of a fact: proposed (agent asserted), data_inferred (derived "
         "from queries), user_confirmed (a human blessed it — agents can never "

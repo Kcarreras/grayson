@@ -11,6 +11,8 @@ Verification records deterministic before/after evidence that a fix worked, so
 
 from __future__ import annotations
 
+import re
+
 from pydantic import ValidationError
 
 from grayson.cache.store import compare_artifacts
@@ -196,7 +198,68 @@ def verify(
     session.attach_verification(pid, verification, actor)
     # a verification (either verdict) is the moment the fix outcome compounds
     # into the team library (best-effort — never fails the verification)
+    facts = []
+    if verdict == "pass":
+        facts = _record_verified_fix(session, p, before_qid, after_qid, actor)
     from grayson.records import publish_proposal
 
     publish_proposal(session, pid)
-    return session.proposal(pid)
+    out = session.proposal(pid)
+    if facts:
+        out["knowledge_facts"] = facts
+        out["hint"] = (
+            "the verified fix is now a data_inferred fact on "
+            f"{', '.join(f['table'] for f in facts)} — the next session over these tables "
+            "starts briefed with it. If the fix changed a table's structure or definition, "
+            f"run knowledge sync on it (session {session.id}) so the recorded columns "
+            "follow, and re-ingest the dbt manifest if the model changed"
+        )
+    return out
+
+
+def _record_verified_fix(
+    session: Session, proposal: dict, before_qid: str, after_qid: str, actor: str
+) -> list[dict]:
+    """A verified fix becomes a fact on the tables it touched — dated, evidence-
+    linked, data_inferred. The published record already holds the full story
+    for `records search`; the fact is what puts it in the *briefing* of the
+    next session over the same table, where a recurring symptom meets its
+    history. Best-effort: never fails the verification, never repeats itself
+    (one fact per proposal per table)."""
+    from grayson.knowledge import KnowledgeStore
+
+    touched = {
+        t.upper()
+        for qid, tables in session.query_tables_many([before_qid, after_qid]).items()
+        for t in tables
+    }
+    targets = [t.upper() for t in session.targets]
+    tables = [t for t in targets if t in touched] or targets
+    payload = proposal.get("payload") or {}
+    if proposal.get("kind") == "file_diff":
+        what = f"{payload.get('target_file', 'a definition file')} changed"
+    else:
+        what = "DDL applied by the user"
+    rationale = str(payload.get("rationale") or "").strip()
+    text = (
+        f"Verified fix: {proposal.get('title', '').strip() or 'untitled'} — {what} "
+        f"(proposal {proposal['pid']}, session {session.id})"
+        + (f": {rationale[:240]}" if rationale else "")
+    )
+    store = KnowledgeStore(session.workspace.knowledge_dir)
+    fact_id = re.sub(r"[^a-z0-9]+", "_", f"verified fix {proposal['pid']} {session.id}".lower())
+    out: list[dict] = []
+    for table in tables:
+        try:
+            fact = store.add_fact(
+                table,
+                text,
+                fact_id=fact_id,
+                status="data_inferred",
+                created_by=actor,
+                evidence=[f"session {session.id} {q}" for q in (before_qid, after_qid)],
+            )
+        except (ValueError, OSError):  # not an FQN, already recorded, or unwritable
+            continue
+        out.append({"table": table, "fact_id": fact["id"]})
+    return out

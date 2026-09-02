@@ -20,7 +20,13 @@ from grayson.core.session import Session, find_recent_duplicate, resolve_session
 from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request
 from grayson.interventions.types import InterventionError
-from grayson.knowledge import KnowledgeStore, completeness
+from grayson.knowledge import (
+    SNAPSHOT_INLINE_CHARS,
+    KnowledgeStore,
+    completeness,
+    describe_drift,
+    drift_report,
+)
 from grayson.util import parse_table_list
 from grayson.views import ViewRegistry, enter_session_scope
 from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
@@ -198,6 +204,7 @@ def build_server(workspace: Workspace) -> Any:
         knowledge = KnowledgeStore(workspace.knowledge_dir)
         facts = {t: knowledge.read(t)["facts"] for t in tables}
         gaps = sorted(t for t, f in facts.items() if not f)
+        drift = drift_report(knowledge, snap.get("columns") or {})
         external = ChecksStore(workspace.checks_dir).summary(tables or None)
         registry = ViewRegistry(workspace.views_dir)
         out = {
@@ -210,11 +217,22 @@ def build_server(workspace: Workspace) -> Any:
             "views_in_scope": enter_session_scope(registry, s, tables),
             "knowledge": facts,
             "knowledge_gaps": gaps,
+            "knowledge_drift": drift,
             "external_checks": external,
         }
         if context_scope:
             out["context_scope"] = context_scope
         hints = []
+        drifted = {t: d for t, d in drift.items() if d["status"] == "drifted"}
+        if drifted:
+            lines = "; ".join(describe_drift(t, d) for t, d in drifted.items())
+            hints.append(
+                f"the recorded column list is behind the warehouse — {lines}. Run "
+                f"knowledge_sync(table, session_id='{s.id}') to bring the descriptor "
+                "up to date (it keeps every description), then describe the new columns "
+                "and ask the user what they mean; a column that appeared or vanished "
+                "since the library last looked is a lead, not noise"
+            )
         missing_inputs = tpl.missing_required_inputs(provided)
         if missing_inputs:
             hints.append(
@@ -650,9 +668,34 @@ def build_server(workspace: Workspace) -> Any:
     )
     def knowledge_show(table: str) -> dict:
         try:
-            doc = KnowledgeStore(workspace.knowledge_dir).read(table)
-            return {**doc, "completeness": completeness(doc)}
+            store = KnowledgeStore(workspace.knowledge_dir)
+            doc = store.read(table)
+            return {
+                **doc,
+                "completeness": completeness(doc),
+                "definition_snapshots": _definition_snapshots(store, doc),
+            }
         except ValueError as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Bring a table's recorded column list up to date from the warehouse "
+        "(DESCRIBE): types, nullability, and order come from the warehouse; every "
+        "description and human field is kept; a recorded column the warehouse no longer "
+        "has is flagged `dropped`. With session_id the DESCRIBE is a guarded, audited "
+        "statement and its query id is the observation's evidence — pass it whenever a "
+        "session is open. ddl=true also captures GET_DDL beside the doc as a dated "
+        "snapshot (a view's defining SELECT; for a base table, its columns again — use "
+        "it when no definition repo exists). Returns what changed against the record."
+    )
+    def knowledge_sync(table: str, session_id: str | None = None, ddl: bool = False) -> dict:
+        from grayson.knowledge.sync import SyncError, sync_table
+
+        try:
+            session = _session(session_id) if session_id else None
+            out = sync_table(workspace, table, session=session, ddl=ddl)
+            return _library_sync(out, f"grayson knowledge: sync {table.upper()}")
+        except (SyncError, ValueError, FileNotFoundError) as e:
             return _err(e)
 
     @mcp.tool(
@@ -718,6 +761,16 @@ def build_server(workspace: Workspace) -> Any:
     @mcp.tool(description="Search the knowledge library for a term.")
     def knowledge_search(term: str) -> list[dict]:
         return KnowledgeStore(workspace.knowledge_dir).search(term)
+
+    def _definition_snapshots(store: KnowledgeStore, doc: dict) -> dict[str, str]:
+        """Captured definition text riding along with the doc, bounded."""
+        out: dict[str, str] = {}
+        for d in doc.get("definitions") or []:
+            name = d.get("snapshot")
+            text = store.read_snapshot(doc["table"], str(name)) if name else None
+            if text is not None:
+                out[str(name)] = text[:SNAPSHOT_INLINE_CHARS]
+        return out
 
     @mcp.tool(
         description="Search past findings and fix proposals across ALL sessions — "
