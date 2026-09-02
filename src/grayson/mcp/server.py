@@ -57,7 +57,8 @@ Profile before hand-rolling: profile_table covers a table's descriptive battery
 queries whose ids are evidence — do not write forty single-column queries yourself.
 Narrate the investigation visually: chart_add builds
 bar/line/scatter charts from cached artifacts that render live in the user's console,
-each traceable to its executed query.
+each traceable to its executed query. Keep bar charts to a ranked top-N (ORDER BY ...
+LIMIT 15 or so): many categories render as horizontal bars, but sixty bars is a table.
 If a target table has no recorded knowledge, settle grain/semantics with the user early
 (or run the table-onboarding workflow), and persist durable intervention answers with
 knowledge_add so future sessions start briefed. An open question in the library that the
@@ -844,7 +845,10 @@ def build_server(workspace: Workspace) -> Any:
         description="Build a chart (bar|line|scatter) from a cached artifact; it renders "
         "live in the user's console, traceable to the executed query. Aggregate/order "
         "with SQL first, then chart the artifact. Up to 3 y columns (line/scatter); "
-        "bar takes one. Use charts to narrate the investigation visually. The response's "
+        "bar takes one. Bars lay themselves out: many categories or long names render "
+        "horizontally (orientation=auto; vertical|horizontal forces it), and dates or "
+        "numbers stay vertical — but keep bars to a ranked top-N in SQL, since sixty "
+        "bars is a table. Use charts to narrate the investigation visually. The response's "
         "`text` field is a terminal rendering — paste it into your chat reply (in a code "
         "block) so the user sees the shape without leaving the conversation."
     )
@@ -857,12 +861,13 @@ def build_server(workspace: Workspace) -> Any:
         title: str,
         note: str = "",
         worker: str | None = None,
+        orientation: str = "auto",
     ) -> dict:
         from grayson.charts import ChartError, add_chart, chart_data, render_text
 
         try:
             s = _session(session_id)
-            spec = add_chart(s, qid, kind, x, y, title, note, worker)
+            spec = add_chart(s, qid, kind, x, y, title, note, worker, orientation)
             return {**spec, "text": render_text(spec, chart_data(s, spec))}
         except (ChartError, FileNotFoundError, ValueError) as e:
             return _err(e)

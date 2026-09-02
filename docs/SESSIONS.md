@@ -180,16 +180,28 @@ the plotted rows, the source query, and a **Download SVG** for a slide or a
 ticket. The session page's live refresh waits while a chart is enlarged or a
 field has focus, so a half-typed note is never lost.
 
-Long category labels never hide what varies. Whatever every label shares — a
+Axis labels never collide and never hide what varies. How many category
+labels are drawn, and how long, is computed from the plot width: labels that
+would not fit are skipped, never overlapped. Whatever every label shares — a
 date prefix, a schema path, a constant time part — comes off and is printed
-once under the axis (`2026-08-…T00:00:00`, with `01 … 29` on the ticks);
+once as a caption (`2026-08-…T00:00:00`, with `01 03 … 29` on the ticks);
 dotted names shorten from the front so the table name survives
 (`…PAGE_EVENTS`, not `ANALYTICS.W…`); and a label that is still cut carries
 its full text inside the SVG (a `<title>`, so an exported file explains
 itself) and shows it in the console on hover, tap, or keyboard focus. The
-lightbox and the chart page render a *detail* size — twice the labels at twice
-the length on a wider canvas — and **Download SVG** there (or
+lightbox and the chart page render a *detail* size — a wider canvas with a
+larger label budget — and **Download SVG** there (or
 `grayson chart render --detail`) matches what was on screen.
+
+**Bar charts lay themselves out.** Many categories (more than eight) or long
+names (past twelve characters) render as **horizontal bars**: one row per
+category, the labels on the y axis where they have room. Dates and numbers
+read as an ordered scale and stay vertical. `--orientation vertical|horizontal`
+(MCP: `orientation`) forces either. The tile shows the rows that fit and says
+how many more there are (`+44 more rows`); the lightbox and the chart page
+grow to hold every row. The protocol still tells agents to keep bars to a
+ranked top-N in SQL — sixty bars is a table, not a picture — and the plotted
+data fold has every row either way.
 
 ## Settings and guard profiles
 
