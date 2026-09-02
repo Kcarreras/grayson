@@ -24,7 +24,7 @@
   </div>
   <span class="badge act">{{ s.workflow }}</span>
 </div>
-<div class="faint mono small">{{ s.id }}</div>
+<div class="faint mono small">{{ s.id }} · created {{ s.created_at }}</div>
 
 <div class="steps">
   {% set reached = stages.index(s.stage) %}
@@ -74,21 +74,6 @@
     <button class="btn sm" type="submit">Close as clean</button>
   </form>
 </div>
-{% elif s.stage != "closed" %}
-<div class="card" style="margin: 12px 0;">
-  <div class="overline" style="margin-bottom: 6px;">Close this session</div>
-  <div class="muted small" style="margin-bottom: 10px;">
-    Closing is yours, not the agent's — and the gates still decide: with the required
-    checks complete it closes on accepted findings (or clean, if nothing was found), and
-    an unready session is refused with the reason shown here.
-  </div>
-  <form class="row" method="post" action="/session/{{ s.id }}/close?t={{ token }}"
-        onsubmit="return confirm('Close session {{ s.id }}? The outcome is recorded and its report publishes to the library.');">
-    <input type="text" name="note" placeholder="closing note for the record (optional)"
-           style="width: auto; flex: 1 1 280px;">
-    <button class="btn sm" type="submit">Close session</button>
-  </form>
-</div>
 {% endif %}
 
 <div class="kv" style="margin: 12px 0;">
@@ -116,7 +101,6 @@
   <div class="item"><b>Guard profile</b> {{ s.guard_profile }} {{ help("guard_profile") }}</div>
   <div class="item"><b>Strict scope</b> {{ "on" if s.strict_scope else "off" }} {{ help("strict_scope") }}</div>
   {% endif %}
-  <div class="item"><b>Created</b> <span class="mono">{{ s.created_at }}</span></div>
 </div>
 
 {% if open_iv %}
@@ -175,12 +159,6 @@
        data-title="{{ c.spec.title }}" data-caption="{{ c.spec.x }} × {{ c.spec.y | join(', ') }}{% if c.spec.note %} — {{ c.spec.note }}{% endif %}"
        title="Click to enlarge">{{ c.svg }}</div>
   {% if c.spec.note %}<div class="muted small" style="margin-top: 4px;">{{ c.spec.note }}</div>{% endif %}
-  <div class="faint small" style="margin-top: 4px;">
-    {{ c.spec.x }} × {{ c.spec.y | join(", ") }}
-    {% if c.data.truncated %} · first {{ c.data.cap }} rows plotted{% endif %}
-    {% if c.spec.worker %} · {{ c.spec.worker }}{% endif %}
-    · {{ c.spec.created_at }}
-  </div>
   <details class="inlinefold" style="margin-top: 6px;">
     <summary>Plotted data ({{ c.data.points | length }} rows)</summary>
     <div class="scroll" style="max-height: 260px;">
@@ -222,13 +200,16 @@
     {% if c.status == "open" and s.stage != "closed" %}
     {# a check that genuinely does not apply gets an honest exit — otherwise the
        only way past the gate is a query chosen to satisfy it #}
-    <form class="row" method="post"
-          action="/session/{{ s.id }}/checkpoint/{{ c.key }}/waive?t={{ token }}"
-          style="margin-top: 6px; gap: 4px;">
-      <input type="text" name="reason" placeholder="why it does not apply" required
-             style="width: auto; flex: 1 1 180px;">
-      <button class="btn secondary sm" type="submit">Waive</button>
-    </form>
+    <details class="inlinefold">
+      <summary title="A required check that genuinely does not apply here">waive…</summary>
+      <form class="row" method="post"
+            action="/session/{{ s.id }}/checkpoint/{{ c.key }}/waive?t={{ token }}"
+            style="margin-top: 6px; gap: 4px;">
+        <input type="text" name="reason" placeholder="why it does not apply" required
+               style="width: auto; flex: 1 1 180px;">
+        <button class="btn secondary sm" type="submit">Waive</button>
+      </form>
+    </details>
     {% endif %}
   </td>
 </tr>
@@ -251,7 +232,7 @@
 </div>
 {% endif %}
 
-<h2>Findings {{ help("findings") }}{{ help("severity") }}</h2>
+<h2>Findings {{ help("findings") }} <span class="faint" style="font-weight: 500; margin-left: 8px;">severity scale {{ help("severity") }}</span></h2>
 {% for f in findings %}
 {# newest three stay open; older and superseded findings collapse to their
    title row. A manual toggle is remembered per finding in localStorage. #}
@@ -386,7 +367,7 @@
 {% endif %}
 
 <h2>Query log {{ help("guard") }}</h2>
-<div class="card scroll">
+<div class="card scroll" style="max-height: 360px; overflow-y: auto;">
 <table>
 {% set has_worker = queries | selectattr("worker") | list | length > 0 %}
 {% set has_label = queries | selectattr("label") | list | length > 0 %}
@@ -421,6 +402,24 @@
   </div>
 </details>
 
+{% if s.stage != "closed" %}
+<details class="fold">
+  <summary>Close this session</summary>
+  <div class="fold-body">
+    <div class="muted small" style="margin: 8px 0 10px;">
+      Yours, not the agent's — and the gates still decide: with the required checks complete
+      it closes on accepted findings (or clean, if nothing was found); an unready session is
+      refused with the reason shown here.
+    </div>
+    <form class="row" method="post" action="/session/{{ s.id }}/close?t={{ token }}"
+          onsubmit="return confirm('Close session {{ s.id }}? The outcome is recorded and its report publishes to the library.');">
+      <input type="text" name="note" placeholder="closing note for the record (optional)"
+             style="width: auto; flex: 1 1 280px;">
+      <button class="btn sm" type="submit">Close session</button>
+    </form>
+  </div>
+</details>
+
 <details class="fold">
   <summary>Set stage manually</summary>
   <div class="fold-body">
@@ -440,6 +439,7 @@
     </form>
   </div>
 </details>
+{% endif %}
 <dialog id="chart-lightbox" class="lightbox" aria-label="Chart, enlarged">
   <div class="row split" style="margin-bottom: 8px;">
     <b id="lb-title"></b>
