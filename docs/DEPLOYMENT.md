@@ -134,6 +134,47 @@ Strongly recommended regardless of recipe: a **dedicated read-only Snowflake
 role** on whatever connection agents can reach — it is the only control that
 holds even if everything else is bypassed.
 
+## Pinning a version for a team install
+
+Install from a **tag**, never from a moving branch, so every analyst on the
+pilot runs the same code and an upgrade is a deliberate step:
+
+```bash
+uv tool install "git+ssh://git@github.com/<org>/<install-repo>@v0.1.0-pilot.3"
+```
+
+The practice behind the tags:
+
+- **Tags are cut upstream, at merge time.** Every merge to `main` in the
+  development repo that changes behaviour gets an annotated tag on the merge
+  commit (`v0.1.0-pilot.N` during the pilot). Documentation-only merges are not
+  tagged. A tag is only ever created upstream, so the same name means the same
+  commit everywhere.
+- **A downstream mirror only forwards.** An enterprise install repo that
+  cannot be pushed to from the development side (or vice versa — one machine
+  usually holds credentials for one account) is kept in sync by fetching
+  upstream and pushing the same commits and tags on:
+
+  ```bash
+  git fetch origin --tags                 # origin = upstream development repo
+  git push dax origin/main:main           # dax    = downstream install repo
+  git push dax v0.1.0-pilot.4
+  ```
+
+  `main` on the mirror should always be an ancestor of upstream `main`
+  (`git merge-base --is-ancestor dax/main origin/main`); if it is not, someone
+  committed to the mirror directly and that change needs to come upstream first.
+- **Upgrading a tag pin is a reinstall.** `grayson upgrade` (and
+  `uv tool upgrade`) re-resolve the pinned ref, which for a tag is a no-op.
+  Move to a new tag explicitly:
+
+  ```bash
+  uv tool install --reinstall "git+ssh://git@github.com/<org>/<install-repo>@v0.1.0-pilot.4"
+  ```
+
+  The install output names the commit the tool was built from; it should match
+  the tag's merge commit upstream.
+
 ## Recipe chooser
 
 | Situation | Recipe |
