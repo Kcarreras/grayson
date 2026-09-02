@@ -1210,6 +1210,9 @@ def chart_render(
     session_id: str,
     chart_id: str,
     out: Path = typer.Option(..., "--out", "-o", help="Destination .svg file."),
+    detail: bool = typer.Option(
+        False, "--detail", help="The chart page's larger size: more, longer axis labels."
+    ),
 ) -> None:
     """Export a chart as a standalone SVG file."""
     from grayson.charts import brand_export, chart_data, get_chart, render_svg
@@ -1220,7 +1223,7 @@ def chart_render(
         fail(f"no chart '{chart_id}' in this session")
         return
     data = chart_data(s, spec)
-    out.write_text(brand_export(render_svg(spec, data)), encoding="utf-8")
+    out.write_text(brand_export(render_svg(spec, data, detail=detail)), encoding="utf-8")
     emit({"written": str(out), "chart_id": chart_id, "points": len(data["points"])})
 
 

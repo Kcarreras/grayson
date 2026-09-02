@@ -747,7 +747,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
     # -- charts: one chart, full size, with its data and the query behind it --
 
-    def _chart_page(sid: str, chart_id: str) -> tuple[Session, dict, dict, str]:
+    def _chart_page(
+        sid: str, chart_id: str, detail: bool = False
+    ) -> tuple[Session, dict, dict, str]:
         from grayson.charts import chart_data, get_chart, render_svg
 
         s = _session(sid)
@@ -756,31 +758,40 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"no chart '{chart_id}'")
         try:
             data = chart_data(s, spec)
-            svg = render_svg(spec, data)
+            svg = render_svg(spec, data, detail=detail)
         except (OSError, ValueError, KeyError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return s, spec, data, svg
 
     @app.get("/session/{sid}/chart/{chart_id}.svg")
-    def chart_svg(request: Request, sid: str, chart_id: str) -> Any:
+    def chart_svg(request: Request, sid: str, chart_id: str, detail: bool = False) -> Any:
         """The chart as a file — for a slide, a ticket, a message. Carries the
-        export mark, like `chart render --out`."""
+        export mark, like `chart render --out`; `detail` is the chart page's
+        size, so the download matches what was on screen."""
         _check(request)
         from grayson.charts import brand_export
 
-        _s, _spec, _data, svg = _chart_page(sid, chart_id)
+        _s, _spec, _data, svg = _chart_page(sid, chart_id, detail)
         return Response(
             brand_export(svg),
             media_type="image/svg+xml",
             headers={"Content-Disposition": f'attachment; filename="{sid}-{chart_id}.svg"'},
         )
 
+    @app.get("/session/{sid}/chart/{chart_id}/svg")
+    def chart_svg_inline(request: Request, sid: str, chart_id: str, detail: bool = False) -> Any:
+        """The chart's markup for the console itself (the lightbox swaps the
+        tile's rendering for the detail one) — unbranded, not a download."""
+        _check(request)
+        _s, _spec, _data, svg = _chart_page(sid, chart_id, detail)
+        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+
     @app.get("/session/{sid}/chart/{chart_id}", response_class=HTMLResponse)
     def chart_detail(request: Request, sid: str, chart_id: str) -> Any:
         _check(request)
         from grayson.charts import list_charts
 
-        s, spec, data, svg = _chart_page(sid, chart_id)
+        s, spec, data, svg = _chart_page(sid, chart_id, detail=True)
         specs = list_charts(s)
         ids = [c["chart_id"] for c in specs]
         pos = ids.index(chart_id) if chart_id in ids else -1
@@ -794,6 +805,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "spec": spec,
                 "data": data,
                 "svg": Markup(svg),
+                "labels_cut": 'class="tick-cut"' in svg,
                 "q": q,
                 "sql_html": highlight_sql(q["sql_raw"]) if q else None,
                 "prev_id": ids[pos - 1] if pos > 0 else None,

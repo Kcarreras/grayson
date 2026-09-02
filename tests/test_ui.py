@@ -599,3 +599,41 @@ def test_chart_page_and_svg_download(client, session):
     assert "attachment" in svg.headers["content-disposition"]
     assert svg.text.lstrip().startswith("<svg")
     assert client.get(f"/session/{session.id}/chart/c_999?t={TOKEN}").status_code == 404
+
+
+def test_chart_labels_detail_and_inline_svg(client, session):
+    from grayson.charts import add_chart
+
+    rows = [{"TS": f"2026-08-{d:02d}T00:00:00", "NULL_RATE": d / 100} for d in range(1, 31)]
+    qid = run_statement(
+        session, "SELECT TS, NULL_RATE FROM DB.S.URLS", executor=FakeExecutor(rows=rows)
+    )["qid"]
+    spec = add_chart(session, qid, "line", "TS", ["NULL_RATE"], "NULL rate by day")
+    # the tile: the shared date/time parts are captioned once; the console
+    # carries the tooltip script for anything still shortened
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert 'data-shared="2026-08-…T00:00:00"' in page and "viz-tip" in page
+    # the chart page renders the detail size, and its download matches it
+    detail = client.get(f"/session/{session.id}/chart/{spec['chart_id']}?t={TOKEN}").text
+    assert 'viewBox="0 0 1000 440"' in detail
+    assert f"chart/{spec['chart_id']}.svg?detail=1" in detail
+    dl = client.get(f"/session/{session.id}/chart/{spec['chart_id']}.svg?detail=1&t={TOKEN}")
+    assert 'viewBox="0 0 1000 464"' in dl.text  # detail canvas plus the export footer
+    # the lightbox's inline markup: unbranded, not a download, both sizes
+    inline = client.get(f"/session/{session.id}/chart/{spec['chart_id']}/svg?detail=1&t={TOKEN}")
+    assert inline.status_code == 200
+    assert inline.headers["content-type"].startswith("image/svg+xml")
+    assert "content-disposition" not in inline.headers
+    assert 'viewBox="0 0 1000 440"' in inline.text and "gray</tspan>" not in inline.text
+    tile = client.get(f"/session/{session.id}/chart/{spec['chart_id']}/svg?t={TOKEN}").text
+    assert tile.startswith('<svg viewBox="0 0 640 308"')
+    assert client.get(f"/session/{session.id}/chart/c_999/svg?t={TOKEN}").status_code == 404
+    # a label the detail size still shortens carries its full text, and the
+    # page says how to see it
+    fq = [{"T": n, "N": i} for i, n in enumerate(["ANALYTICS.WEB.PAGE_EVENTS", "RAW.X.REFUNDS"])]
+    q2 = run_statement(session, "SELECT T, N FROM DB.S.URLS", executor=FakeExecutor(rows=fq))
+    spec2 = add_chart(session, q2["qid"], "bar", "T", ["N"], "rows by table")
+    page2 = client.get(f"/session/{session.id}/chart/{spec2['chart_id']}?t={TOKEN}").text
+    assert 'data-full="ANALYTICS.WEB.PAGE_EVENTS"' in page2 and "…WEB.PAGE_EVENTS" in page2
+    assert "Some axis labels are shortened" in page2
+    assert "Some axis labels are shortened" not in detail  # nothing shortened there

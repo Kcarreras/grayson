@@ -289,6 +289,13 @@ Up to 3 series per chart (the categorical palette validates colorblind-safe at t
 slots in both console themes); more dimensions means more charts, not more colors.
 `grayson chart render --out chart.svg` exports any chart standalone.
 
+Axis labels never hide what varies: the affix every category label shares is
+stripped and captioned once under the axis, dotted identifiers shorten from the
+front, and any label still cut carries its full text in the markup (`<title>` +
+`data-full`) for the console's hover tip and for exported files. Two layouts
+render from the same data — the tile (session page, exports) and a *detail* size
+with a larger label budget (chart page, lightbox, `chart render --detail`).
+
 **Terminal rendering.** Harness chats (Cursor, Claude Code, Codex) display text, not
 images, so `chart add` / `chart_add` responses also carry `text`: a Unicode rendering
 of the same points — labeled block bars, per-series sparklines with min/max/last, a

@@ -266,3 +266,69 @@ def test_chart_tiles_collapse_beyond_newest_four(workspace):
     assert sum(1 for open_attr in tiles if open_attr) == 4  # newest four open
     # just-created charts carry the slide-in animation class
     assert "chart-enter" in page
+
+
+def _ticks(svg: str) -> list[str]:
+    import re
+
+    return re.findall(r'text-anchor="middle"[^>]*>(?:<title>[^<]*</title>)?([^<]*)</text>', svg)
+
+
+def _chart(kind: str, xs: list[str], detail: bool = False) -> str:
+    pts = [{"x": x, "y": [i + 1]} for i, x in enumerate(xs)]
+    data = {"points": pts, "y": ["N"], "truncated": False, "cap": 300, "skipped": 0}
+    return render_svg({"kind": kind, "x": "T", "y": ["N"]}, data, detail=detail)
+
+
+def test_shared_affixes_and_tail_labels():
+    from grayson.charts.render import _tail_label, shared_affixes
+
+    days = [f"2026-08-{d:02d}T00:00:00" for d in range(1, 31)]
+    assert shared_affixes(days) == ("2026-08-", "T00:00:00")  # ISO 'T' is a boundary
+    assert shared_affixes(["checkout_completed", "checkout_started"]) == ("checkout_", "")
+    assert shared_affixes(["2026-08-10", "2026-08-19"]) == ("2026-08-", "")  # never mid-number
+    assert shared_affixes(["100", "200", "300"]) == ("", "")  # numbers keep their digits
+    assert shared_affixes(["1.5", "2.5"]) == ("", "")
+    assert shared_affixes(["same", "same"]) == ("", "")  # nothing to tell apart
+    assert shared_affixes(["ab", "ac"]) == ("", "")  # too short to be worth a caption
+    assert _tail_label("ANALYTICS.WEB.PAGE_EVENTS", 12) == "…PAGE_EVENTS"
+    assert _tail_label("RAW.STRIPE.REFUNDS", 12) == "…REFUNDS"
+    assert _tail_label("A.VERY_LONG_TABLE_NAME_X", 12) is None  # last segment alone too long
+    assert _tail_label("short", 12) == "short"
+
+
+def test_long_labels_never_hide_what_varies():
+    # timestamps: the shared date and time parts come off and are captioned once;
+    # the ticks show the day, which is what differs
+    svg = _chart("line", [f"2026-08-{d:02d}T00:00:00" for d in range(1, 31)])
+    assert _ticks(svg) == ["01", "05", "09", "13", "17", "21", "25", "29"]
+    assert 'data-shared="2026-08-…T00:00:00"' in svg
+    assert 'data-full="2026-08-01T00:00:00"' in svg  # a residue still reveals the whole
+    # fully qualified names: nothing shared by all, so they shorten from the
+    # front (the table name is the distinguishing part) and carry the full name
+    fqns = ["ANALYTICS.WEB.PAGE_EVENTS", "ANALYTICS.WEB.SESSIONS", "RAW.STRIPE.REFUNDS"]
+    svg = _chart("bar", fqns)
+    assert _ticks(svg) == ["…PAGE_EVENTS", "…SESSIONS", "…REFUNDS"]
+    assert 'class="tick-cut" tabindex="0" data-full="ANALYTICS.WEB.PAGE_EVENTS"' in svg
+    assert "<title>ANALYTICS.WEB.PAGE_EVENTS</title>" in svg  # the file explains itself
+    # a shared schema is captioned, the residue is the bare table name
+    svg = _chart("bar", ["ANALYTICS.WEB.PAGE_EVENTS", "ANALYTICS.WEB.SESSIONS"])
+    assert _ticks(svg) == ["PAGE_EVENTS", "SESSIONS"] and 'data-shared="ANALYTICS.WEB.…"' in svg
+    # short labels render exactly as before: no caption, no extra markup
+    svg = _chart("bar", ["a<b", 'q"uote', "plain"])
+    assert _ticks(svg) == ["a&lt;b", 'q"uote', "plain"]
+    assert "data-full" not in svg and "data-shared" not in svg
+    # hostile long labels stay escaped in every carrier
+    svg = _chart("bar", [f'<script>alert("{i}")</script>{i}' for i in range(3)])
+    assert "<script>" not in svg and "&lt;script&gt;" in svg
+
+
+def test_detail_layout_shows_more_labels():
+    days = [f"2026-08-{d:02d}T00:00:00" for d in range(1, 31)]
+    tile, detail = _chart("line", days), _chart("line", days, detail=True)
+    assert tile.startswith('<svg viewBox="0 0 640 308"')
+    assert detail.startswith('<svg viewBox="0 0 1000 440"')
+    assert len(_ticks(tile)) == 8 and len(_ticks(detail)) == 15
+    assert _ticks(detail)[0] == "2026-08-01T00:00:00"  # fits the longer budget, unshortened
+    out = _chart("bar", ["ANALYTICS.WEB.PAGE_EVENTS", "RAW.STRIPE.REFUNDS"], detail=True)
+    assert _ticks(out) == ["…WEB.PAGE_EVENTS", "RAW.STRIPE.REFUNDS"]

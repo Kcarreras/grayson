@@ -155,6 +155,17 @@ the plotted rows, the source query, and a **Download SVG** for a slide or a
 ticket. The session page's live refresh waits while a chart is enlarged or a
 field has focus, so a half-typed note is never lost.
 
+Long category labels never hide what varies. Whatever every label shares — a
+date prefix, a schema path, a constant time part — comes off and is printed
+once under the axis (`2026-08-…T00:00:00`, with `01 … 29` on the ticks);
+dotted names shorten from the front so the table name survives
+(`…PAGE_EVENTS`, not `ANALYTICS.W…`); and a label that is still cut carries
+its full text inside the SVG (a `<title>`, so an exported file explains
+itself) and shows it in the console on hover, tap, or keyboard focus. The
+lightbox and the chart page render a *detail* size — twice the labels at twice
+the length on a wider canvas — and **Download SVG** there (or
+`grayson chart render --detail`) matches what was on screen.
+
 ## Settings and guard profiles
 
 Configuration lives in `grayson.toml` — committed, reviewable, diffable.
