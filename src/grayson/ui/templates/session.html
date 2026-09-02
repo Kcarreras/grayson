@@ -133,8 +133,9 @@
 
 {% if setup_inputs %}
 {# what the session was set up with: read once, then folded away. The fold is
-   remembered across the live refresh like the chart and finding tiles. #}
-<details class="card foldcard" id="setup" data-fold="setup" open>
+   remembered across the live refresh like the chart and finding tiles;
+   it starts closed, since it is read once and the tiles below matter more. #}
+<details class="card foldcard" id="setup" data-fold="setup">
   <summary class="chartsum">
     <span class="c-caret">▸</span>
     <span class="overline">Setup inputs {{ help("setup_inputs") }}</span>
