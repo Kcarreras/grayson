@@ -21,8 +21,9 @@ reviews the code has passed.
    (Snowflake dialect); default-deny outside `SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN`;
    single-statement only; forbidden-node walk blocks DML/DDL nested anywhere; function
    denylist blocks `SYSTEM$*` and `RESULT_SCAN`; UDTF row sources blocked in strict mode;
-   unqualified names blocked in strict mode; per-statement cost caps (auto-LIMIT,
-   timeout, budget).
+   unqualified names blocked in strict mode; `GET_DDL` parsed and scope-checked as the
+   metadata read it is (bulk and non-literal forms blocked in strict mode, other object
+   kinds denied); per-statement cost caps (auto-LIMIT, timeout, budget).
 2. **Snowflake role** (defense in depth) — a read-only role is preferred when available;
    the guard is built to hold under the user's normal role regardless.
 3. **Local analysis** (`cache/local.py`) — cached-result queries run on a read-only
@@ -124,6 +125,24 @@ Workspaces guarded before this ship will show the new rules as missing in
 A private key stored somewhere other than `~/.snowflake` is still uncovered and
 cannot be covered — its location is the user's to choose. This is the ordinary
 shape of the layer: it stops the direct path, not a determined one.
+
+### 2026-09-02 — Metadata scope coherence
+
+Found from a real onboarding session's self-report. Under strict scope there were three
+ways to read the columns of an out-of-scope table, of which exactly one was blocked:
+`DESCRIBE` (blocked since the metadata-scope fix), `INFORMATION_SCHEMA.COLUMNS` (always
+allowed, by design, and not statically checkable), and `SELECT GET_DDL('TABLE', ...)`
+(unguarded: a scalar function call with no table node, so the scope loop never saw it —
+and at `SCHEMA`/`DATABASE` granularity a bulk dump of every definition).
+
+| # | Severity | Issue | Fix |
+|---|---|---|---|
+| 1 | medium | `GET_DDL` read any object's definition with no scope check, no table on the query row | Parsed: `TABLE`/`VIEW` go through the metadata scope check and name their object; `SCHEMA`/`DATABASE` and non-literal names are blocked in strict mode, warned otherwise; every other kind denied |
+| 2 | design | Strict scope blocked `DESCRIBE` of out-of-scope tables while `INFORMATION_SCHEMA` stayed open — a rule enforced only against agents that didn't know the workaround | Scope is now stated as a wall around *rows*: single-object metadata reads name their object and warn in both modes; row reads are blocked as before |
+| 3 | design | A human's "yes, read X" in an intervention could not be recorded as a scope change — no mid-session widening existed, so the authorized read ran as an out-of-scope warning tied to the answer only by inference | `scope_request` intervention kind whose grant widens scope on response; `grayson session scope` and a console control for the user; all through one logged write path, none agent-callable |
+
+The line that held: scope still widens only by a user action, and every widening is a
+`scope_changed` event with actor and provenance.
 
 ## Residual risks (accepted)
 

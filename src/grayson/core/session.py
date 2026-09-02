@@ -11,7 +11,7 @@ from pathlib import Path
 
 from grayson.cache.store import CacheStore
 from grayson.config import GuardSettings
-from grayson.util import new_session_id, utcnow
+from grayson.util import is_object_name, new_session_id, utcnow
 from grayson.workspace import Workspace
 
 STAGES = ["setup", "analysis", "synthesis", "review", "fixes", "verification", "closed"]
@@ -283,6 +283,33 @@ class Session:
     def scope_tables(self) -> set[str]:
         extra = set(json.loads(self.get_meta("scope_extra", "[]") or "[]"))
         return {t.upper() for t in self.targets} | {t.upper() for t in extra}
+
+    def widen_scope(self, tables: list[str], actor: str = "user", via: str = "") -> dict:
+        """Bring tables into the readable scope, as a logged user decision.
+
+        Scope only ever widens by a human's say-so: the setup inputs flagged
+        for it at session start, a registered view, the console or
+        `grayson session scope`, or a granted scope_request intervention. This
+        is the one write path for the last three, so every widening lands in
+        the audit trail with who did it and through what (`via`: the console,
+        the command, or the intervention id whose answer granted it)."""
+        names: list[str] = []
+        for raw in tables:
+            name = str(raw).strip().upper()
+            if not is_object_name(name):
+                raise ValueError(
+                    f"'{raw}' is not a table name — use DB.SCHEMA.TABLE, one per entry"
+                )
+            if name not in names:
+                names.append(name)
+        if not names:
+            raise ValueError("no tables named")
+        before = self.scope_tables
+        added = [n for n in names if n not in before]
+        if added:
+            self.add_scope(added)
+        self.log_event(actor, "scope_changed", {"tables": names, "added": added, "via": via})
+        return {"added": added, "scope": sorted(self.scope_tables)}
 
     def add_scope(self, tables: list[str]) -> None:
         extra = set(json.loads(self.get_meta("scope_extra", "[]") or "[]"))
@@ -863,9 +890,17 @@ class Session:
                 if existing is None:
                     raise KeyError(f"no intervention '{iid}'")
                 raise ValueError(f"intervention '{iid}' is not open (status={existing[0]})")
+            kind = con.execute("SELECT kind FROM interventions WHERE iid=?", (iid,)).fetchone()[0]
         finally:
             con.close()
         self.log_event(actor, "intervention_answered", {"iid": iid})
+        # A granted scope request IS the authorization: the human's answer
+        # widens the scope here, in the one place every response surface
+        # (console, CLI) passes through, so the query that follows is in scope
+        # and its citation counts — rather than an out-of-scope read whose link
+        # to the answer that allowed it is left for a later reader to infer.
+        if kind == "scope_request" and response.get("granted"):
+            self.widen_scope(list(response["granted"]), actor=actor, via=iid)
 
     def cancel_intervention(self, iid: str, actor: str = "agent") -> None:
         con = self._con()
@@ -1029,6 +1064,7 @@ class Session:
             "guard_profile": meta.get("guard_profile"),
             "guard": guard.model_dump(),
             "strict_scope": bool(json.loads(meta.get("strict_scope") or "false")),
+            "scope_extra": sorted(json.loads(meta.get("scope_extra") or "[]")),
             "connection": meta.get("connection", "default"),
             "workers": workers,
             "queries_executed": executed,

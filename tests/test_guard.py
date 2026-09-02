@@ -257,16 +257,126 @@ def test_metadata_statements_record_their_table(sql):
     assert v.warnings == []
 
 
-def test_metadata_read_of_out_of_scope_table_is_blocked_in_strict_mode():
+def test_metadata_read_of_out_of_scope_table_warns_in_both_modes():
+    # The wall is around rows, not names: the same columns are one
+    # INFORMATION_SCHEMA query away, so blocking DESCRIBE under strict scope
+    # only bound the agents that did not know the workaround. Instead the read
+    # is allowed, names its table, and says where the wall actually is.
     ctx = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
     v = validate_statement("DESCRIBE TABLE DB.S.OTHER", GuardSettings(), ctx)
+    assert v.allowed and v.tables == ["DB.S.OTHER"]
+    assert any("its rows are not" in w and "scope_request" in w for w in v.warnings)
+    # the rows themselves stay blocked
+    v = validate_statement("SELECT * FROM DB.S.OTHER", GuardSettings(), ctx)
     assert not v.allowed and v.rule == "out_of_scope"
+    assert "scope_request" in v.suggestion
     # lenient scope: allowed, but it says so
     v = validate_statement(
         "SHOW COLUMNS IN DB.S.OTHER", GuardSettings(), GuardContext(scope_tables={"DB.S.T1"})
     )
     assert v.allowed and v.tables == ["DB.S.OTHER"]
     assert any("outside the session scope" in w for w in v.warnings)
+
+
+def test_metadata_read_of_denied_table_stays_denied():
+    ctx = GuardContext(scope_tables={"DB.S.T1"})
+    v = validate_statement(
+        "DESCRIBE VIEW SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", GuardSettings(), ctx
+    )
+    assert not v.allowed and v.rule == "denied_table"
+
+
+# -- GET_DDL: a metadata read hidden in a scalar function ------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT GET_DDL('TABLE', 'DB.S.T1')",
+        "SELECT GET_DDL('table', 'DB.S.T1', TRUE)",
+        "SELECT GET_DDL('VIEW', 'DB.S.T1') AS ddl",
+        'SELECT get_ddl(\'TABLE\', \'"DB"."S"."T1"\')',
+    ],
+)
+def test_get_ddl_names_its_object(sql):
+    ctx = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
+    v = validate_statement(sql, GuardSettings(), ctx)
+    assert v.allowed, v.reason
+    assert v.tables == ["DB.S.T1"]
+    assert v.warnings == []
+
+
+def test_get_ddl_out_of_scope_warns_like_describe():
+    strict = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
+    v = validate_statement("SELECT GET_DDL('TABLE', 'DB.S.OTHER')", GuardSettings(), strict)
+    assert v.allowed and v.tables == ["DB.S.OTHER"]
+    assert any("its rows are not" in w for w in v.warnings)
+    lenient = GuardContext(scope_tables={"DB.S.T1"})
+    v = validate_statement("SELECT GET_DDL('TABLE', 'DB.S.OTHER')", GuardSettings(), lenient)
+    assert v.allowed and v.tables == ["DB.S.OTHER"]
+    assert any("outside the session scope" in w for w in v.warnings)
+
+
+@pytest.mark.parametrize("kind", ["SCHEMA", "DATABASE"])
+def test_get_ddl_bulk_dump_blocked_in_strict_warned_otherwise(kind):
+    sql = f"SELECT GET_DDL('{kind}', 'DB.S')"
+    v = validate_statement(sql, GuardSettings(), GuardContext(strict_scope=True))
+    assert not v.allowed and v.rule == "get_ddl_scope"
+    v = validate_statement(sql, GuardSettings(), GuardContext())
+    assert v.allowed and v.tables == []
+    assert any("not scope-checked" in w for w in v.warnings)
+
+
+def test_get_ddl_non_literal_name_cannot_be_checked():
+    sql = (
+        "SELECT GET_DDL('TABLE', TABLE_SCHEMA || '.' || TABLE_NAME) "
+        "FROM DB.INFORMATION_SCHEMA.TABLES"
+    )
+    v = validate_statement(sql, GuardSettings(), GuardContext(strict_scope=True))
+    assert not v.allowed and v.rule == "get_ddl_scope"
+    v = validate_statement(sql, GuardSettings(), GuardContext())
+    assert v.allowed and any("not a literal" in w for w in v.warnings)
+
+
+@pytest.mark.parametrize("kind", ["STAGE", "PIPE", "TASK", "PROCEDURE", "FUNCTION", "INTEGRATION"])
+def test_get_ddl_other_object_kinds_denied(kind):
+    v = validate_statement(f"SELECT GET_DDL('{kind}', 'DB.S.X')", GuardSettings(), GuardContext())
+    assert not v.allowed and v.rule == "get_ddl_kind"
+
+
+def test_get_ddl_malformed_arguments_rejected():
+    ctx = GuardContext()
+    v = validate_statement("SELECT GET_DDL(kind_col, 'DB.S.T1')", GuardSettings(), ctx)
+    assert not v.allowed and v.rule == "get_ddl_form"
+    v = validate_statement("SELECT GET_DDL('TABLE', 'not a name!')", GuardSettings(), ctx)
+    assert not v.allowed and v.rule == "get_ddl_form"
+
+
+def test_get_ddl_of_denied_history_view_denied():
+    v = validate_statement(
+        "SELECT GET_DDL('VIEW', 'SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY')",
+        GuardSettings(),
+        GuardContext(),
+    )
+    assert not v.allowed and v.rule == "denied_table"
+
+
+def test_get_ddl_nested_in_a_scoped_select_is_still_checked():
+    # inside a query over an in-scope table, GET_DDL of another table still
+    # names it — the guard walks the whole tree, not just the projection
+    ctx = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
+    v = validate_statement(
+        "SELECT ID, GET_DDL('TABLE', 'DB.S.OTHER') FROM DB.S.T1", GuardSettings(), ctx
+    )
+    assert v.allowed and v.tables == ["DB.S.OTHER", "DB.S.T1"]
+    assert any("DB.S.OTHER" in w for w in v.warnings)
+
+
+def test_listings_stay_allowed_and_tableless_under_strict_scope():
+    ctx = GuardContext(scope_tables={"DB.S.T1"}, strict_scope=True)
+    for sql in ("SHOW TABLES", "SHOW TABLES IN SCHEMA DB.S", "SHOW VIEWS LIKE 'T%' IN DB.S"):
+        v = validate_statement(sql, GuardSettings(), ctx)
+        assert v.allowed and v.tables == [] and v.warnings == [], sql
 
 
 def test_schema_level_listings_stay_tableless():

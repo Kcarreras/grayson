@@ -39,6 +39,13 @@ checkpoint with a query picked to pass the evidence test, in order to clear a ga
 check that does not apply is waived by the user on your request, not worked around.
 Failing external checks returned at session start (external_checks) are pre-vetted
 leads — replicate them first.
+Scope is a wall around rows, not names: listings (SHOW TABLES/VIEWS, INFORMATION_SCHEMA)
+and single-object metadata (DESCRIBE, SHOW COLUMNS, GET_DDL('TABLE'|'VIEW', 'DB.S.T'))
+are readable for any table, so orient freely. Reading the ROWS of a table outside the
+session scope warns, or is blocked under strict scope. When you need a neighbour's rows,
+file a scope_request intervention naming the tables and why: the user grants it from the
+console and the tables join your scope, logged. Never route around the wall — an
+out-of-scope read cited as evidence shows on the checkpoint as off-scope.
 Profile before hand-rolling: profile_table covers a table's descriptive battery
 (nulls, cardinality, ranges, key candidates, frequencies) in three or four guarded
 queries whose ids are evidence — do not write forty single-column queries yourself.
@@ -533,7 +540,10 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="File a human-input task (label_sample|confirm_semantics|choose|"
-        "free_response). Returns the intervention id to await."
+        "free_response|scope_request). Returns the intervention id to await. "
+        "scope_request payload: {tables: ['DB.S.T', ...], reason: 'what reading them "
+        "settles'} — the user ticks what to grant and those tables join the session's "
+        "readable scope; the response lists `granted` and `declined`."
     )
     def intervention_request(
         session_id: str,

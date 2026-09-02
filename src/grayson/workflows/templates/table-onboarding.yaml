@@ -50,8 +50,10 @@ required_checks:
       match-rate evidence (orphans, fan-out). Record confirmed relationships
       and ruled-out candidates alike. Ask the user up front for upstream and
       downstream tables worth reading (the related_tables input) — this
-      workflow runs strict-scoped, so only the target and the tables they
-      name are readable; if a promising neighbour surfaces mid-session, ask
+      workflow suggests strict scope, under which only the target and the
+      tables they name have readable rows. Neighbours' columns and DDL are
+      readable regardless, so when a promising one surfaces mid-session,
+      look at its shape, then file a scope_request intervention for its rows
       rather than guessing around the scope wall.
     depends_on: [structure_profiled]
     uses_inputs: [related_tables]

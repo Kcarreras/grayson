@@ -97,9 +97,21 @@
     </select> {{ help("strict_scope") }}
     <button class="btn secondary sm" type="submit">Apply</button>
   </form>
+  {# widening scope is the other live user action: tables named here become
+     readable from the next statement, logged with who and how #}
+  <form class="item row" method="post" action="/session/{{ s.id }}/scope?t={{ token }}"
+        style="gap: 6px; align-items: center;"
+        title="Bring tables into the readable scope — a user action, logged; applies from the next statement">
+    <b>Also in scope</b>
+    <span class="mono small">{{ s.scope_extra | join(", ") or "—" }}</span>
+    <input type="text" name="tables" placeholder="DB.SCHEMA.TABLE, ..." required
+           style="width: auto; flex: 1 1 220px;">
+    <button class="btn secondary sm" type="submit">Widen</button> {{ help("scope") }}
+  </form>
   {% else %}
   <div class="item"><b>Guard profile</b> {{ s.guard_profile }} {{ help("guard_profile") }}</div>
   <div class="item"><b>Strict scope</b> {{ "on" if s.strict_scope else "off" }} {{ help("strict_scope") }}</div>
+  <div class="item"><b>Also in scope</b> {{ s.scope_extra | join(", ") or "—" }} {{ help("scope") }}</div>
   {% endif %}
 </div>
 

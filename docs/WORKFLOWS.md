@@ -24,6 +24,9 @@ its answer join the session's readable scope at start. That is how a
 strict-scoped workflow gets deliberate context — table-onboarding's
 `related_tables` input asks for upstream/downstream neighbours, and exactly
 those become readable beside the target instead of the scope loosening.
+A neighbour that surfaces mid-session is asked for the same way: a
+`scope_request` intervention names it and why, and the human's grant widens
+the scope from the answer itself (see [SESSIONS.md](SESSIONS.md)).
 - **Waiving** covers a *required* check that genuinely does not apply. The
   agent asks via an intervention; a human waives with a reason. Waived
   satisfies the gate and never renders as complete.

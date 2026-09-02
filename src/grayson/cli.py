@@ -874,6 +874,46 @@ def session_guard(
     emit({"id": s.id, **changes})
 
 
+@session_app.command("scope")
+def session_scope(
+    session_id: str,
+    tables: list[str] = typer.Argument(
+        None,
+        help="Tables to bring into the readable scope (DB.SCHEMA.TABLE ...). "
+        "None: show the current scope.",
+    ),
+) -> None:
+    """Show a session's readable scope, or widen it (widening is a user action).
+
+    Scope is a wall around rows: metadata of any table is readable, rows of a
+    table outside scope warn or, under strict scope, are blocked. An agent
+    that needs a neighbour asks — a scope_request intervention the user grants
+    from the console — or the user widens scope here. Either way the change
+    is a logged event naming who and why; agents cannot widen their own scope.
+    """
+    s = _session(session_id)
+    if not tables:
+        emit(
+            {
+                "id": s.id,
+                "targets": s.targets,
+                "scope": sorted(s.scope_tables),
+                "strict_scope": s.strict_scope,
+            }
+        )
+        return
+    if s.stage == "closed":
+        fail("session is closed — its scope is part of the record now")
+        return
+    require_interactive("widening a live session's scope")
+    try:
+        out = s.widen_scope(parse_table_list(" ".join(tables)), actor="user", via="session scope")
+    except ValueError as e:
+        fail(str(e))
+        return
+    emit({"id": s.id, **out})
+
+
 @session_app.command("events")
 def session_events(session_id: str, limit: int = typer.Option(50, "--limit")) -> None:
     emit(_session(session_id).events(limit))
@@ -1601,7 +1641,10 @@ def finding_accept(session_id: str, fid: str) -> None:
 def intervention_request(
     session_id: str,
     kind: str = typer.Option(
-        ..., "--kind", "-k", help="label_sample|confirm_semantics|choose|free_response"
+        ...,
+        "--kind",
+        "-k",
+        help="label_sample|confirm_semantics|choose|free_response|scope_request",
     ),
     title: str = typer.Option(..., "--title"),
     prompt: str = typer.Option("", "--prompt", help="What you'll do with the answer."),
