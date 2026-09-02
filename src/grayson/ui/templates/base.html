@@ -118,8 +118,9 @@ main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
 
 /* ---- charts ---------------------------------------------------------- */
 .chartgrid { display: grid; gap: 12px; align-items: start;
-  grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); }
-.chartcard { margin-bottom: 0; }
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+/* a lone chart stays a tile, not a banner */
+.chartcard { margin-bottom: 0; max-width: 640px; }
 details.chartcard > summary.chartsum, details.findcard > summary.chartsum {
   cursor: pointer; list-style: none;
   display: flex; align-items: center; gap: 8px; user-select: none; flex-wrap: wrap; }
@@ -318,7 +319,7 @@ input:focus, textarea:focus, select:focus { outline: none;
   border-color: var(--brand-accent); }
 form.inline { display: inline; }
 .searchrow { display: flex; gap: 8px; align-items: center; margin: 12px 0 16px; }
-dl.props { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px;
+dl.props { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; align-items: baseline;
   margin: 8px 0; }
 dl.props dt { color: var(--muted); font-size: 11px; font-weight: 600;
   text-transform: uppercase; letter-spacing: .06em; padding-top: 2px; }

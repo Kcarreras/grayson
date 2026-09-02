@@ -54,10 +54,7 @@
 {% for name in cfg.guard_profiles %}
 <form id="pf-{{ name }}" method="post" action="/settings/profile/{{ name }}?t={{ token }}"></form>
 {% endfor %}
-<div class="faint small" style="margin-top: 8px;">0 = that control is off. Changes apply
-to <i>new</i> sessions; a running session keeps the snapshot it started with —
-adjustable from the session's own page (guard profile, strict scope, budget cap),
-where each change is logged as a user action.</div>
+<div class="faint small" style="margin-top: 8px;">0 = off. Changes apply to new sessions; a running session adjusts its own snapshot from its page.</div>
 </div>
 
 <h2>Per-workflow session defaults</h2>
@@ -86,12 +83,7 @@ where each change is logged as a user action.</div>
 {% for name in workflow_names %}
 <form id="wd-{{ name }}" method="post" action="/settings/workflow/{{ name }}?t={{ token }}"></form>
 {% endfor %}
-<div class="faint small" style="margin-top: 8px;">What a session starts with when no flag
-says otherwise: an explicit flag at session start always wins; <i>inherit</i> falls back
-to the last-used/template suggestion (guard profile) or the template's own suggestion,
-then the workspace default (strict scope). table-onboarding suggests strict scope on out
-of the box — its shape is bounded, so an out-of-scope read is a wrong turn, not
-exploration.</div>
+<div class="faint small" style="margin-top: 8px;">Defaults for new sessions of each workflow; an explicit flag at session start still wins, and <i>inherit</i> falls back to the template's suggestion.</div>
 </div>
 
 <h2>Team library</h2>
