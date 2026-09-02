@@ -111,8 +111,10 @@ grayson setup                     # guided: workspace → connection → user id
 Prefer flags? Every step is its own command — `grayson init .`, `doctor`,
 `user set <id>`, `library link <url>`, `harness init claude-code|cursor|codex|copilot`.
 
-No Snowflake yet? The sandbox is a full demo on a local mock warehouse,
-seeded with planted, workflow-matched bugs and a scoring answer key:
+No Snowflake yet? The sandbox is a full demo on a local mock warehouse with
+the texture of a real one (heavy-tailed orders, seasonality, payments that
+reconcile), seeded with planted, workflow-matched bugs at two difficulty
+tiers, benign decoys a careful run must rule out, and a scoring answer key:
 
 ```bash
 grayson sandbox init my-demo && cd my-demo
