@@ -111,14 +111,22 @@ grayson setup                     # guided: workspace → connection → user id
 Prefer flags? Every step is its own command — `grayson init .`, `doctor`,
 `user set <id>`, `library link <url>`, `harness init claude-code|cursor|codex|copilot`.
 
-No Snowflake yet? The sandbox is a full demo on a local mock warehouse,
-seeded with planted, workflow-matched bugs and a scoring answer key:
+No Snowflake yet? The sandbox is a full demo on a local mock warehouse with
+the texture of a real one (heavy-tailed orders, seasonality, payments that
+reconcile), seeded with planted, workflow-matched bugs at two difficulty
+tiers, benign decoys a careful run must rule out, and a scoring answer key:
 
 ```bash
 grayson sandbox init my-demo && cd my-demo
 grayson harness init claude-code
 # then ask your agent to run a workflow against the sandbox tables
+grayson sandbox score --all       # afterwards: findings vs the planted truth, per session
 ```
+
+`sandbox score` applies the answer key's rubric — identified, explained,
+quantified, per planted problem — to a session's findings and lines sessions
+up with their cost, so two harnesses, models, or protocol files can be
+compared on the same problems.
 
 ## Deployment modes
 

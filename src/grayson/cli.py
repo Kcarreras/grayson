@@ -835,6 +835,19 @@ def session_readiness(session_id: str) -> None:
     emit(engine.readiness(_session(session_id), _workspace().workflows_dir))
 
 
+@session_app.command("brief")
+def session_brief(session_id: str) -> None:
+    """Everything the session already knows, in one read — for an agent resuming in
+    a fresh context (a new chat, a compacted window, a worker joining late): setup
+    answers, checkpoints with evidence, findings with the user's verdicts, the
+    user's intervention answers, proposals, recent queries, charts, and what to do
+    next. Read it before re-deriving anything; never re-ask what it records."""
+    from grayson.core.brief import build_brief, render_brief
+
+    brief = build_brief(_session(session_id), _workspace().workflows_dir)
+    emit({**brief, "text": render_brief(brief)})
+
+
 @session_app.command("budget")
 def session_budget(
     session_id: str, cap: int = typer.Option(..., "--cap", min=0, help="New budget cap (0=off).")
@@ -1265,9 +1278,13 @@ def cache_query(
 def chart_add(
     session_id: str,
     artifact: str = typer.Option(..., "--artifact", "-a", help="Cached artifact id (q_XXXX)."),
-    kind: str = typer.Option(..., "--kind", "-k", help="bar | line | scatter"),
-    x: str = typer.Option(..., "--x", "-x", help="Column for the x axis."),
-    y: list[str] = typer.Option(..., "--y", "-y", help="Measure column(s); up to 3."),
+    kind: str = typer.Option(..., "--kind", "-k", help="bar | line | scatter | histogram"),
+    x: str = typer.Option(
+        ..., "--x", "-x", help="Column for the x axis (histogram: the numeric column to bin)."
+    ),
+    y: list[str] = typer.Option(
+        None, "--y", "-y", help="Measure column(s); up to 3. Not for histograms."
+    ),
     title: str = typer.Option(..., "--title", help="What the chart shows."),
     note: str = typer.Option("", "--note", help="One-line read: what should the viewer see?"),
     worker: str = typer.Option(None, "--worker"),
@@ -1277,6 +1294,12 @@ def chart_add(
         help="bar only: auto | vertical | horizontal. auto lays many categories or "
         "long names out as horizontal bars; dates and numbers stay vertical.",
     ),
+    bins: int = typer.Option(
+        None,
+        "--bins",
+        help="histogram only: how many bins (2-40). Default: chosen from the row count; "
+        "edges are rounded, so the count is approximate either way.",
+    ),
 ) -> None:
     """Build a chart from a cached artifact — it appears live in the console.
 
@@ -1284,13 +1307,17 @@ def chart_add(
     chart the resulting artifact. Every chart is traceable to its query id.
     Keep bar charts to a ranked top-N (ORDER BY ... LIMIT): many categories
     render as horizontal bars, but sixty bars is a table, not a picture.
+    A histogram takes the raw values of one numeric column (select the column,
+    optionally SAMPLE, no GROUP BY) and bins them locally; it takes no --y.
     The response includes `text`, a terminal rendering — paste it into your
     chat reply so the user sees the shape without leaving the conversation."""
     from grayson.charts import ChartError, add_chart, chart_data, render_text
 
     s = _session(session_id)
     try:
-        spec = add_chart(s, artifact, kind, x, list(y), title, note, worker, orientation)
+        spec = add_chart(
+            s, artifact, kind, x, list(y or []), title, note, worker, orientation, bins
+        )
     except ChartError as e:
         fail(str(e))
         return
@@ -3113,6 +3140,48 @@ def sandbox_reset() -> None:
     path = locate_warehouse(ws.root)  # migrates any legacy in-workspace file first
     seed_sandbox(path)
     emit({"reseeded": str(path)})
+
+
+@sandbox_app.command("score")
+def sandbox_score(
+    session_id: str = typer.Argument(None, help="A session to score; omit with --all."),
+    all_sessions: bool = typer.Option(
+        False, "--all", help="Score every session that targets planted tables, side by side."
+    ),
+) -> None:
+    """Score a session's findings against the planted answer key.
+
+    Per planted problem on the session's targets: identified, explained, quantified
+    (±2%) — one point each, applied deterministically to the recorded findings, with
+    what each missed point was looking for. `--all` lines up every session with its
+    cost, which is how two harnesses, models, or protocol files are compared on the
+    same problems. A user command: the output is the answer key, so it needs an
+    interactive terminal and has no MCP twin."""
+    from grayson.sandbox.score import (
+        render_leaderboard,
+        render_score,
+        score_session,
+        score_workspace,
+    )
+
+    ws = _workspace()
+    if ws.config.connection != "sandbox":
+        fail("this workspace is not a sandbox (connection name is not 'sandbox')")
+        return
+    require_interactive("scoring against the sandbox answer key")
+    if all_sessions:
+        results = score_workspace(ws)
+        emit({"sessions": results, "text": render_leaderboard(results)})
+        return
+    if not session_id:
+        fail("give a session id, or --all to score every session")
+        return
+    try:
+        result = score_session(_session(session_id))
+    except ValueError as e:
+        fail(str(e))
+        return
+    emit({**result, "text": render_score(result)})
 
 
 # -- mcp -----------------------------------------------------------------

@@ -447,3 +447,150 @@ def test_cli_and_mcp_take_orientation(workspace, fake_snow_env):
         "title": "rows per day", "orientation": "vertical",
     }))  # fmt: skip
     assert json.loads(result.content[0].text)["orientation"] == "vertical"
+
+
+# -- histograms --------------------------------------------------------------
+
+
+def _hist_rows(n: int = 500) -> list[dict]:
+    import random
+
+    rng = random.Random(7)
+    return [{"AMOUNT": round(rng.gauss(250, 80), 2), "K": "x"} for _ in range(n)]
+
+
+def test_histogram_bins_raw_values(session):
+    from grayson.charts import bin_edges, default_bins
+
+    rows = _hist_rows()
+    rows[3]["AMOUNT"] = None  # nulls are skipped, not binned as zero
+    q = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=rows))["qid"]
+    spec = add_chart(session, q, "histogram", "amount", [], "Order amounts")
+    assert spec["kind"] == "histogram" and spec["y"] == [] and spec["x"] == "AMOUNT"
+    data = chart_data(session, spec)
+    assert data["values"] == 499 and data["skipped"] == 1
+    assert data["y"] == ["count"]
+    assert sum(p["y"][0] for p in data["points"]) == 499  # every value lands in one bin
+    # contiguous, round-width bins covering the data
+    edges = data["edges"]
+    assert len(edges) == data["bins"] + 1
+    widths = {round(b - a, 9) for a, b in zip(edges, edges[1:], strict=False)}
+    assert widths == {data["width"]}
+    assert edges[0] <= data["stats"]["min"] and edges[-1] >= data["stats"]["max"]
+    assert data["bins"] == default_bins(499) or data["bins"] <= default_bins(499) + 2
+    assert data["stats"]["median"] == pytest.approx(sorted(
+        r["AMOUNT"] for r in rows if r["AMOUNT"] is not None
+    )[249])  # fmt: skip
+    # deterministic helpers
+    assert bin_edges(7, 12, 1)[0] <= 7 and bin_edges(7, 12, 1)[-1] >= 12
+    assert bin_edges(7, 7, 5) == [7, 8]  # a constant column still gets one bin
+    assert default_bins(1) == 1 and 5 <= default_bins(10) <= 30 and default_bins(2**40) == 30
+
+
+def test_histogram_bins_can_be_chosen(session):
+    q = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=_hist_rows()))[
+        "qid"
+    ]
+    coarse = add_chart(session, q, "histogram", "AMOUNT", [], "coarse", bins=4)
+    fine = add_chart(session, q, "histogram", "AMOUNT", [], "fine", bins=30)
+    assert coarse["bins"] == 4 and fine["bins"] == 30
+    nc, nf = chart_data(session, coarse)["bins"], chart_data(session, fine)["bins"]
+    assert nc < nf
+    assert nc <= 6  # edges are rounded, so the count is near the ask, not on it
+
+
+def test_histogram_validation(session, qid):
+    q = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=_hist_rows()))[
+        "qid"
+    ]
+    with pytest.raises(ChartError, match="takes no y column"):
+        add_chart(session, q, "histogram", "AMOUNT", ["K"], "t")
+    with pytest.raises(ChartError, match="numeric x column"):
+        add_chart(session, q, "histogram", "K", [], "t")
+    with pytest.raises(ChartError, match="bins must be between"):
+        add_chart(session, q, "histogram", "AMOUNT", [], "t", bins=1)
+    with pytest.raises(ChartError, match="bins applies to histograms only"):
+        add_chart(session, qid, "line", "DAY", ["NULL_RATE"], "t", bins=5)
+    with pytest.raises(ChartError, match="at least one y column"):
+        add_chart(session, qid, "bar", "DAY", [], "t")
+    with pytest.raises(ChartError, match="kind must be one of"):
+        add_chart(session, qid, "pie", "DAY", ["NULL_RATE"], "t")
+
+
+def test_histogram_renders_svg_and_text(session):
+    from grayson.charts import render_svg, render_text
+
+    q = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=_hist_rows()))[
+        "qid"
+    ]
+    spec = add_chart(session, q, "histogram", "AMOUNT", [], "Order amounts")
+    data = chart_data(session, spec)
+    svg = render_svg(spec, data)
+    assert svg.count("<rect") == data["bins"]  # one contiguous bar per bin
+    labels = [t for t in _ticks(svg)]
+    # edges label the axis: the first and last edge are drawn, and nothing collides
+    from grayson.charts.render import _fmt
+
+    assert _fmt(data["edges"][0]) in labels and _fmt(data["edges"][-1]) in labels
+    detail = render_svg(spec, data, detail=True)
+    assert detail.count("<rect") == data["bins"]
+    txt = render_text(spec, data)
+    assert "histogram" in txt and "Order amounts" in txt and "█" in txt
+    assert "bins of" in txt and "median" in txt and "values" in txt
+    assert "–" in txt  # bin labels read lo–hi
+
+
+def test_histogram_cli_and_mcp(workspace, fake_snow_env):
+    import asyncio
+
+    from grayson.mcp.server import build_server
+
+    started = invoke(
+        "session", "start", "--workflow", "table-health", "--table", "DB.S.T1",
+        "--guard-profile", "moderate", "--skip-snapshot",
+    )  # fmt: skip
+    sid = started["session"]["id"]
+    s = Session(workspace, sid)
+    q = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=_hist_rows()))["qid"]
+    spec = invoke(
+        "chart", "add", sid, "--artifact", q, "--kind", "histogram", "-x", "amount",
+        "--title", "Order amounts", "--bins", "6",
+    )  # fmt: skip
+    assert spec["kind"] == "histogram" and spec["bins"] == 6 and "bins of" in spec["text"]
+    result = runner.invoke(
+        cli_app,
+        ["chart", "add", sid, "--artifact", q, "--kind", "histogram", "-x", "amount",
+         "-y", "K", "--title", "wrong"],
+    )  # fmt: skip
+    assert result.exit_code != 0 and "takes no y column" in result.output
+
+    server = build_server(workspace)
+
+    def call(name, args):
+        result = asyncio.run(server.call_tool(name, args))
+        return json.loads(result.content[0].text)
+
+    out = call(
+        "chart_add",
+        {"session_id": sid, "qid": q, "kind": "histogram", "x": "AMOUNT", "title": "via mcp"},
+    )
+    assert out["kind"] == "histogram" and "█" in out["text"]
+    listed = asyncio.run(server.call_tool("chart_list", {"session_id": sid}))
+    assert len(listed.content) == 2  # one content item per chart
+
+
+def test_session_page_shows_histogram(workspace):
+    s = Session.create(
+        workspace,
+        workflow="table-health",
+        targets=["DB.S.T1"],
+        guard=GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0),
+        guard_profile="moderate",
+    )
+    q = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=_hist_rows()))["qid"]
+    add_chart(s, q, "histogram", "AMOUNT", [], "Amounts, binned")
+    client = TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{s.id}?t={TOKEN}").text
+    assert "Amounts, binned" in page and "<rect" in page
+    chart_page = client.get(f"/session/{s.id}/chart/c_001?t={TOKEN}").text
+    assert "histogram" in chart_page and "<rect" in chart_page

@@ -128,6 +128,17 @@ def render_text(spec: dict, data: dict) -> str:
         return f"{header}\n(no plottable rows)"
     if spec["kind"] == "bar":
         body = _text_bar(points)
+    elif spec["kind"] == "histogram":
+        body = _text_bar(points)
+        stats = data.get("stats") or {}
+        if stats:
+            body.append(
+                f"{data.get('values', 0)} values · {data.get('bins', len(points))} "
+                f"bin{'s' if data.get('bins', len(points)) != 1 else ''} of "
+                f"{_num_str(data['width'])} · min {_num_str(stats['min'])} · "
+                f"median {_num_str(stats['median'])} · mean {_num_str(stats['mean'])} · "
+                f"max {_num_str(stats['max'])}"
+            )
     elif spec["kind"] == "line":
         body = _text_line(points, y_names)
     else:

@@ -81,6 +81,27 @@ cites a query id. Presentation is a *report profile* in the library
 text renders in its own labeled section above the facts. On close, the full
 report publishes into the library's `records/`.
 
+## Resuming a session
+
+A session outlives any agent's context window. When a harness picks a session
+up cold — a new chat, a compacted window, a second worker joining late — one
+call replaces re-deriving the state from six list commands, or re-running
+queries whose results are already cached:
+
+```bash
+grayson session brief <sid>        # MCP: session_brief
+```
+
+The brief is assembled from the record, never from prose: identity and scope,
+the guard budget used, the setup answers, every checkpoint with its evidence
+(waived ones with their reason), every finding with the user's verdict and a
+rejection's reason, every intervention with the user's answer, proposals with
+their verification, the newest twenty executed queries with labels and
+tables, the charts, the narrative draft, and readiness's next action. `text`
+is the readable form; the JSON around it is the same content typed. The
+protocol tells agents to read it first and to re-ask nothing it records — the
+intervention answers in particular are facts a restart would otherwise lose.
+
 ## Honest endings
 
 Two exits a gate must allow, or it teaches agents to manufacture evidence:
@@ -170,9 +191,33 @@ null_rate ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁████�
        x: 08-01 → 08-24
 ```
 
-Kinds: `bar`, `line`, `scatter`; up to three series (the palette is
-validated colorblind-safe at three — more dimensions means more charts).
-`grayson chart render --out chart.svg` exports SVGs.
+Kinds: `bar`, `line`, `scatter`, `histogram`; up to three series (the
+palette is validated colorblind-safe at three — more dimensions means more
+charts). `grayson chart render --out chart.svg` exports SVGs.
+
+A **histogram** takes the raw values of one numeric column and bins them
+locally — no `GROUP BY`, no `--y`: `chart add <sid> --artifact q_0009 --kind
+histogram -x amount --title "Order amounts"`. The bin count defaults from the
+row count (Sturges' rule, five to thirty bins) and `--bins N` overrides it;
+either way the edges are rounded to widths a reader can hold (1, 2, 2.5, 5 ×
+a power of ten), so the count is near the ask rather than on it. The artifact
+is whatever the query returned, so `SELECT amount FROM … SAMPLE (10000 ROWS)`
+is the usual shape, and the terminal rendering states how many values were
+binned with their min, median, mean, and max:
+
+```
+Order amounts  [histogram · q_0009]
+          50–100 │███▋ 46
+         100–150 │███████████▍ 144
+         150–200 │█████████████████████████ 318
+         200–250 │████████████████████████████████████ 460
+ …
+1999 values · 12 bins of 50 · min -2 · median 251.8 · mean 251.5 · max 503.5
+```
+
+Counts of categories are a bar chart, not a histogram; values you already
+bucketed in SQL (`FLOOR(amount / 50) * 50`) are a bar chart with a numeric
+x, which stays vertical.
 
 Any chart tile enlarges in a lightbox on click (← → walk the charts in the
 order the agent made them), and `⤢` opens the chart's own page: full size,
