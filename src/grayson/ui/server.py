@@ -1088,7 +1088,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail=f"no intervention '{iid}'")
         return templates.TemplateResponse(
-            request, "intervention.html", {"nav": "sessions", "sid": sid, "item": item}
+            request,
+            "intervention.html",
+            {"nav": "sessions", "sid": sid, "s": s.summary(), "item": item},
         )
 
     @app.post("/session/{sid}/intervention/{iid}/respond")
@@ -1110,6 +1112,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 {
                     "nav": "sessions",
                     "sid": sid,
+                    "s": s.summary(),
                     "item": item,
                     "error": str(e.args[0] if e.args else e),
                 },

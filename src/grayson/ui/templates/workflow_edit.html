@@ -1,14 +1,11 @@
 {% extends "base.html" %}
 {% block title %}grayson — edit {{ name }}{% endblock %}
 {% block content %}
-<div class="faint small" style="margin-bottom: 8px;">
-  <a href="/workflows?t={{ token }}">Workflows</a> /
-  <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a> / edit</div>
+<nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
+  <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
+  <span>edit</span></nav>
 
-<h1>Edit {{ name }}</h1>
-<div class="muted small">The YAML is the source of truth — it validates on save
-  (parse, template shape, findings schema, checkpoint keys, ownership) and syncs to
-  the team library on push.</div>
+<h1>Edit {{ name }} {{ help("workflow_yaml") }}</h1>
 
 <form method="post" action="/workflows/{{ name }}/edit?t={{ token }}" style="margin-top: 14px;">
   <textarea name="yaml" rows="26" spellcheck="false"

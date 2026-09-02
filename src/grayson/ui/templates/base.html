@@ -112,6 +112,9 @@ main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
 .card.attn { border-color: var(--attn); background:
   linear-gradient(var(--attn-soft), var(--attn-soft)), var(--panel); }
 .card.empty { color: var(--muted); border-style: dashed; }
+a.card { color: inherit; display: block; transition: border-color .15s, transform .15s, box-shadow .15s; }
+a.card:hover { text-decoration: none; border-color: var(--muted); transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .10); }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .banner { padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 14px;
   border: 1px solid var(--bad); color: var(--bad); background: var(--bad-soft); }
@@ -139,10 +142,6 @@ details.findcard.superseded[open] { opacity: .85; }
   to { opacity: 1; transform: none; }
 }
 .chartcard.chart-enter { animation: chart-in .5s cubic-bezier(.2, .7, .3, 1); }
-@media (prefers-reduced-motion: reduce) {
-  .chartcard.chart-enter { animation: none; }
-  .chartsum .c-caret { transition: none; }
-}
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; display: inline-block; }
 .swatch.s1 { background: var(--viz-s1); }
 .swatch.s2 { background: var(--viz-s2); }
@@ -187,7 +186,9 @@ details.findcard.superseded[open] { opacity: .85; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 15px;
   border-radius: 8px; cursor: pointer; border: 1px solid var(--act);
   background: var(--act); color: var(--act-ink); font-size: 13px; font-weight: 620;
-  font-family: inherit; }
+  font-family: inherit; transition: filter .12s, background .12s, border-color .12s,
+  color .12s, transform .08s; }
+.btn:active { transform: translateY(1px); }
 .btn:hover { filter: brightness(1.08); }
 .btn.secondary { background: transparent; color: var(--act); }
 .btn.secondary:hover { background: var(--act-soft); filter: none; }
@@ -208,6 +209,8 @@ tr:last-child td { border-bottom: none; }
 th { color: var(--muted); font-weight: 600; font-size: 11px;
   text-transform: uppercase; letter-spacing: .07em; }
 td.num { font-variant-numeric: tabular-nums; text-align: right; }
+tr:hover > td { background: var(--act-soft); }
+th, td { transition: background .12s; }
 .scroll { overflow-x: auto; }
 
 /* ---- collapsibles ---------------------------------------------------- */
@@ -224,13 +227,16 @@ details.fold > .fold-body { padding: 2px 18px 14px; border-top: 1px solid var(--
 details.inlinefold > summary { cursor: pointer; color: var(--act); font-size: 12.5px;
   list-style: none; user-select: none; }
 details.inlinefold > summary::-webkit-details-marker { display: none; }
+details.opening > :not(summary) { animation: fade-down .2s ease-out both; }
+@keyframes fade-down { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes fade-in { from { opacity: 0; } }
 
 /* ---- inline help ----------------------------------------------------- */
 .help { position: relative; display: inline-flex; }
 .help > span.h-i { width: 15px; height: 15px; border-radius: 50%; font-size: 10.5px;
   display: inline-flex; align-items: center; justify-content: center; cursor: help;
   border: 1px solid var(--faint); color: var(--faint); font-weight: 650;
-  font-style: normal; }
+  font-style: normal; transition: color .12s, border-color .12s; }
 .help:hover > span.h-i { border-color: var(--act); color: var(--act); }
 .help > .h-pop { display: none; position: absolute; left: 50%; bottom: calc(100% + 8px);
   transform: translateX(-50%); width: 270px; background: var(--panel3);
@@ -238,7 +244,12 @@ details.inlinefold > summary::-webkit-details-marker { display: none; }
   padding: 10px 12px; font-size: 12.5px; line-height: 1.5; color: var(--ink-2);
   z-index: 20; box-shadow: 0 6px 24px rgba(0,0,0,.35); font-weight: 400;
   text-transform: none; letter-spacing: normal; white-space: normal; }
-.help:hover > .h-pop, .help:focus-within > .h-pop { display: block; }
+.help:hover > .h-pop, .help:focus-within > .h-pop { display: block;
+  animation: fade-in .14s ease-out; }
+/* hung off a heading, the popover opens down and to the right, clear of the
+   page edge and the sticky header */
+h1 > .help > .h-pop, h2 > .help > .h-pop { left: 0; transform: none;
+  bottom: auto; top: calc(100% + 8px); }
 
 /* ---- agent-text sections --------------------------------------------- */
 .sections .sec { margin: 10px 0; }
@@ -247,17 +258,113 @@ details.inlinefold > summary::-webkit-details-marker { display: none; }
 .sections .sec-b { color: var(--ink-2); }
 .sections .sec:first-child { margin-top: 4px; }
 
-/* ---- stage steps ----------------------------------------------------- */
-.steps { display: flex; align-items: center; gap: 0; flex-wrap: wrap; margin: 10px 0 4px; }
-.step { display: flex; align-items: center; gap: 6px; font-size: 12px;
-  color: var(--faint); }
-.step .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border);
-  flex: none; }
-.step.done { color: var(--muted); } .step.done .dot { background: var(--ok); }
-.step.now { color: var(--ink); font-weight: 650; } .step.now .dot {
-  background: var(--brand-accent); box-shadow: 0 0 0 3px var(--act-soft); }
-.step + .step::before { content: ""; width: 22px; height: 1px; background: var(--border);
-  margin: 0 8px; }
+/* ---- page header & breadcrumbs -------------------------------------- */
+.crumbs { display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--faint); margin-bottom: 8px; }
+.crumbs a { color: var(--muted); }
+.crumbs a:hover { color: var(--ink); text-decoration: none; }
+.crumbs .sep { color: var(--border); }
+.crumbs .badge { margin-left: 2px; }
+.pagehead { display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.pagehead .titles { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pagehead .titlerow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pagehead .titlerow h1 { margin: 0; }
+.pagehead .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lede { color: var(--muted); font-size: 13px; max-width: 640px; }
+
+/* ---- stage timeline ---------------------------------------------------
+   One node per stage on a continuous track; the track fills as stages
+   complete, the current node breathes, gates sit on the track before the
+   stage they guard. A stage advance between two loads of the live page is
+   animated by the base script (class tl-advance). */
+.timeline { position: relative; display: flex; align-items: flex-start; margin: 14px 0 4px;
+  padding: 16px 10px 12px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow-x: auto; }
+.tl-help { position: absolute; top: 7px; right: 9px; }
+.tl-step { position: relative; flex: 1 1 0; min-width: 78px; display: flex;
+  flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.tl-step::before, .tl-step::after { content: ""; position: absolute; top: 10px;
+  height: 2px; background: var(--border); }
+.tl-step::before { left: 0; right: 50%; }
+.tl-step::after { left: 50%; right: 0; }
+.tl-step:first-child::before, .tl-step:last-child::after { display: none; }
+.tl-step.done::before, .tl-step.done::after, .tl-step.now::before { background: var(--ok); }
+.tl-node { position: relative; z-index: 1; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--panel);
+  border: 2px solid var(--border); color: var(--act-ink);
+  transition: background .2s, border-color .2s; }
+.tl-node svg { width: 12px; height: 12px; }
+.tl-step.done .tl-node { background: var(--ok); border-color: var(--ok); }
+.tl-step.now .tl-node { border-color: var(--brand-accent); }
+.tl-step.now .tl-node::after { content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--brand-accent); }
+.tl-step.now:not(.final) .tl-node::before { content: ""; position: absolute; inset: -2px;
+  border-radius: 50%; border: 2px solid var(--brand-accent);
+  animation: tl-breathe 2.6s ease-out infinite; }
+@keyframes tl-breathe {
+  0% { transform: scale(1); opacity: .75; }
+  70%, 100% { transform: scale(2.2); opacity: 0; }
+}
+/* a closed session ends the track in its outcome colour, without the pulse */
+.tl-step.final .tl-node { background: var(--ok); border-color: var(--ok); }
+.tl-step.final .tl-node::after { display: none; }
+.tl-step.final.findings .tl-node { background: var(--act); border-color: var(--act); }
+.tl-step.final.abandoned .tl-node { background: var(--todo); border-color: var(--todo); }
+.tl-label { font-size: 11.5px; font-weight: 600; color: var(--faint);
+  text-transform: capitalize; letter-spacing: .01em; transition: color .2s; }
+.tl-step.done .tl-label { color: var(--muted); }
+.tl-step.now .tl-label { color: var(--ink); }
+.tl-sub { font-size: 11px; color: var(--muted); margin-top: -6px; }
+.tl-gate { position: absolute; z-index: 2; top: 2px; left: -9px; width: 18px; height: 18px;
+  border-radius: 5px; display: grid; place-items: center; background: var(--panel);
+  border: 1px solid var(--border); color: var(--faint); cursor: help;
+  transition: color .2s, border-color .2s, background .2s; }
+.tl-gate svg { width: 11px; height: 11px; }
+.tl-gate.ready { color: var(--attn); border-color: var(--attn); background: var(--attn-soft); }
+.tl-gate.passed { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+/* stage advance: each segment fills left to right — the trailing half of the
+   node just passed, then the leading half of the next, then that node pops.
+   --k is the step's position in the advance, set by the base script. */
+.tl-step.tl-advance.done::after {
+  transform-origin: left; animation: tl-fill .25s ease-out both;
+  animation-delay: calc(var(--k, 0) * .6s); }
+.tl-step.tl-advance:not(.from)::before {
+  transform-origin: left; animation: tl-fill .25s ease-out both;
+  animation-delay: calc((var(--k, 0) - 1) * .6s + .25s); }
+.tl-step.tl-advance:not(.from) .tl-node {
+  animation: tl-pop .4s cubic-bezier(.2, .7, .3, 1.4) both;
+  animation-delay: calc((var(--k, 0) - 1) * .6s + .45s); }
+@keyframes tl-fill { from { transform: scaleX(0); } }
+@keyframes tl-pop { from { transform: scale(.55); } }
+
+/* ---- compact stage bar (session cards) --------------------------------- */
+.stagebar { display: flex; align-items: center; gap: 3px; margin-top: 10px; }
+.stagebar i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); }
+.stagebar i.done { background: var(--ok); }
+.stagebar i.now { background: var(--brand-accent); }
+.stagebar .lbl { margin-left: 7px; font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: capitalize; white-space: nowrap; }
+
+/* ---- choices (interventions) ------------------------------------------ */
+.choices { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.choices.inline { flex-direction: row; flex-wrap: wrap; }
+.choice { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel2);
+  cursor: pointer; font-size: 13px; color: var(--ink-2);
+  transition: border-color .15s, background .15s, color .15s; }
+.choice:hover { border-color: var(--muted); color: var(--ink); }
+.choice:has(input:checked) { border-color: var(--brand-accent); background: var(--act-soft);
+  color: var(--ink); }
+.choice input { margin: 2px 0 0; flex: none; }
+.statement { border-left: 3px solid var(--attn); padding: 6px 12px; margin: 4px 0 10px;
+  color: var(--ink); font-size: 14px; }
+
+/* ---- spacing utilities ------------------------------------------------ */
+.mt-1 { margin-top: 4px; } .mt-2 { margin-top: 8px; } .mt-3 { margin-top: 12px; }
+.mt-4 { margin-top: 16px; }
+.mb-1 { margin-bottom: 4px; } .mb-2 { margin-bottom: 8px; } .mb-3 { margin-bottom: 12px; }
+.grow { flex: 1; }
 
 /* ---- relationship canvas --------------------------------------------- */
 .relgraph { border: 1px solid var(--border); border-radius: var(--radius);
@@ -289,6 +396,7 @@ details.inlinefold > summary::-webkit-details-marker { display: none; }
 .kv { display: flex; gap: 8px; flex-wrap: wrap; }
 .kv .item { background: var(--panel2); border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm); padding: 5px 10px; font-size: 12.5px; }
+.kv > form.item { flex: 1 1 auto; }   /* a control strip moves to a new row whole, then fills it */
 .kv .item b { color: var(--muted); font-weight: 600; font-size: 11px;
   text-transform: uppercase; letter-spacing: .06em; margin-right: 5px; }
 .chip { display: inline-block; background: var(--panel2); border: 1px solid var(--border-soft);
@@ -317,6 +425,8 @@ input[type=text], input[type=search], textarea, select { background: var(--panel
 input[type=search] { max-width: 380px; }
 input:focus, textarea:focus, select:focus { outline: none;
   border-color: var(--brand-accent); }
+input[type=checkbox], input[type=radio] { accent-color: var(--brand-accent); width: auto; }
+input, textarea, select { transition: border-color .12s; }
 form.inline { display: inline; }
 .searchrow { display: flex; gap: 8px; align-items: center; margin: 12px 0 16px; }
 dl.props { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; align-items: baseline;
@@ -329,7 +439,10 @@ dl.props dd { margin: 0; color: var(--ink-2); }
 dialog.lightbox { border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--panel); color: var(--ink); padding: 14px 16px;
   width: min(1100px, 94vw); max-height: 92vh; overflow: auto; }
+dialog.lightbox[open] { animation: dlg-in .22s cubic-bezier(.2, .7, .3, 1); }
+dialog.lightbox[open]::backdrop { animation: fade-in .22s ease-out; }
 dialog.lightbox::backdrop { background: rgba(0, 0, 0, .55); }
+@keyframes dlg-in { from { opacity: 0; transform: translateY(10px) scale(.985); } }
 .lb-body svg { width: 100%; height: auto; display: block; }
 /* chart labels: a shortened tick carries its full text — hover, tap, or focus */
 .chartbody svg text.tick-cut, .lb-body svg text.tick-cut, .chart-large svg text.tick-cut {
@@ -340,6 +453,10 @@ svg text.tick-cut:hover, svg text.tick-cut:focus { fill: var(--ink); outline: no
   font-size: 12px; line-height: 1.5; color: var(--ink-2); pointer-events: none;
   box-shadow: 0 6px 24px rgba(0,0,0,.35); overflow-wrap: anywhere; }
 .viz-tip.mono { font-family: ui-monospace, Consolas, monospace; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
 </style>
 </head>
 <body>
@@ -351,7 +468,7 @@ svg text.tick-cut:hover, svg text.tick-cut:focus { fill: var(--ink); outline: no
     <a class="tab {{ 'active' if nav == 'knowledge' }}" href="/knowledge?t={{ token }}">Knowledge</a>
     <a class="tab {{ 'active' if nav == 'checks' }}" href="/checks?t={{ token }}">Checks</a>
     <a class="tab {{ 'active' if nav == 'records' }}" href="/records?t={{ token }}">Records</a>
-    <span style="flex: 1;"></span>
+    <span class="grow"></span>
     <button class="tab themebtn" type="button" id="themebtn"
       title="Theme: follows your OS unless pinned">◐ auto</button>
     <a class="tab {{ 'active' if nav == 'settings' }}" href="/settings?t={{ token }}"
@@ -484,6 +601,35 @@ svg text.tick-cut:hover, svg text.tick-cut:focus { fill: var(--ink); outline: no
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") { pinned = null; tip.hidden = true; }
   });
+})();
+
+/* Folds ease open only on a user toggle, never on page load: the live views
+   reload every few seconds and must not flicker. */
+document.addEventListener("toggle", function (e) {
+  var d = e.target;
+  if (!d || d.tagName !== "DETAILS" || !d.open) return;
+  d.classList.add("opening");
+  setTimeout(function () { d.classList.remove("opening"); }, 260);
+}, true);
+
+/* Stage timeline: when the stage has advanced since this browser last saw
+   the session, the newly completed track fills in and the nodes pop. */
+(function () {
+  var tl = document.querySelector(".timeline[data-session]");
+  if (!tl) return;
+  var key = "grayson_stage_" + tl.dataset.session;
+  var now = parseInt(tl.dataset.stage, 10);
+  var seen = null;
+  try { seen = localStorage.getItem(key); localStorage.setItem(key, String(now)); } catch (e) {}
+  if (seen === null) return;
+  seen = parseInt(seen, 10);
+  if (!(now > seen)) return;
+  var steps = tl.querySelectorAll(".tl-step");
+  for (var i = Math.max(seen, 0); i <= now && i < steps.length; i++) {
+    steps[i].style.setProperty("--k", String(i - seen));
+    steps[i].classList.add("tl-advance");
+    if (i === seen) steps[i].classList.add("from");
+  }
 })();
 
 /* Collapsible tiles (charts, findings): the server opens the newest few; a

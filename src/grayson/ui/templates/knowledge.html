@@ -4,8 +4,6 @@
 {% block title %}grayson — knowledge{% endblock %}
 {% block content %}
 <h1>Knowledge Library {{ help("knowledge") }}</h1>
-<div class="muted small">What your team knows about its tables — grain, columns,
-  relationships, and confirmed facts. Compounds with every session.</div>
 
 <form class="searchrow" method="get" action="/knowledge">
   <input type="hidden" name="t" value="{{ token }}">
@@ -29,17 +27,14 @@
 
 {% if graph %}
 <h2>Schema map</h2>
-<p class="muted small" style="margin: -4px 0 10px;">Every relationship the library
-  knows about, laid out so nothing overlaps. Click a table to open its record.</p>
 {{ relgraph(graph, token, "relgraph-library", 520) }}
 {% endif %}
 
 <h2>Tables</h2>
 {% if not tables %}
 <div class="card empty">
-  {% if q %}Nothing matches “{{ q }}”.{% else %}No tables described yet. Knowledge grows as
-  agents work — or run the <code>table-onboarding</code> workflow on a table to build its
-  record deliberately.{% endif %}
+  {% if q %}Nothing matches “{{ q }}”.{% else %}No tables described yet. Agents add them as
+  they work; the <code>table-onboarding</code> workflow builds one deliberately.{% endif %}
 </div>
 {% endif %}
 <div class="grid">
@@ -60,7 +55,7 @@
     {% else %}<span class="badge plain">{{ t.completeness.missing | length }} gaps</span>{% endif %}
   </div>
   {% if t.grain %}<div class="ink2 small" style="margin: 6px 0 2px;">{{ t.grain }}</div>{% endif %}
-  <div class="row" style="margin-top: 8px;">
+  <div class="row mt-2">
     {% if t.completeness.columns_total %}
       <span class="badge plain">{{ t.completeness.columns_described }}/{{ t.completeness.columns_total }} columns described</span>{% endif %}
     <span class="badge plain">{{ t.completeness.facts }} fact{{ "s" if t.completeness.facts != 1 }}</span>

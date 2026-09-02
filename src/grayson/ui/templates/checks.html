@@ -1,10 +1,8 @@
 {% extends "base.html" %}
+{% from "_macros.html" import check_status %}
 {% block title %}grayson — checks{% endblock %}
 {% block content %}
 <h1>External checks {{ help("external_checks") }}</h1>
-<div class="muted small">Deterministic checks run by your automation (Airflow, dbt, …)
-  and dropped into the library's <code>checks/</code> folder. Agents see failing checks
-  on their target tables at session start as pre-vetted leads.</div>
 
 <div class="tiles">
   <div class="tile"><div class="num">{{ summary.total_checks }}</div><div class="lbl">Checks on file</div></div>
@@ -56,13 +54,7 @@
 {% for c in summary.checks %}
 <tr>
   <td>{{ c.name }}<div class="faint mono small">{{ c.check_id }}</div></td>
-  <td>
-    {% if c.status == "pass" %}<span class="badge ok">pass</span>
-    {% elif c.status in ["fail", "error"] %}<span class="badge bad">{{ c.status }}</span>
-    {% elif c.status == "warn" %}<span class="badge attn">warn</span>
-    {% else %}<span class="badge plain">{{ c.status }}</span>{% endif %}
-    {% if c.overdue %}<span class="badge attn">overdue</span>{% endif %}
-  </td>
+  <td>{{ check_status(c) }}</td>
   <td class="small">{% for t in c.tables %}
     <a class="mono" href="/knowledge/{{ t }}?t={{ token }}">{{ t }}</a>{{ ", " if not loop.last }}{% endfor %}</td>
   <td class="muted small">{{ c.source }}</td>
@@ -71,9 +63,8 @@
 </tr>
 {% endfor %}
 {% if not summary.checks %}
-<tr><td colspan="5" class="muted">No external check results on file yet — automation
-  (or <code>grayson checks ingest</code>) drops JSON into the library's
-  <code>checks/</code> folder; see its README for the format.</td></tr>
+<tr><td colspan="5" class="muted">No external check results on file yet. Drop JSON into the
+  library's <code>checks/</code> folder, or run <code>grayson checks ingest</code>.</td></tr>
 {% endif %}
 </table>
 </div>

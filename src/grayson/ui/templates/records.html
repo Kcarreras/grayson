@@ -1,10 +1,8 @@
 {% extends "base.html" %}
+{% from "_macros.html" import severity, finding_state, outcome %}
 {% block title %}grayson — records{% endblock %}
 {% block content %}
-<h1>Records</h1>
-<div class="muted small">Every finding and fix across all sessions — the searchable
-  memory of past problems and how they were resolved. Agents search this too
-  (<code>grayson records search</code>).</div>
+<h1>Records {{ help("records") }}</h1>
 
 <form class="searchrow" method="get" action="/records">
   <input type="hidden" name="t" value="{{ token }}">
@@ -20,8 +18,7 @@
 </form>
 
 {% if not records %}
-<div class="card empty">{% if q %}Nothing matches “{{ q }}”.{% else %}No records yet —
-  findings and proposals appear here as sessions produce them.{% endif %}</div>
+<div class="card empty">{% if q %}Nothing matches “{{ q }}”.{% else %}No records yet.{% endif %}</div>
 {% endif %}
 
 {% for r in records %}
@@ -31,15 +28,12 @@
       <b>{{ r.title }}</b></a>
     <span class="row">
       {% if r.kind == "finding" %}
-        <span class="badge {{ 'bad' if r.severity in ['critical','high'] else 'attn' if r.severity == 'medium' else 'plain' }}">{{ r.severity }}</span>
-        {% if r.superseded_by %}<span class="badge plain">superseded by {{ r.superseded_by }}</span>
-        {% elif r.accepted %}<span class="badge ok">accepted</span>{% endif %}
+        {{ severity(r.severity) }}
+        {{ finding_state(r) }}
         {% if r.supersedes %}<span class="badge todo">replaces {{ r.supersedes }}</span>{% endif %}
-        {% if r.rejected %}<span class="badge bad">rejected</span>{% endif %}
       {% elif r.kind == "report" %}
         <span class="badge plain">session report</span>
-        {% if r.outcome == "clean" %}<span class="badge ok">closed clean</span>
-        {% elif r.outcome == "findings" %}<span class="badge plain">closed on findings</span>{% endif %}
+        {{ outcome(r.outcome) }}
       {% else %}
         <span class="badge plain">proposal</span>
         {% if r.verdict == "pass" %}<span class="badge ok">verified</span>

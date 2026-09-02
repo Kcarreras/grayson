@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import severity, finding_state, proposal_status, outcome, agent_text %}
 {% block title %}grayson — {{ record.title }}{% endblock %}
 {% block content %}
 {# evidence chips: query ids are per-session counters, so every chip carries the
@@ -13,7 +14,7 @@
 {% macro evidence_block(ids) %}
 {% set shown = evidence_queries | selectattr("qid", "in", ids) | list %}
 {% if shown %}
-<details class="inlinefold" style="margin-top: 8px;">
+<details class="inlinefold mt-2">
   <summary>Show the {{ shown | length }} cited quer{{ "y" if shown | length == 1 else "ies" }}</summary>
   {% for e in shown %}
   <div style="margin: 8px 0;">
@@ -25,25 +26,23 @@
 </details>
 {% endif %}
 {% endmacro %}
-<p class="small"><a href="/records?t={{ token }}">← Records</a> ·
+<nav class="crumbs"><a href="/records?t={{ token }}">Records</a><span class="sep">/</span>
   {% if from_library %}
-  from a teammate's session <span class="{{ 'mono' if not session_title }}"
-    title="{{ session_id }}">{{ session_title or session_id }}</span>
-  <span class="badge act">team</span>{% if author %} <span class="mono faint">by {{ author }}</span>{% endif %}
+  <span class="{{ 'mono' if not session_title }}" title="{{ session_id }}">{{ session_title or session_id }}</span>
+  <span class="badge act" title="from a teammate's session">team</span>{% if author %}<span class="mono">by {{ author }}</span>{% endif %}
   {% else %}
-  from session <a class="{{ 'mono' if not session_title }}" href="/session/{{ session_id }}?t={{ token }}"
+  <a class="{{ 'mono' if not session_title }}" href="/session/{{ session_id }}?t={{ token }}"
     title="{{ session_id }}">{{ session_title or session_id }}</a>
-  {% endif %}</p>
+  {% endif %}
+  <span class="sep">/</span><span class="mono">{{ record.fid or record.pid or "report" }}</span></nav>
 
 {% if kind == "finding" %}
-<div class="row split">
-  <h1>{{ record.fid }} · {{ record.title }}</h1>
-  <span class="row">
-    <span class="badge {{ 'bad' if record.severity in ['critical','high'] else 'attn' if record.severity == 'medium' else 'plain' }}">{{ record.severity }}</span>
+<div class="pagehead">
+  <div class="titlerow"><h1>{{ record.fid }} · {{ record.title }}</h1></div>
+  <span class="actions">
+    {{ severity(record.severity) }}
     <span class="badge plain">confidence: {{ record.confidence }}</span>
-    {% if record.superseded_by %}<span class="badge plain">superseded by {{ record.superseded_by }}</span>
-    {% elif record.accepted %}<span class="badge ok">accepted</span>{% endif %}
-    {% if record.rejected %}<span class="badge bad">rejected</span>{% endif %}
+    {{ finding_state(record) }}
   </span>
 </div>
 {% if record.rejected %}
@@ -68,9 +67,7 @@
 </div>
 {% endif %}
 <div class="card">
-  <div class="sections">{% for sec in record.payload.summary | sections %}
-    <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
-      <div class="sec-b">{{ sec.body | para }}</div></div>{% endfor %}</div>
+  {{ agent_text(record.payload.summary) }}
   {% if record.payload.extra %}
   <dl class="props">
     {% for k, v in record.payload.extra.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}
@@ -85,20 +82,17 @@
   {{ evidence_block(record.payload.evidence) }}
   {% if record.payload.proposed_remediation %}
   <h2>Suggested remediation</h2>
-  <div class="sections">{% for sec in record.payload.proposed_remediation | sections %}
-    <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
-      <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
+  {{ agent_text(record.payload.proposed_remediation) }}
   {% endif %}
 </div>
 
 {% elif kind == "report" %}
 {% set rs = record.session or {} %}
 {% set ready = record.readiness or {} %}
-<div class="row split">
-  <h1>Session report · {{ rs.title or session_title or session_id }}</h1>
-  <span class="row">
-    {% if rs.outcome == "clean" %}<span class="badge ok">closed clean</span>
-    {% elif rs.outcome == "findings" %}<span class="badge plain">closed on findings</span>
+<div class="pagehead">
+  <div class="titlerow"><h1>Session report · {{ rs.title or session_title or session_id }}</h1></div>
+  <span class="actions">
+    {% if rs.outcome %}{{ outcome(rs.outcome) }}
     {% elif rs.stage %}<span class="badge plain">{{ rs.stage }}</span>{% endif %}
     {% if rs.workflow %}<span class="badge plain">{{ rs.workflow }}</span>{% endif %}
   </span>
@@ -113,14 +107,12 @@
     {% if record.generated_at %}<div class="item"><b>Generated</b>
       <span class="mono">{{ record.generated_at }}</span></div>{% endif %}
   </div>
-  {% if rs.outcome_note %}<div class="ink2 small" style="margin-top: 8px;">{{ rs.outcome_note }}</div>{% endif %}
+  {% if rs.outcome_note %}<div class="ink2 small mt-2">{{ rs.outcome_note }}</div>{% endif %}
 </div>
 {% if record.narrative %}
 <h2>Narrative</h2>
 <div class="card">
-  <div class="sections">{% for sec in record.narrative | sections %}
-    <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
-      <div class="sec-b">{{ sec.body | para }}</div></div>{% endfor %}</div>
+  {{ agent_text(record.narrative) }}
 </div>
 {% endif %}
 {% if record.checkpoints %}
@@ -161,23 +153,17 @@
 
 {% else %}
 {% set payload = record.payload or {} %}
-<div class="row split">
-  <h1>{{ record.pid }} · {{ record.title }}</h1>
-  <span class="row">
+<div class="pagehead">
+  <div class="titlerow"><h1>{{ record.pid }} · {{ record.title }}</h1></div>
+  <span class="actions">
     <span class="badge plain">{{ "file diff" if record.kind == "file_diff" else "DDL" }}</span>
-    {% if record.status == "verified" %}<span class="badge ok">verified</span>
-    {% elif record.status == "verification_failed" %}<span class="badge bad">verification failed</span>
-    {% else %}<span class="badge plain">{{ record.status }}</span>{% endif %}
+    {{ proposal_status(record.status) }}
   </span>
 </div>
 <div class="card">
   {% if record.finding_fid %}<div class="faint small">addresses finding
     <span class="chip">{{ record.finding_fid }}</span></div>{% endif %}
-  {% if payload.rationale %}
-  <div class="sections">{% for sec in payload.rationale | sections %}
-    <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
-      <div class="sec-b">{{ sec.body }}</div></div>{% endfor %}</div>
-  {% endif %}
+  {% if payload.rationale %}{{ agent_text(payload.rationale) }}{% endif %}
   {% if record.kind == "file_diff" %}
     <div class="muted small mono">target file: {{ payload.target_file }}</div>
     {% if payload.diff %}<pre>{{ payload.diff }}</pre>{% endif %}
@@ -206,12 +192,11 @@
   <summary>Remove from the library</summary>
   <div class="fold-body">
     <div class="muted small" style="margin: 8px 0 10px;">
-      Session <span class="mono">{{ session_id }}</span> has <b>{{ removal.count }}</b> published
-      record{{ "s" if removal.count != 1 }} in the team library{% if removal.authors %}
-      (by {{ removal.authors | join(", ") }}){% endif %}. They are removed together, as one
-      library commit that names who did it and why; <code>git revert</code> restores them.
-      {% if not from_library %}The session itself stays in this workspace — delete it from
-      its own page.{% endif %}
+      Session <span class="mono">{{ session_id }}</span> published <b>{{ removal.count }}</b>
+      record{{ "s" if removal.count != 1 }} to the team library{% if removal.authors %}
+      (by {{ removal.authors | join(", ") }}){% endif %}. They go together, in one library
+      commit naming you and your reason; <code>git revert</code> restores them.
+      {% if not from_library %}The session itself stays in this workspace.{% endif %}
       {% if not removal.allowed %}<div class="attn-text" style="margin-top: 6px;">
         Not yours to remove: {{ removal.reason }}.</div>{% endif %}
     </div>

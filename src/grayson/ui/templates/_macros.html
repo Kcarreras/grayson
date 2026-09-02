@@ -1,0 +1,92 @@
+{# Shared presentation macros. One definition per visual rule so the same
+   state reads the same on every page: severity colours, check statuses,
+   finding and proposal states, agent prose, and the session stage timeline. #}
+
+{% macro severity(sev) -%}
+<span class="badge {{ 'bad' if sev in ['critical', 'high'] else 'attn' if sev == 'medium' else 'plain' }}">{{ sev }}</span>
+{%- endmacro %}
+
+{% macro check_status(c) -%}
+{% if c.status == "pass" %}<span class="badge ok">pass</span>
+{% elif c.status in ["fail", "error"] %}<span class="badge bad">{{ c.status }}</span>
+{% elif c.status == "warn" %}<span class="badge attn">warn</span>
+{% else %}<span class="badge plain">{{ c.status }}</span>{% endif %}
+{% if c.overdue %}<span class="badge attn">overdue</span>{% endif %}
+{%- endmacro %}
+
+{% macro query_status(status) -%}
+{% if status == "executed" %}<span class="badge ok">executed</span>
+{% elif status == "rejected" %}<span class="badge bad">rejected</span>
+{% else %}<span class="badge attn">{{ status }}</span>{% endif %}
+{%- endmacro %}
+
+{# a finding's lifecycle badges: supersession first, then the human's verdict #}
+{% macro finding_state(f) -%}
+{% if f.superseded_by %}<span class="badge plain">superseded by {{ f.superseded_by }}</span>
+{% elif f.accepted %}<span class="badge ok">accepted</span>{% endif %}
+{% if f.rejected %}<span class="badge bad">rejected</span>{% endif %}
+{%- endmacro %}
+
+{% macro proposal_status(status) -%}
+{% if status == "proposed" %}<span class="badge attn">awaiting decision</span>
+{% elif status == "approved" %}<span class="badge act">approved</span>
+{% elif status == "applied" %}<span class="badge act">applied</span>
+{% elif status == "verified" %}<span class="badge ok">verified</span>
+{% elif status == "verification_failed" %}<span class="badge bad">verification failed</span>
+{% elif status == "rejected" %}<span class="badge bad">rejected</span>
+{% else %}<span class="badge plain">{{ status }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro outcome(o, note="") -%}
+{% if o == "clean" %}<span class="badge ok">closed clean</span>
+{% elif o == "findings" %}<span class="badge plain">closed on findings</span>
+{% elif o == "abandoned" %}<span class="badge todo"{% if note %} title="{{ note }}"{% endif %}>abandoned</span>{% endif %}
+{%- endmacro %}
+
+{# agent prose: "Heading: body" runs become labelled sections, bodies are
+   broken into readable paragraphs #}
+{% macro agent_text(text) -%}
+<div class="sections">{% for sec in text | sections %}
+  <div class="sec">{% if sec.heading %}<div class="sec-h">{{ sec.heading }}</div>{% endif %}
+    <div class="sec-b">{{ sec.body | para }}</div></div>{% endfor %}</div>
+{%- endmacro %}
+
+{# The session stage timeline. Gates sit on the track before the stage they
+   guard: evidence before review, human approval before fixes. A gate reads
+   passed once the stage is reached, ready when its condition holds, and
+   blocked otherwise. The step markup carries data-stage so the base script
+   can animate a stage advance between two loads of the live page. #}
+{% macro stage_timeline(s, stages, readiness, findings) -%}
+{% set reached = stages.index(s.stage) %}
+{% set accepted = findings | selectattr("accepted") | rejectattr("superseded_by") | list | length %}
+{% set closed = s.stage == "closed" %}
+<div class="timeline" data-stage="{{ reached }}" data-session="{{ s.id }}">
+  {% for st in stages %}
+  {% set state = "now" if loop.index0 == reached else "done" if loop.index0 < reached else "todo" %}
+  <div class="tl-step {{ state }}{% if closed and st == 'closed' %} final {{ s.outcome or '' }}{% endif %}" style="--i: {{ loop.index0 }};">
+    {% if st == "review" %}
+    {% set g = "passed" if reached >= loop.index0 else "ready" if readiness.checks_complete else "blocked" %}
+    <span class="tl-gate {{ g }}" title="Evidence gate — review opens once every required checkpoint is complete or waived ({{ g }})">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg></span>
+    {% elif st == "fixes" %}
+    {% set g = "passed" if reached >= loop.index0 else "ready" if accepted else "blocked" %}
+    <span class="tl-gate {{ g }}" title="Human approval — fixes open once you accept a finding ({{ g }})">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5l5.5 9.5H2.5z"/><path d="M8 6.8v2.4"/><circle cx="8" cy="10.9" r="0.3"/></svg></span>
+    {% endif %}
+    <span class="tl-node">{% if state == "done" or (closed and st == "closed") %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>{% endif %}</span>
+    <span class="tl-label">{{ st }}</span>
+    {% if closed and st == "closed" and s.outcome %}<span class="tl-sub">{{ s.outcome }}</span>{% endif %}
+  </div>
+  {% endfor %}
+  <span class="tl-help">{{ help("stage") }}</span>
+</div>
+{%- endmacro %}
+
+{# compact stage strip for a session card: one segment per stage #}
+{% macro stage_bar(stage, stages) -%}
+{% set reached = stages.index(stage) %}
+<div class="stagebar" title="Stage {{ reached + 1 }} of {{ stages | length }}: {{ stage }}">
+  {% for st in stages %}<i class="{{ 'now' if loop.index0 == reached else 'done' if loop.index0 < reached }}"></i>{% endfor %}
+  <span class="lbl">{{ stage }}</span>
+</div>
+{%- endmacro %}
