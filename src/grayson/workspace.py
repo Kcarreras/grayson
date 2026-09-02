@@ -15,6 +15,7 @@ class Workspace:
     def __init__(self, root: Path):
         self.root = root.resolve()
         self._config: WorkspaceConfig | None = None
+        self._config_stamp: tuple[int, int] | None = None
 
     # -- discovery -------------------------------------------------------
 
@@ -60,13 +61,31 @@ class Workspace:
 
     @property
     def config(self) -> WorkspaceConfig:
-        if self._config is None:
-            self._config = WorkspaceConfig.load(self.root / CONFIG_FILENAME)
+        """The workspace's grayson.toml, re-read whenever the file changes on disk.
+
+        Long-lived processes (the MCP server an agent harness starts, the
+        console) hold one Workspace for their whole life. Caching the parsed
+        config forever would mean a guard profile edited in the console after
+        the harness launched never reaches sessions the agent starts through
+        MCP — they would snapshot the stale numbers. The cache is keyed on the
+        file's mtime and size, so an edit through any surface (console, CLI,
+        a text editor) is picked up on the next read at the cost of a stat."""
+        path = self.root / CONFIG_FILENAME
+        try:
+            st = path.stat()
+            stamp: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            stamp = None
+        if self._config is None or stamp != self._config_stamp:
+            self._config = WorkspaceConfig.load(path)
+            self._config_stamp = stamp
         return self._config
 
     def reload_config(self) -> WorkspaceConfig:
-        """Drop the cached config after an on-disk edit (Settings page, CLI)."""
+        """Drop the cached config unconditionally (an on-disk edit is already
+        picked up by `config` itself; this forces it regardless of mtime)."""
         self._config = None
+        self._config_stamp = None
         return self.config
 
     @property

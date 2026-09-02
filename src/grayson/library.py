@@ -31,6 +31,95 @@ _FETCH_TTL_SECONDS = 60.0
 _REMOTE_RE = re.compile(r"^[\w.-]+@[\w.-]+:")  # scp-style git remote (git@host:org/repo)
 
 
+#: one README per asset directory, so a browser of the repo (GitHub, a file
+#: manager, a new teammate) sees what each folder is for without grayson.
+#: checks/ gets its own, format-heavy README from grayson.checks.
+FOLDER_READMES: dict[str, str] = {
+    "knowledge": """\
+# knowledge/
+
+What the team knows about tables, as one markdown document per table at
+`<db>/<schema>/<table>.md`, plus `glossary.md` for shared definitions.
+
+Each document carries structured base descriptors (grain, columns,
+relationships, freshness, owners), dated definition observations, and
+free-form facts. Every fact has a status — `proposed`, `data_inferred`, or
+`user_confirmed` — and an author. Agents write proposed and data-inferred
+facts; only a human confirms one (console table page, or
+`grayson knowledge confirm`).
+
+Sessions read this at start, so what one investigation learned briefs the
+next. Edit by hand freely; `grayson library doctor` reports anything that
+would not parse.
+""",
+    "views": """\
+# views/
+
+The QA view library: reusable, analysis-ready SQL views that agents can query
+without ever holding DDL rights.
+
+- `registry.yaml` — one entry per view: name, purpose, source tables, base
+  files (where the underlying definition logic lives in your work repos), the
+  DDL file, created_at, and the source tables' `last_altered` at creation.
+- `ddl/*.sql` — the `CREATE VIEW` statements themselves.
+
+At session start grayson matches registry entries to the session's target
+tables: matching views enter the session's query scope automatically (even
+under strict scope), and the coverage check reports which targets have no
+view yet. Agents *propose* views (`grayson views propose`); a human creates
+them in the warehouse and registers them (`grayson views register`), which
+is what lands here.
+""",
+    "workflows": """\
+# workflows/
+
+Workflow templates: the investigation types agents can run (`table-health`,
+`bug-hunter`, `table-onboarding`, …), each a YAML file naming the
+checkpoints a session must clear, the setup inputs to ask the user for, and
+a suggested guard profile and scope.
+
+A file here with the same name as a built-in template overrides it; a new
+name adds a custom workflow. Forked workflows (`grayson workflow fork`) land
+here too, so a team's refinements travel with the library.
+""",
+    "records": """\
+# records/
+
+Published session output — the durable, searchable record of what was found
+and fixed. Sessions themselves stay local to each workspace (query cache,
+live progress, interventions never leave it); what publishes here, at the
+human-approved moments, is the distilled result:
+
+- `<session-id>/<record-id>.json` — an accepted finding, or a fix with its
+  verification, stamped with author and the queries it cites as evidence.
+- `<session-id>/report.md` and `report.json` — the session's full report,
+  written when the session closes.
+
+`grayson records search` and the console's Records page read this folder
+across everyone's sessions. Records are removed as a unit by their author or
+a library admin (`grayson records delete <sid>`), never edited in place.
+
+The `reports/` folder next door does not hold reports; it holds the
+*profiles* that decide how reports render.
+""",
+    "reports": """\
+# reports/
+
+Report **profiles**, not reports. Rendered reports live in
+`records/<session-id>/report.md`.
+
+Each `*.yaml` here is a presentation preference for session reports: section
+order and inclusion, `engineering` or `stakeholder` audience, a header and
+footer. `default.yaml` is used when a session closes; pick another with
+`grayson session report --profile <name>`.
+
+Report *facts* — checkpoints, findings, evidence, query statistics — are
+built deterministically from the session record and are not configurable
+from here; a profile only changes how they are laid out.
+""",
+}
+
+
 def init_library(path: Path, admins: list[str] | None = None) -> Path:
     """Scaffold a fresh team library repo (empty asset dirs + README).
 
@@ -61,17 +150,40 @@ def init_library(path: Path, admins: list[str] | None = None) -> Path:
     glossary = path / "knowledge" / "glossary.md"
     if not glossary.exists():
         glossary.write_text("# Glossary\n\nShared team definitions.\n", encoding="utf-8")
+    for folder, text in FOLDER_READMES.items():
+        folder_readme = path / folder / "README.md"
+        if not folder_readme.exists():
+            folder_readme.write_text(text, encoding="utf-8")
     readme = path / "README.md"
     if not readme.exists():
-        readme.write_text(
-            "# grayson team library\n\n"
-            "Shared knowledge, QA views, workflow templates, and external check "
-            "results for grayson.\n"
-            "Link a workspace to a local clone of this repo via `[library] path` "
-            "in its `grayson.toml`.\n",
-            encoding="utf-8",
-        )
+        readme.write_text(LIBRARY_README, encoding="utf-8")
     return path
+
+
+LIBRARY_README = """\
+# grayson team library
+
+Shared knowledge, QA views, workflow templates, external check results,
+report profiles, and published session records for grayson. Link a workspace
+to a local clone of this repo with `grayson library link <url>` (or
+`[library] path` in its `grayson.toml`).
+
+- `knowledge/` — one document per table (descriptors, definitions, facts with
+  provenance) plus `glossary.md`. Agents propose; humans confirm.
+- `views/` — the QA view library: `registry.yaml` + `ddl/*.sql`. Humans
+  register the views agents proposed.
+- `workflows/` — workflow templates: overrides of the built-ins and custom
+  investigation types.
+- `checks/` — external check results as JSON (Airflow, dbt, …), written by
+  automation.
+- `records/` — published session output: accepted findings, verified fixes,
+  and each closed session's `report.md`.
+- `reports/` — report *profiles* (`*.yaml`): how reports render. The reports
+  themselves are in `records/`.
+
+Each folder has its own README with the format. `grayson library doctor`
+checks that everything here still parses.
+"""
 
 
 def library_root(workspace: Workspace) -> Path:

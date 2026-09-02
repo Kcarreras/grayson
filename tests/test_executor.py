@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from grayson.executor.snow import classify_failure, metadata_query, parse_snow_json
+from grayson.executor.snow import (
+    classify_failure,
+    explain_timeout,
+    metadata_query,
+    parse_snow_json,
+)
 
 
 def test_parse_flat_rows():
@@ -51,3 +56,26 @@ def test_metadata_query_rejects_injection_attempts():
     assert metadata_query(["bad'name.s.t"]) is None
     assert metadata_query(["db.s.t' OR '1'='1"]) is None
     assert metadata_query(["not_qualified"]) is None
+
+
+_SNOW_TIMEOUT = (
+    "000630 (57014): Statement reached its statement or warehouse timeout of 300 "
+    "second(s) and was canceled."
+)
+
+
+def test_explain_timeout_names_a_lower_warehouse_cap():
+    note = explain_timeout(_SNOW_TIMEOUT, 800)
+    assert "asked for 800s" in note and "enforced 300s" in note
+    assert "warehouse" in note
+
+
+def test_explain_timeout_owns_the_guard_timeout():
+    note = explain_timeout(_SNOW_TIMEOUT, 300)
+    assert "session guard's 300s" in note
+    assert "grayson session guard" in note
+
+
+def test_explain_timeout_silent_without_a_number_or_a_guard():
+    assert explain_timeout("Statement reached its statement or warehouse timeout", 800) == ""
+    assert explain_timeout(_SNOW_TIMEOUT, 0) == ""

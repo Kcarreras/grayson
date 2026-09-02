@@ -255,6 +255,20 @@ grayson session budget <id> --cap 200
 Both take effect from the next statement and land in the audit trail as
 `guard_changed` / `budget_changed` events.
 
+Two things can make a query time out sooner than the profile says:
+
+- **The session predates the edit.** A profile saved on the Settings page
+  reaches sessions started after the save (through the CLI and through a
+  running MCP server alike — grayson re-reads `grayson.toml` when the file
+  changes). A session already running keeps its snapshot until you move it
+  with `grayson session guard`.
+- **Snowflake enforces a lower limit.** The guard sets
+  `STATEMENT_TIMEOUT_IN_SECONDS` at session level, but Snowflake applies the
+  lowest non-zero value across the session and the warehouse (and the user
+  and account levels above). A warehouse capped at 300s cancels at 300s
+  whatever the profile says; only a Snowflake admin can raise that. The
+  timeout error grayson returns names which of the two fired.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/settings_dark.png">
   <img src="img/settings_light.png" alt="The Settings page: connection, default guard profile, strict scope, editable guard profiles, team library controls">
