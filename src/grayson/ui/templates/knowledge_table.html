@@ -43,16 +43,14 @@
 </div>
 {% for d in doc.definitions if d.snapshot and snapshots.get(d.snapshot) %}
 <details class="fold" style="margin: 8px 0;">
-  <summary class="muted small">Captured copy — <span class="mono">{{ d.snapshot }}</span>
-    (a dated snapshot; the {{ "dbt repo" if d.kind and d.kind.startswith("dbt") else "warehouse" }} is the authority)</summary>
+  <summary class="muted small">Captured copy — <span class="mono">{{ d.snapshot }}</span></summary>
   <pre class="card scroll small" style="margin-top: 6px; white-space: pre; overflow-x: auto;">{{ snapshots[d.snapshot] }}</pre>
 </details>
 {% endfor %}
 {% endif %}
 
 <details class="fold" style="margin: 12px 0;" {{ "open" if not comp.base_complete }}>
-  <summary class="muted small">Describe this table — grain, freshness, owners
-    (your edits, confirmed by definition)</summary>
+  <summary class="muted small">Describe this table</summary>
   <form class="row" method="post" action="/knowledge/{{ doc.table }}/descriptor?t={{ token }}"
         style="gap: 6px; margin-top: 8px; flex-wrap: wrap;">
     <input name="grain" value="{{ doc.grain or '' }}" placeholder="grain — one row per…"
@@ -67,8 +65,6 @@
 
 {% if graph %}
 <h2>Relationships</h2>
-<p class="muted small" style="margin: -4px 0 10px;">This table and everything
-  directly related to it, including how those neighbours relate to each other.</p>
 {{ relgraph(graph, token, "relgraph-table", 440) }}
 {% else %}
 <h2>Relationships</h2>
@@ -148,16 +144,14 @@
 
 <form class="row" method="post" action="/knowledge/{{ doc.table }}/fact?t={{ token }}"
       style="gap: 6px; margin: 8px 0 0;">
-  <input name="fact" placeholder="add a fact you know to be true — recorded as user-confirmed"
+  <input name="fact" placeholder="add a fact (recorded as user-confirmed)"
          style="width: auto; flex: 1 1 320px;">
   <button class="btn secondary sm" type="submit">Add fact</button>
 </form>
 
 {% if doc.open_questions %}
-<h2>Open questions</h2>
+<h2>Open questions {{ help("open_questions") }}</h2>
 <div class="card">
-<div class="muted small" style="margin-bottom: 8px;">Answer what you know — the question
-  retires and your answer becomes a confirmed fact future sessions start with.</div>
 {% for oq in doc.open_questions %}
   <form class="row" method="post" action="/knowledge/{{ doc.table }}/question?t={{ token }}"
         style="gap: 6px; margin: 6px 0; align-items: center;">

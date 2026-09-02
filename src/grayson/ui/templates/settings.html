@@ -1,11 +1,7 @@
 {% extends "base.html" %}
 {% block title %}grayson — settings{% endblock %}
 {% block content %}
-<h1>Settings</h1>
-<div class="muted small">Workspace configuration lives in <code>grayson.toml</code> —
-  committed and reviewable. This page and <code>grayson config</code> are the two ways
-  to change it; agents can only <i>read</i> configuration (via MCP), never change the
-  rails they run inside.</div>
+<h1>Settings {{ help("settings") }}</h1>
 
 <h2>Workspace</h2>
 <div class="card">
@@ -54,10 +50,10 @@
 {% for name in cfg.guard_profiles %}
 <form id="pf-{{ name }}" method="post" action="/settings/profile/{{ name }}?t={{ token }}"></form>
 {% endfor %}
-<div class="faint small" style="margin-top: 8px;">0 = off. Changes apply to new sessions; a running session adjusts its own snapshot from its page.</div>
+<div class="faint small" style="margin-top: 8px;">0 = off. Applies to new sessions; a running session changes its guard on its own page.</div>
 </div>
 
-<h2>Per-workflow session defaults</h2>
+<h2>Per-workflow session defaults {{ help("workflow_defaults") }}</h2>
 <div class="card scroll">
 <table>
 <tr><th>Workflow</th><th>Guard profile</th><th>Strict scope</th><th></th></tr>
@@ -83,7 +79,6 @@
 {% for name in workflow_names %}
 <form id="wd-{{ name }}" method="post" action="/settings/workflow/{{ name }}?t={{ token }}"></form>
 {% endfor %}
-<div class="faint small" style="margin-top: 8px;">Defaults for new sessions of each workflow; an explicit flag at session start still wins, and <i>inherit</i> falls back to the template's suggestion.</div>
 </div>
 
 <h2>Team library</h2>
@@ -106,13 +101,10 @@
     {% endif %}
     <dt>Admins</dt>
     <dd>{% if admins %}<span class="mono">{{ admins | join(", ") }}</span>{% else %}
-      <span class="faint">none set</span>{% endif %}
-      <span class="faint small">— may remove any published record; everyone else removes
-      only their own. Set with <code>grayson library admins add &lt;id&gt;</code>
-      (an admin's action, at a terminal); the list lives in the library's
-      <code>library.toml</code>.{% if admins_changed %} Last changed
-      {{ admins_changed.date[:10] }} by {{ admins_changed.user_id or admins_changed.author }}
-      (<span class="mono">{{ admins_changed.commit }}</span>).{% endif %}</span></dd>
+      <span class="faint">none set</span>{% endif %} {{ help("library_admins") }}
+      <span class="faint small">set with <code>grayson library admins add &lt;id&gt;</code>{% if admins_changed %}
+      · changed {{ admins_changed.date[:10] }} by {{ admins_changed.user_id or admins_changed.author }}
+      (<span class="mono">{{ admins_changed.commit }}</span>){% endif %}</span></dd>
   </dl>
   <div class="row" style="margin-top: 8px; gap: 8px;">
     <form class="inline" method="post" action="/settings/library/pull?t={{ token }}">
@@ -127,16 +119,10 @@
     </form>
   </div>
 {% else %}
-  <div class="ink2 small">Solo mode — knowledge, views, workflows, and checks live in
-    this workspace. To share them with a team, create an <b>empty</b> repo on your git
-    host and run:</div>
+  <div class="ink2 small">Solo mode — nothing is shared yet. To share with a team, create an
+    <b>empty</b> repo on your git host and run:</div>
   <pre>grayson library link git@github.com:your-org/qa-library.git --auto-push</pre>
-  <div class="faint small">grayson clones it, scaffolds the structure, pushes the first
-    commit, and points this workspace at it. (Linking is CLI-only: it needs your git
-    credentials and a clone location.)</div>
 {% endif %}
 </div>
 
-<div class="faint small" style="margin-top: 20px;">Theme (light/dark) is per-browser —
-use the toggle in the top bar; it is stored locally, not in the workspace.</div>
 {% endblock %}

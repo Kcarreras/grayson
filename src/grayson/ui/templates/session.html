@@ -52,10 +52,9 @@
 <div class="card" style="margin: 12px 0;">
   <div class="row" style="gap: 8px; align-items: baseline;">
     {% if s.outcome == "clean" %}<span class="badge ok">closed clean</span>
-    <span class="muted small">Checks cleared and nothing was found worth acting on —
-      confirmed by you, and recorded as a result in its own right.</span>
+    <span class="muted small">Confirmed by you: checks cleared, nothing found.</span>
     {% elif s.outcome == "abandoned" %}<span class="badge todo">abandoned</span>
-    <span class="muted small">Closed without a result, by you. Nothing was published.</span>
+    <span class="muted small">Closed without a result; nothing published.</span>
     {% else %}<span class="badge plain">closed on findings</span>
     <span class="muted small">Closed with accepted findings.</span>{% endif %}
   </div>
@@ -65,10 +64,8 @@
 <div class="card" style="margin: 12px 0;">
   <div class="overline" style="margin-bottom: 6px;">This run came back clean</div>
   <div class="muted small" style="margin-bottom: 10px;">
-    Every required checkpoint is cleared and there is nothing outstanding to judge — the
-    agent found nothing worth acting on. That is a result, not an unfinished session, but
-    it is yours to confirm: closing clean records "we looked and it was fine" so the next
-    session starts knowing it.
+    Every required checkpoint is cleared and nothing is left to judge. Confirm it to record
+    a clean result for future sessions.
   </div>
   <form class="row" method="post" action="/session/{{ s.id }}/close-clean?t={{ token }}">
     <input type="text" name="note" placeholder="what you checked and found sound (optional)"
@@ -85,7 +82,7 @@
      read it and change it (a user action, logged; applies from the next statement) #}
   <form class="item row" method="post" action="/session/{{ s.id }}/guard?t={{ token }}"
         style="gap: 6px; align-items: center;"
-        title="Change the live guard — a user action, logged; applies from the next statement">
+        title="Applies from the next statement; logged">
     <b>Guard profile</b>
     <select name="guard_profile" style="width: auto;">
       {% for name in guard_profiles %}
@@ -103,7 +100,7 @@
      readable from the next statement, logged with who and how #}
   <form class="item row" method="post" action="/session/{{ s.id }}/scope?t={{ token }}"
         style="gap: 6px; align-items: center;"
-        title="Bring tables into the readable scope — a user action, logged; applies from the next statement">
+        title="Applies from the next statement; logged">
     <b>Also in scope</b>
     <span class="mono small">{{ s.scope_extra | join(", ") or "—" }}</span>
     <input type="text" name="tables" placeholder="DB.SCHEMA.TABLE, ..." required
@@ -134,7 +131,7 @@
 
 {% if setup_inputs %}
 <div class="card">
-  <div class="overline" style="margin-bottom: 6px;">Setup inputs — why this session was started</div>
+  <div class="overline" style="margin-bottom: 6px;">Setup inputs {{ help("setup_inputs") }}</div>
   <dl class="props">
     {% for key, value in setup_inputs.items() %}
     <dt>{{ key | replace("_", " ") }}</dt><dd>{{ value }}</dd>
@@ -235,11 +232,7 @@
 {% set open_suggested = readiness.suggested_checks | rejectattr("done") | list %}
 {% if open_suggested and s.stage != "closed" %}
 <div class="card" style="margin-top: 10px;">
-  <div class="overline" style="margin-bottom: 6px;">Suggested — not gates</div>
-  <div class="muted small" style="margin-bottom: 8px;">
-    Fundamentals this workflow expects the agent to consider where they apply. Nothing
-    blocks on them; ones the agent takes up appear above as ordinary checkpoints.
-  </div>
+  <div class="overline" style="margin-bottom: 8px;">Suggested {{ help("suggested_checks") }}</div>
   <div class="row" style="gap: 6px; flex-wrap: wrap;">
     {% for c in open_suggested %}<span class="chip">{{ c.title }}</span>{% endfor %}
   </div>
@@ -271,7 +264,7 @@
   {% if f.rejected %}
   <div class="banner" style="margin-top: 8px;">
     Rejected: {{ f.rejected_reason }}
-    <span class="faint">({{ f.rejected_at }} — the agent sees this reason and continues analysis)</span>
+    <span class="faint">({{ f.rejected_at }})</span>
   </div>
   {% endif %}
   <div class="sections" style="margin: 6px 0;">{% for sec in f.payload.summary | sections %}
@@ -307,7 +300,7 @@
       <form method="post" action="/session/{{ s.id }}/finding/{{ f.fid }}/reject?t={{ token }}"
         class="row" style="margin-top: 8px; gap: 8px; align-items: flex-start;">
         <textarea name="reason" rows="2" required style="max-width: 520px;"
-          placeholder="Why is this finding wrong? The agent continues analysis from this."></textarea>
+          placeholder="Why is this finding wrong?"></textarea>
         <button class="btn danger sm" type="submit">Reject finding</button>
       </form>
     </details>
@@ -349,7 +342,7 @@
     {% endif %}
     {% if p.payload.new_content %}
     <details class="inlinefold" style="margin-top: 6px;">
-      <summary>Show full replacement content (this is what gets applied — review it, not just the diff)</summary>
+      <summary>Show full replacement content (what gets applied)</summary>
       <pre>{{ p.payload.new_content }}</pre></details>
     {% endif %}
   {% else %}
@@ -421,9 +414,8 @@
   <summary>Close this session</summary>
   <div class="fold-body">
     <div class="muted small" style="margin: 8px 0 10px;">
-      Yours, not the agent's — and the gates still decide: with the required checks complete
-      it closes on accepted findings (or clean, if nothing was found); an unready session is
-      refused with the reason shown here.
+      Closes on accepted findings, or clean if there are none. Refused while required
+      checkpoints are open.
     </div>
     <form class="row" method="post" action="/session/{{ s.id }}/close?t={{ token }}"
           onsubmit="return confirm('Close session {{ s.id }}? The outcome is recorded and its report publishes to the library.');">
@@ -438,11 +430,8 @@
   <summary>Abandon this session</summary>
   <div class="fold-body">
     <div class="muted small" style="margin: 8px 0 10px;">
-      For a session that is broken, was started by mistake, or stopped mattering. Yours,
-      not the agent's. It skips the gates on purpose: the outcome is recorded as
-      <i>abandoned</i> with your reason, open questions are cancelled, and nothing is
-      published to the library. Records it already published stay until removed
-      (see <i>Delete this session</i>).
+      Ends a broken or mistaken session without a result. Skips the gates: recorded as
+      <i>abandoned</i> with your reason, open questions cancelled, nothing published.
     </div>
     <form class="row" method="post" action="/session/{{ s.id }}/abandon?t={{ token }}"
           onsubmit="return confirm('Abandon session {{ s.id }}? It closes with no result and publishes nothing.');">
@@ -457,10 +446,8 @@
   <summary>Set stage manually</summary>
   <div class="fold-body">
     <div class="muted small" style="margin: 8px 0 10px;">
-      Your control, not the agent's — it moves this session's stage directly and does not
-      instruct or prompt the agent. Gates apply: <i>review</i> needs all checkpoints
-      complete, <i>fixes</i> needs an accepted finding. <b>force</b> overrides the gates
-      (audited). Normally the agent advances stages itself as evidence accumulates.
+      Moves the stage directly; the agent is not told. Gates apply unless forced (audited).
+      {{ help("stage") }}
     </div>
     <form class="row" method="post" action="/session/{{ s.id }}/advance?t={{ token }}">
       <select name="to" style="width: auto;">
@@ -478,13 +465,12 @@
   <summary>Delete this session</summary>
   <div class="fold-body">
     <div class="muted small" style="margin: 8px 0 10px;">
-      Removes the session from this workspace — audit trail, query cache, charts, everything.
-      Yours, not the agent's, and not undoable.
+      Removes the session and everything under it from this workspace. Not undoable.
       {% if published.count %}
-      This session published <b>{{ published.count }}</b> record{{ "s" if published.count != 1 }}
+      It published <b>{{ published.count }}</b> record{{ "s" if published.count != 1 }}
       to the team library{% if published.authors %} (by {{ published.authors | join(", ") }}){% endif %};
-      {% if published.allowed %}they can go too — as {{ published.as }}, in one library commit
-      that names you and your reason.{% else %}they stay: {{ published.reason }}.{% endif %}
+      {% if published.allowed %}they can go too, as {{ published.as }}, in one library commit
+      naming you and your reason.{% else %}they stay: {{ published.reason }}.{% endif %}
       {% endif %}
     </div>
     <form class="row" method="post" action="/session/{{ s.id }}/delete?t={{ token }}"

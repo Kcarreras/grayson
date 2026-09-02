@@ -206,12 +206,11 @@
   <summary>Remove from the library</summary>
   <div class="fold-body">
     <div class="muted small" style="margin: 8px 0 10px;">
-      Session <span class="mono">{{ session_id }}</span> has <b>{{ removal.count }}</b> published
-      record{{ "s" if removal.count != 1 }} in the team library{% if removal.authors %}
-      (by {{ removal.authors | join(", ") }}){% endif %}. They are removed together, as one
-      library commit that names who did it and why; <code>git revert</code> restores them.
-      {% if not from_library %}The session itself stays in this workspace — delete it from
-      its own page.{% endif %}
+      Session <span class="mono">{{ session_id }}</span> published <b>{{ removal.count }}</b>
+      record{{ "s" if removal.count != 1 }} to the team library{% if removal.authors %}
+      (by {{ removal.authors | join(", ") }}){% endif %}. They go together, in one library
+      commit naming you and your reason; <code>git revert</code> restores them.
+      {% if not from_library %}The session itself stays in this workspace.{% endif %}
       {% if not removal.allowed %}<div class="attn-text" style="margin-top: 6px;">
         Not yours to remove: {{ removal.reason }}.</div>{% endif %}
     </div>

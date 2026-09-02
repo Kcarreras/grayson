@@ -101,8 +101,9 @@ GLOSSARY: dict[str, str] = {
         "them — unrelated queries can't be cited to close checkpoints."
     ),
     "checkpoints": (
-        "The workflow's required steps. Each can only be closed by citing queries "
-        "that really executed — the agent cannot claim unverifiable work."
+        "The workflow's required steps. Each closes only by citing queries that "
+        "really executed and touched the target tables — or is waived by you, "
+        "with a reason, when it does not apply."
     ),
     "evidence": (
         "Ids of queries that actually ran (q_0001, ...). Checkpoints, findings, "
@@ -173,6 +174,52 @@ GLOSSARY: dict[str, str] = {
         "Deterministic checks your automation (Airflow, dbt, ...) runs on a "
         "schedule, dropped into the library as JSON. Agents see failing checks "
         "on their target tables at session start as pre-vetted leads."
+    ),
+    "workflows": (
+        "Core workflows ship with grayson and are read-only. Team workflows live "
+        "in the shared library's workflows/ folder and travel by git; only their "
+        "author edits one — anyone else forks a copy under their own id."
+    ),
+    "workflow_yaml": (
+        "The YAML is the definition. Saving validates it — parse, shape, findings "
+        "schema, checkpoint keys, ownership — and writes it to the team library, "
+        "where it travels on push."
+    ),
+    "session_flow": (
+        "Setup inputs, then analysis, then findings, then fixes. Every gate "
+        "between stages is enforced by grayson's code, not by prompting the agent."
+    ),
+    "suggested_checks": (
+        "Checks the workflow expects an agent to consider where they apply. None "
+        "blocks a stage; those the agent takes up become ordinary checkpoints."
+    ),
+    "findings_schema": (
+        "The shape every finding must validate against, plus at least one "
+        "executed query as evidence. Extra required keys are the workflow's own."
+    ),
+    "setup_inputs": (
+        "What the human supplied when the session started. Checkpoints that "
+        "declare an input work from it."
+    ),
+    "records": (
+        "Every finding, proposal, and session report across all sessions — yours "
+        "and, through the library, the team's. Agents search the same index."
+    ),
+    "open_questions": (
+        "Questions an agent left for a human. Answering one retires it and "
+        "records the answer as a user-confirmed fact for future sessions."
+    ),
+    "settings": (
+        "Stored in grayson.toml, committed with the workspace. Change it here or "
+        "with the grayson config command; agents can read it, never change it."
+    ),
+    "workflow_defaults": (
+        "Defaults for new sessions of each workflow. A flag at session start "
+        "still wins; 'inherit' falls back to the workflow's own suggestion."
+    ),
+    "library_admins": (
+        "Admins may remove any published record; everyone else removes only "
+        "their own. The list lives in the library's library.toml."
     ),
     "charts": (
         "Visuals the agent builds from cached query results as it works — each "

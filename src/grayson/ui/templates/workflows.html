@@ -14,19 +14,17 @@ a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
 </style>
 {% endblock %}
 {% block content %}
-<h1>Workflows</h1>
-<div class="muted small">Core workflows ship with grayson and are canonical; team workflows
-  live in the shared library's <code>workflows/</code> and travel by git.
-  {% if user_id %}Your id: <span class="chip">{{ user_id }}</span>{% else %}
-  No user id set — <code>grayson user set &lt;id&gt;</code> makes your workflows and
-  facts attributable.{% endif %}</div>
+<h1>Workflows {{ help("workflows") }}</h1>
+<div class="muted small">{% if user_id %}Your id: <span class="chip">{{ user_id }}</span>
+  {% else %}No user id set — run <code>grayson user set &lt;id&gt;</code> to sign your
+  workflows and facts.{% endif %}</div>
 
 {% if problems %}
-<div class="banner" style="margin-top: 12px;">{{ problems | length }} library workflow
-  file(s) are not loadable — sessions cannot start from them until they lint clean.</div>
+<div class="banner" style="margin-top: 12px;">{{ problems | length }} workflow
+  file(s) fail lint and cannot start sessions.</div>
 {% endif %}
 
-<h2>Core — canonical, fork to customize</h2>
+<h2>Core</h2>
 <div class="wfgrid">
   {% for row in cores %}
   <a class="card wfcard" href="/workflows/{{ row.tpl.name }}?t={{ token }}">
@@ -83,14 +81,13 @@ a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
     </div>
     <span class="mono faint small">workflows/{{ p.file }}</span>
     <div class="desc muted">{{ p.problem }}</div>
-    <div class="meta"><span class="faint">fix the file (or <code>grayson workflow lint</code>), then push</span></div>
+    <div class="meta"><span class="faint">fix and push — <code>grayson workflow lint</code> checks it</span></div>
   </div>
   {% endfor %}
 
   <div class="card wfcard newcard">
     <div class="row split"><b class="muted">New workflow</b></div>
-    <div class="desc faint">Start blank or fork any workflow — the YAML lands in the
-      team library under your id and travels on push.</div>
+    <div class="desc faint">Blank, or forked from any workflow.</div>
     <form method="post" action="/workflows/new?t={{ token }}" style="display: flex; flex-direction: column; gap: 8px;">
       <input type="text" name="new_name" placeholder="name, e.g. orders-slim-health"
         pattern="[a-z0-9][a-z0-9-]*" required>

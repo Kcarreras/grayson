@@ -239,6 +239,10 @@ details.inlinefold > summary::-webkit-details-marker { display: none; }
   z-index: 20; box-shadow: 0 6px 24px rgba(0,0,0,.35); font-weight: 400;
   text-transform: none; letter-spacing: normal; white-space: normal; }
 .help:hover > .h-pop, .help:focus-within > .h-pop { display: block; }
+/* hung off a heading, the popover opens down and to the right, clear of the
+   page edge and the sticky header */
+h1 > .help > .h-pop, h2 > .help > .h-pop { left: 0; transform: none;
+  bottom: auto; top: calc(100% + 8px); }
 
 /* ---- agent-text sections --------------------------------------------- */
 .sections .sec { margin: 10px 0; }

@@ -41,7 +41,7 @@ def test_setup_inputs_render_on_session_page(client, session):
     session.set_setup_inputs({"rule_statement": "every URL maps to exactly one category"})
     page = client.get(f"/session/{session.id}", params={"t": TOKEN})
     assert page.status_code == 200
-    assert "why this session was started" in page.text
+    assert "Setup inputs" in page.text
     assert "every URL maps to exactly one category" in page.text
 
 
@@ -325,7 +325,7 @@ def test_waive_without_a_reason_is_refused(client, session):
 
 def test_suggested_checks_show_as_breadth_not_gates(client, session):
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert "Suggested — not gates" in page
+    assert "None blocks a stage" in page  # the suggested-checks widget, not a gate
     # they must not count against the checkpoint gate
     assert engine.readiness(session)["required_checks"] == [c["key"] for c in session.checkpoints()]
 

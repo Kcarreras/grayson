@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block title %}grayson — records{% endblock %}
 {% block content %}
-<h1>Records</h1>
-<div class="muted small">Every finding and fix across all sessions — the searchable
-  memory of past problems and how they were resolved. Agents search this too
-  (<code>grayson records search</code>).</div>
+<h1>Records {{ help("records") }}</h1>
 
 <form class="searchrow" method="get" action="/records">
   <input type="hidden" name="t" value="{{ token }}">
@@ -20,8 +17,7 @@
 </form>
 
 {% if not records %}
-<div class="card empty">{% if q %}Nothing matches “{{ q }}”.{% else %}No records yet —
-  findings and proposals appear here as sessions produce them.{% endif %}</div>
+<div class="card empty">{% if q %}Nothing matches “{{ q }}”.{% else %}No records yet.{% endif %}</div>
 {% endif %}
 
 {% for r in records %}

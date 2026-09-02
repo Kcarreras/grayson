@@ -71,9 +71,8 @@
     {% endfor %}
     <p style="margin-top:10px;"><b>Why:</b> {{ r.reason }}</p>
     {% if r.context %}<p class="muted">{{ r.context }}</p>{% endif %}
-    <p class="muted small">Ticked tables join this session's readable scope from the next
-      statement, as a logged decision of yours. Untick any you do not want read; submit with
-      none ticked to decline. Metadata (columns, DDL) was readable already — this grants rows.</p>
+    <p class="muted small">Ticked tables become readable from the next statement; submit with
+      none ticked to decline. Columns and DDL were already readable — this grants rows.</p>
     <textarea name="note" rows="2" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
   </div>
 
