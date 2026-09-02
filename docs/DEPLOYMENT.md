@@ -145,19 +145,22 @@ uv tool install "git+ssh://git@github.com/<org>/<install-repo>@v0.1.0-pilot.3"
 
 The practice behind the tags:
 
-- **Tags are cut upstream, at merge time.** Every merge to `main` in the
-  development repo that changes behaviour gets an annotated tag on the merge
-  commit (`v0.1.0-pilot.N` during the pilot). Documentation-only merges are not
-  tagged. A tag is only ever created upstream, so the same name means the same
-  commit everywhere.
-- **A downstream mirror only forwards.** An enterprise install repo that
-  cannot be pushed to from the development side (or vice versa — one machine
-  usually holds credentials for one account) is kept in sync by fetching
-  upstream and pushing the same commits and tags on:
+- **Tags are cut where the install comes from.** The person who forwards a
+  release to the install repo creates an annotated tag on the exact upstream
+  commit being forwarded (`v0.1.0-pilot.N` during the pilot; bump `N` for
+  every forward that changes behaviour) and pushes it to the install repo.
+  The tag names a commit that exists in both repos, so it identifies the same
+  code everywhere even though only the install repo carries the tag. The
+  development repo's `main` and the merged pull requests are the changelog.
+- **A downstream mirror only forwards.** An install repo that lives under a
+  different account than the development repo (one machine usually holds
+  credentials for one account) is kept in sync by fetching upstream and
+  pushing the same commits on, then tagging:
 
   ```bash
   git fetch origin --tags                 # origin = upstream development repo
   git push dax origin/main:main           # dax    = downstream install repo
+  git tag -a v0.1.0-pilot.4 origin/main -m "Pilot 4: <what changed>"
   git push dax v0.1.0-pilot.4
   ```
 
@@ -173,7 +176,7 @@ The practice behind the tags:
   ```
 
   The install output names the commit the tool was built from; it should match
-  the tag's merge commit upstream.
+  the tagged commit.
 
 ## Recipe chooser
 
