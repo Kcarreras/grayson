@@ -396,7 +396,7 @@ h1 > .help > .h-pop, h2 > .help > .h-pop { left: 0; transform: none;
 .kv { display: flex; gap: 8px; flex-wrap: wrap; }
 .kv .item { background: var(--panel2); border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm); padding: 5px 10px; font-size: 12.5px; }
-.kv > form.item { flex: 1 1 auto; }   /* a control strip moves to a new row whole, then fills it */
+.kv > form.item { flex: 0 1 auto; }   /* a control strip wraps to a new row whole, at its own width */
 .kv .item b { color: var(--muted); font-weight: 600; font-size: 11px;
   text-transform: uppercase; letter-spacing: .06em; margin-right: 5px; }
 .chip { display: inline-block; background: var(--panel2); border: 1px solid var(--border-soft);
