@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_relgraph.html" import relgraph %}
+{% from "_macros.html" import list_tools, fqn %}
 {% block head %}{% if graph %}{% include "_graph_assets.html" %}{% endif %}{% endblock %}
 {% block title %}grayson — knowledge{% endblock %}
 {% block content %}
@@ -26,46 +27,85 @@
 {% endif %}
 
 {% if graph %}
-<h2>Schema map</h2>
+{# the map is the tallest thing on the page: it folds, and the fold is
+   remembered. graph.js refits the canvas when the fold opens. #}
+<details class="section" id="schema-map" data-fold="schema-map" open>
+<summary><h2>Schema map
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ graph.nodes | length }} tables · {{ graph.edges | length }} relationships</span></h2></summary>
 {{ relgraph(graph, token, "relgraph-library", 520) }}
+</details>
 {% endif %}
 
-<h2>Tables</h2>
+{% set open_q = tables | selectattr("completeness") | selectattr("completeness.open_questions") | list | length %}
+<details class="section" id="tables" data-fold="tables" open>
+<summary><h2>Tables
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ tables | length }}{% if open_q %} · {{ open_q }} with open questions{% endif %}</span></h2></summary>
 {% if not tables %}
 <div class="card empty">
   {% if q %}Nothing matches “{{ q }}”.{% else %}No tables described yet. Agents add them as
   they work; the <code>table-onboarding</code> workflow builds one deliberately.{% endif %}
 </div>
-{% endif %}
-<div class="grid">
+{% else %}
+{{ list_tools("tables", [
+  ("open", "desc", "Open questions first"),
+  ("gaps", "desc", "Least described first"),
+  ("gaps", "asc", "Most described first"),
+  ("facts", "desc", "Most facts first"),
+  ("name", "asc", "Name A–Z"),
+], [
+  ("open", "open questions"),
+  ("incomplete", "gaps"),
+  ("complete", "base complete"),
+  ("error", "unreadable"),
+], "Filter by table name, grain…") }}
+{# each table is a fold: its name and standing on the title row, the detail
+   inside. Long names wrap inside the tile rather than running past it. #}
+<div class="listwrap">
+<div class="grid listgrid" data-list="tables" data-noun="table">
 {% for t in tables %}
 {% if t.error %}
-<div class="card attn">
-  <div class="row split">
-    <b class="mono">{{ t.table }}</b>
-    <span class="badge bad">unreadable</span>
-  </div>
-  <div class="small attn-text" style="margin-top: 6px;">{{ t.error }}</div>
-</div>
+<details class="card foldcard attn" data-item data-fold="{{ t.table }}"
+  data-tags="error" data-s-name="{{ t.table }}" data-s-open="0" data-s-gaps="99" data-s-facts="0">
+  <summary class="chartsum">
+    <span class="name"><span class="c-caret">▸</span>
+      <b class="mono">{{ fqn(t.table) }}</b></span>
+    <span class="row" style="margin-left: auto;"><span class="badge bad">unreadable</span></span>
+  </summary>
+  <div class="small attn-text" style="margin-top: 8px;">{{ t.error }}</div>
+</details>
 {% else %}
-<div class="card">
-  <div class="row split">
-    <a href="/knowledge/{{ t.table }}?t={{ token }}"><b class="mono">{{ t.table }}</b></a>
-    {% if t.completeness.base_complete %}<span class="badge ok">base complete</span>
-    {% else %}<span class="badge plain">{{ t.completeness.missing | length }} gaps</span>{% endif %}
-  </div>
-  {% if t.grain %}<div class="ink2 small" style="margin: 6px 0 2px;">{{ t.grain }}</div>{% endif %}
+{% set c = t.completeness %}
+<details class="card foldcard" data-item data-fold="{{ t.table }}"
+  data-tags="{{ 'open' if c.open_questions }} {{ 'complete' if c.base_complete else 'incomplete' }}"
+  data-s-name="{{ t.table }}" data-s-open="{{ c.open_questions }}"
+  data-s-gaps="{{ c.missing | length }}" data-s-facts="{{ c.facts }}">
+  <summary class="chartsum">
+    <span class="name"><span class="c-caret">▸</span>
+      <a class="mono" href="/knowledge/{{ t.table }}?t={{ token }}" title="Open {{ t.table }}"><b>{{ fqn(t.table) }}</b></a></span>
+    <span class="row" style="margin-left: auto;">
+      {% if c.open_questions %}
+        <span class="badge attn">{{ c.open_questions }} open</span>{% endif %}
+      {% if c.base_complete %}<span class="badge ok">base complete</span>
+      {% else %}<span class="badge plain">{{ c.missing | length }} gap{{ "s" if c.missing | length != 1 }}</span>{% endif %}
+    </span>
+  </summary>
+  <div class="ink2 small" style="margin: 8px 0 2px;">{{ t.grain or "grain not declared" }}</div>
   <div class="row mt-2">
-    {% if t.completeness.columns_total %}
-      <span class="badge plain">{{ t.completeness.columns_described }}/{{ t.completeness.columns_total }} columns described</span>{% endif %}
-    <span class="badge plain">{{ t.completeness.facts }} fact{{ "s" if t.completeness.facts != 1 }}</span>
-    {% if t.completeness.facts_user_confirmed %}
-      <span class="badge ok">{{ t.completeness.facts_user_confirmed }} confirmed</span>{% endif %}
-    {% if t.completeness.open_questions %}
-      <span class="badge attn">{{ t.completeness.open_questions }} open question{{ "s" if t.completeness.open_questions != 1 }}</span>{% endif %}
+    {% if c.columns_total %}
+      <span class="badge plain">{{ c.columns_described }}/{{ c.columns_total }} columns described</span>{% endif %}
+    <span class="badge plain">{{ c.facts }} fact{{ "s" if c.facts != 1 }}</span>
+    {% if c.facts_user_confirmed %}
+      <span class="badge ok">{{ c.facts_user_confirmed }} confirmed</span>{% endif %}
   </div>
-</div>
+  {% if c.missing %}
+  <div class="faint small" style="margin-top: 8px;">missing: {{ c.missing | join(", ") }}</div>
+  {% endif %}
+  <a class="btn secondary sm" style="margin-top: 10px;" href="/knowledge/{{ t.table }}?t={{ token }}">Open →</a>
+</details>
 {% endif %}
 {% endfor %}
 </div>
+</div>
+{% endif %}
+</details>
 {% endblock %}

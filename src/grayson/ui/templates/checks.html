@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import check_status %}
+{% from "_macros.html" import check_status, list_tools %}
 {% block title %}grayson — checks{% endblock %}
 {% block content %}
 <h1>External checks {{ help("external_checks") }}</h1>
@@ -7,7 +7,11 @@
 <div class="tiles">
   <div class="tile"><div class="num">{{ summary.total_checks }}</div><div class="lbl">Checks on file</div></div>
   <div class="tile"><div class="num {{ 'ok' if summary.by_status.get('pass') }}">{{ summary.by_status.get("pass", 0) }}</div><div class="lbl">Passing</div></div>
-  <div class="tile"><div class="num {{ 'attn' if summary.failing }}">{{ summary.failing | length }}</div><div class="lbl">Failing</div></div>
+  {% if summary.failing %}
+  <a class="tile" href="#failing" title="Go to the failing checks"><div class="num attn">{{ summary.failing | length }}</div><div class="lbl">Failing</div></a>
+  {% else %}
+  <div class="tile"><div class="num">0</div><div class="lbl">Failing</div></div>
+  {% endif %}
   <div class="tile"><div class="num {{ 'attn' if summary.overdue }}">{{ summary.overdue | length }}</div><div class="lbl">Overdue</div></div>
 </div>
 
@@ -16,18 +20,34 @@
   could not be fully read — see below.</div>
 {% endif %}
 
+{# status rank for sorting: what needs a human first #}
+{% set rank = {"fail": 0, "error": 0, "warn": 1, "pass": 2} %}
+
 {% if summary.failing %}
-<h2>Failing now</h2>
+<details class="section" id="failing" data-fold="failing" open>
+<summary><h2>Failing now
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ summary.failing | length }}</span></h2></summary>
+{{ list_tools("failing", [
+  ("name", "asc", "Name A–Z"),
+  ("run", "desc", "Most recent run first"),
+  ("run", "asc", "Stalest run first"),
+  ("source", "asc", "Source"),
+], [], "Filter by check, table, detail…") }}
+<div class="listwrap" data-list="failing" data-noun="failing check">
 {% for f in summary.failing %}
-<div class="card attn">
-  <div class="row split">
-    <b>{{ f.name or f.check_id }}</b>
-    <span class="row">
+{# a failing check opens by default: these are the ones a human acts on #}
+<details class="card foldcard attn" data-item data-fold="fail:{{ f.check_id }}" open
+  data-s-name="{{ f.name or f.check_id }}" data-s-source="{{ f.source or '' }}"
+  data-s-run="{{ f.run_at or '' }}">
+  <summary class="chartsum">
+    <span class="name"><span class="c-caret">▸</span>
+      <b>{{ f.name or f.check_id }}</b></span>
+    <span class="row" style="margin-left: auto;">
       <span class="badge bad">{{ f.status }}</span>
       {% if f.source %}<span class="badge plain">{{ f.source }}</span>{% endif %}
     </span>
-  </div>
-  {% if f.details %}<div class="ink2 small" style="margin: 5px 0;">{{ f.details }}</div>{% endif %}
+  </summary>
+  {% if f.details %}<div class="ink2 small" style="margin: 8px 0 5px;">{{ f.details }}</div>{% endif %}
   {% if f.metrics %}
   <dl class="props">
     {% for k, v in f.metrics.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}
@@ -39,20 +59,48 @@
   {% endif %}
   <div class="faint small" style="margin-top: 5px;">
     <span class="chip">{{ f.check_id }}</span>
-    {% for t in f.tables %} · {{ t }}{% endfor %}
+    {% for t in f.tables %} · <a class="mono" href="/knowledge/{{ t }}?t={{ token }}">{{ t }}</a>{% endfor %}
     · last run {{ f.run_at }}
     {% if f.url %} · <a href="{{ f.url }}" rel="noopener noreferrer">run link ↗</a>{% endif %}
   </div>
-</div>
+</details>
 {% endfor %}
+</div>
+</details>
 {% endif %}
 
-<h2>All checks (latest run each)</h2>
-<div class="card scroll">
+<details class="section" id="all-checks" data-fold="all-checks" open>
+<summary><h2>All checks
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">latest run each · {{ summary.checks | length }}</span></h2></summary>
+{% if summary.checks %}
+{{ list_tools("checks", [
+  ("status", "asc", "Failing first"),
+  ("name", "asc", "Name A–Z"),
+  ("age", "asc", "Most recent run first"),
+  ("age", "desc", "Stalest run first"),
+  ("source", "asc", "Source"),
+  ("tables", "asc", "Table"),
+], [
+  ("fail", "failing"),
+  ("warn", "warning"),
+  ("pass", "passing"),
+  ("overdue", "overdue"),
+], "Filter by check, table, source…", false) }}
+{% endif %}
+<div class="card scroll listwrap">
 <table>
-<tr><th>Check</th><th>Status</th><th>Tables</th><th>Source</th><th>Last run</th></tr>
+<thead>
+<tr><th data-sortkey="name">Check</th><th data-sortkey="status">Status</th>
+  <th data-sortkey="tables">Tables</th><th data-sortkey="source">Source</th>
+  <th data-sortkey="age">Last run</th></tr>
+</thead>
+<tbody data-list="checks" data-noun="check">
 {% for c in summary.checks %}
-<tr>
+<tr data-item
+  data-tags="{{ 'fail' if c.status in ['fail', 'error'] else c.status }}{{ ' overdue' if c.overdue }}"
+  data-s-name="{{ c.name }}" data-s-status="{{ rank.get(c.status, 3) }}"
+  data-s-tables="{{ c.tables | join(', ') }}" data-s-source="{{ c.source or '' }}"
+  data-s-age="{{ c.age_hours if c.age_hours is not none else 1e9 }}">
   <td>{{ c.name }}<div class="faint mono small">{{ c.check_id }}</div></td>
   <td>{{ check_status(c) }}</td>
   <td class="small">{% for t in c.tables %}
@@ -66,8 +114,10 @@
 <tr><td colspan="5" class="muted">No external check results on file yet. Drop JSON into the
   library's <code>checks/</code> folder, or run <code>grayson checks ingest</code>.</td></tr>
 {% endif %}
+</tbody>
 </table>
 </div>
+</details>
 
 {% if summary.parse_errors %}
 <details class="fold">

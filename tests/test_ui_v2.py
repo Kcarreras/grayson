@@ -313,3 +313,52 @@ def test_checks_tab_lists_and_flags(client, workspace):
 def test_checks_tab_empty_state(client):
     page = client.get(f"/checks?t={TOKEN}").text
     assert "No external check results on file yet" in page
+
+
+def test_list_pages_carry_sort_and_filter_markup(client, workspace, rich_session):
+    """Knowledge, Checks and Records share one list treatment: a toolbar wired
+    by id to a [data-list] container whose items carry sort keys and tags."""
+    store = KnowledgeStore(workspace.knowledge_dir)
+    store.set_profile(
+        "DB.S.A_VERY_LONG_TABLE_NAME_THAT_SHOULD_WRAP_INSIDE_ITS_TILE",
+        {"grain": "one row per id", "open_questions": ["is AMOUNT gross?"]},
+    )
+    store.set_profile("DB.S.T2", {"grain": "one row per day"})
+    page = client.get(f"/knowledge?t={TOKEN}").text
+    assert 'data-list-tools="tables"' in page and 'data-list="tables"' in page
+    assert 'data-tags="open incomplete"' in page and 'data-s-open="1"' in page
+    assert 'data-tags=" incomplete"' in page  # T2: no open questions
+    assert "1 with open questions" in page
+    assert 'id="schema-map"' not in page  # no relationships, no map to fold
+
+    (workspace.checks_dir / "airflow.json").write_text(
+        json.dumps(
+            [
+                {
+                    "check_id": "c_fail",
+                    "status": "fail",
+                    "tables": ["DB.S.T2"],
+                    "run_at": "2026-08-24T06:00:00Z",
+                    "ttl_hours": 1,
+                },
+                {
+                    "check_id": "c_pass",
+                    "status": "pass",
+                    "tables": ["DB.S.T2"],
+                    "run_at": "2026-08-24T06:00:00Z",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    page = client.get(f"/checks?t={TOKEN}").text
+    assert 'data-list-tools="failing"' in page and 'data-list-tools="checks"' in page
+    assert 'data-tags="fail overdue"' in page and 'data-tags="pass"' in page
+    assert 'data-s-status="0"' in page and 'data-s-status="2"' in page
+    assert 'th data-sortkey="status"' in page
+    assert 'href="#failing"' in page  # the failing tile jumps to the section
+
+    page = client.get(f"/records?t={TOKEN}").text
+    assert 'data-list-tools="records"' in page and 'data-list="records"' in page
+    assert 'data-tags="finding' in page and 'data-tags="proposal' in page
+    assert 'data-s-kind="finding"' in page

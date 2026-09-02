@@ -287,7 +287,7 @@ for _ in range(100):
 
 PAGES = [
     ("session", f"/session/{s.id}", 1500),
-    ("knowledge", "/knowledge", 1120),
+    ("knowledge", "/knowledge", 1260),
     ("checks", "/checks", 1120),
     ("workflows", "/workflows", 1500),
     ("workflow_detail", "/workflows/bug-hunter", 1120),
