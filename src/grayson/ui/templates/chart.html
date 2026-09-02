@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% block title %}grayson — {{ spec.title }}{% endblock %}
 {% block content %}
-<p class="small"><a href="/session/{{ s.id }}?t={{ token }}">← {{ s.title or s.id }}</a>
-  {% if count > 1 %}<span class="faint"> · chart {{ position }} of {{ count }}</span>{% endif %}</p>
-<div class="row split">
-  <h1>{{ spec.title }}</h1>
-  <span class="row">
+<nav class="crumbs"><a href="/?t={{ token }}">Sessions</a><span class="sep">/</span>
+  <a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>
+  <span>chart{% if count > 1 %} {{ position }} of {{ count }}{% endif %}</span></nav>
+<div class="pagehead">
+  <div class="titlerow"><h1>{{ spec.title }}</h1></div>
+  <span class="actions">
     {% if prev_id %}<a class="btn ghost sm" href="/session/{{ s.id }}/chart/{{ prev_id }}?t={{ token }}" title="Previous chart">←</a>{% endif %}
     {% if next_id %}<a class="btn ghost sm" href="/session/{{ s.id }}/chart/{{ next_id }}?t={{ token }}" title="Next chart">→</a>{% endif %}
     <a class="btn secondary sm" href="/session/{{ s.id }}/chart/{{ spec.chart_id }}.svg?detail=1&t={{ token }}"
@@ -33,7 +34,7 @@
   {{ svg }}
   {% if labels_cut %}<div class="faint small" style="margin-top: 6px;">
     Some axis labels are shortened — hover or tap one for the full text.</div>{% endif %}
-  {% if spec.note %}<div class="ink2 small" style="margin-top: 8px;">{{ spec.note }}</div>{% endif %}
+  {% if spec.note %}<div class="ink2 small mt-2">{{ spec.note }}</div>{% endif %}
 </div>
 
 <h2>Plotted data ({{ data.points | length }} rows)</h2>

@@ -1,85 +1,105 @@
 {% extends "base.html" %}
 {% block title %}grayson — {{ item.title }}{% endblock %}
+{# no live refresh here on purpose: a reload would clear a half-filled form #}
 {% block content %}
-<p><a href="/session/{{ sid }}?t={{ token }}">← back to session</a></p>
-<h1>{{ item.title }}</h1>
-<div class="pill-row"><span class="tag warn">{{ item.kind }}</span>
-  <span class="tag">{{ item.status }}</span></div>
-{% if item.prompt %}<p class="muted">{{ item.prompt }}</p>{% endif %}
+<nav class="crumbs"><a href="/?t={{ token }}">Sessions</a><span class="sep">/</span>
+  <a href="/session/{{ sid }}?t={{ token }}">{{ s.title or sid }}</a><span class="sep">/</span>
+  <span class="mono">{{ item.iid }}</span></nav>
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow">
+      <h1>{{ item.title }}</h1>
+      <span class="badge attn">{{ item.kind | replace("_", " ") }}</span>
+      <span class="badge {{ 'todo' if item.status == 'open' else 'ok' }}">{{ item.status }}</span>
+    </div>
+    {% if item.prompt %}<div class="lede">{{ item.prompt }}</div>{% endif %}
+  </div>
+</div>
 
 {% if item.status != "open" %}
-<div class="card">This intervention is <b>{{ item.status }}</b>.
-  {% if item.response %}<pre class="mono scroll">{{ item.response | tojson(indent=2) }}</pre>{% endif %}
+<div class="card">
+  <div class="overline mb-2">Response</div>
+  {% if item.response %}<pre class="mono scroll">{{ item.response | tojson(indent=2) }}</pre>
+  {% else %}<span class="muted">None recorded.</span>{% endif %}
 </div>
 {% else %}
 <form method="post" action="/session/{{ sid }}/intervention/{{ item.iid }}/respond?t={{ token }}">
 {% set r = item.request %}
 
 {% if item.kind == "label_sample" %}
-  {% if r.instructions %}<div class="card muted">{{ r.instructions }}</div>{% endif %}
-  <div class="card scroll">
-  <table>
-    <tr><th>#</th>
-      {% for col in r.rows[0].keys() %}<th>{{ col }}</th>{% endfor %}
-      <th>label</th>{% if r.allow_notes %}<th>note</th>{% endif %}</tr>
-    {% for row in r.rows %}
-    <tr>
-      <td class="muted mono">{{ loop.index0 }}</td>
-      {% for col in r.rows[0].keys() %}<td class="mono">{{ row[col] }}</td>{% endfor %}
-      <td>
-        <select name="label_{{ loop.index0 }}">
-          <option value="">—</option>
-          {% for lab in r.labels %}<option value="{{ lab }}">{{ lab }}</option>{% endfor %}
-        </select>
-      </td>
-      {% if r.allow_notes %}<td><input type="text" name="note_{{ loop.index0 }}"></td>{% endif %}
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="card">
+    {% if r.instructions %}<div class="statement">{{ r.instructions }}</div>{% endif %}
+    <div class="scroll">
+    <table>
+      <tr><th>#</th>
+        {% for col in r.rows[0].keys() %}<th>{{ col }}</th>{% endfor %}
+        <th>label</th>{% if r.allow_notes %}<th>note</th>{% endif %}</tr>
+      {% for row in r.rows %}
+      <tr>
+        <td class="muted mono">{{ loop.index0 }}</td>
+        {% for col in r.rows[0].keys() %}<td class="mono">{{ row[col] }}</td>{% endfor %}
+        <td>
+          <select name="label_{{ loop.index0 }}" style="width: auto;">
+            <option value="">—</option>
+            {% for lab in r.labels %}<option value="{{ lab }}">{{ lab }}</option>{% endfor %}
+          </select>
+        </td>
+        {% if r.allow_notes %}<td><input type="text" name="note_{{ loop.index0 }}" style="min-width: 160px;"></td>{% endif %}
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
   </div>
 
 {% elif item.kind == "confirm_semantics" %}
   <div class="card">
-    <p><b>Confirm or deny:</b> {{ r.statement }}</p>
-    {% if r.context %}<p class="muted">{{ r.context }}</p>{% endif %}
+    <div class="overline">Confirm or deny</div>
+    <div class="statement">{{ r.statement }}</div>
+    {% if r.context %}<div class="muted small">{{ r.context }}</div>{% endif %}
     {% if r.sample %}<pre class="mono scroll">{{ r.sample | tojson(indent=2) }}</pre>{% endif %}
-    <div class="pill-row">
-      <label><input type="radio" name="decision" value="confirm" required> confirm</label>
-      <label><input type="radio" name="decision" value="deny"> deny</label>
-      <label><input type="radio" name="decision" value="unsure"> unsure</label>
+    <div class="choices inline">
+      <label class="choice"><input type="radio" name="decision" value="confirm" required> confirm</label>
+      <label class="choice"><input type="radio" name="decision" value="deny"> deny</label>
+      <label class="choice"><input type="radio" name="decision" value="unsure"> unsure</label>
     </div>
-    <textarea name="note" rows="3" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
+    <textarea name="note" rows="3" placeholder="notes (optional)" class="mt-3"></textarea>
   </div>
 
 {% elif item.kind == "choose" %}
   <div class="card">
-    {% if r.question %}<p>{{ r.question }}</p>{% endif %}
-    {% for opt in r.options %}
-    <div><label>
-      <input type="{{ 'checkbox' if r.multi else 'radio' }}" name="selected" value="{{ opt }}"
-        {% if not r.multi %}required{% endif %}> {{ opt }}</label></div>
-    {% endfor %}
-    <textarea name="note" rows="2" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
+    {% if r.question %}<div class="statement">{{ r.question }}</div>{% endif %}
+    <div class="choices">
+      {% for opt in r.options %}
+      <label class="choice">
+        <input type="{{ 'checkbox' if r.multi else 'radio' }}" name="selected" value="{{ opt }}"
+          {% if not r.multi %}required{% endif %}> <span>{{ opt }}</span></label>
+      {% endfor %}
+    </div>
+    <textarea name="note" rows="2" placeholder="notes (optional)" class="mt-3"></textarea>
   </div>
 
 {% elif item.kind == "scope_request" %}
   <div class="card">
-    <p><b>The agent asks to read rows from:</b></p>
-    {% for t in r.tables %}
-    <div><label><input type="checkbox" name="granted" value="{{ t }}" checked>
-      <span class="mono">{{ t }}</span></label></div>
-    {% endfor %}
-    <p style="margin-top:10px;"><b>Why:</b> {{ r.reason }}</p>
-    {% if r.context %}<p class="muted">{{ r.context }}</p>{% endif %}
-    <p class="muted small">Ticked tables become readable from the next statement; submit with
-      none ticked to decline. Columns and DDL were already readable — this grants rows.</p>
-    <textarea name="note" rows="2" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
+    <div class="overline">The agent asks to read rows from</div>
+    <div class="choices">
+      {% for t in r.tables %}
+      <label class="choice"><input type="checkbox" name="granted" value="{{ t }}" checked>
+        <span class="mono">{{ t }}</span></label>
+      {% endfor %}
+    </div>
+    <dl class="props mt-3">
+      <dt>Why</dt><dd>{{ r.reason }}</dd>
+      {% if r.context %}<dt>Context</dt><dd class="muted">{{ r.context }}</dd>{% endif %}
+    </dl>
+    <div class="muted small">Ticked tables become readable from the next statement; submit with
+      none ticked to decline. Columns and DDL were already readable — this grants rows.</div>
+    <textarea name="note" rows="2" placeholder="notes (optional)" class="mt-3"></textarea>
   </div>
 
 {% else %}
   <div class="card">
-    {% if r.question %}<p>{{ r.question }}</p>{% endif %}
-    {% if r.context %}<p class="muted">{{ r.context }}</p>{% endif %}
+    {% if r.question %}<div class="statement">{{ r.question }}</div>{% endif %}
+    {% if r.context %}<div class="muted small mb-2">{{ r.context }}</div>{% endif %}
     <textarea name="text" rows="5" placeholder="your response" required></textarea>
   </div>
 {% endif %}

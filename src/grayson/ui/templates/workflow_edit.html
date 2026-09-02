@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}grayson — edit {{ name }}{% endblock %}
 {% block content %}
-<div class="faint small" style="margin-bottom: 8px;">
-  <a href="/workflows?t={{ token }}">Workflows</a> /
-  <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a> / edit</div>
+<nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
+  <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
+  <span>edit</span></nav>
 
 <h1>Edit {{ name }} {{ help("workflow_yaml") }}</h1>
 

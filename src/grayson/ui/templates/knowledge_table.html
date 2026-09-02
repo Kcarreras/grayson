@@ -1,20 +1,24 @@
 {% extends "base.html" %}
 {% from "_relgraph.html" import relgraph %}
+{% from "_macros.html" import check_status %}
 {% block head %}{% include "_graph_assets.html" %}{% endblock %}
 {% block title %}grayson — {{ doc.table }}{% endblock %}
 {% block content %}
-<p class="small"><a href="/knowledge?t={{ token }}">← Knowledge Library</a></p>
-<div class="row split">
-  <h1 class="mono">{{ doc.table }}</h1>
-  <span class="row" style="gap: 8px; align-items: center;">
+<nav class="crumbs"><a href="/knowledge?t={{ token }}">Knowledge</a><span class="sep">/</span>
+  <span class="mono">{{ doc.table }}</span></nav>
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow"><h1 class="mono">{{ doc.table }}</h1></div>
+    {% if not comp.base_complete %}
+    <div class="muted small">Still undescribed: {{ comp.missing | join(", ") | replace("_", " ") }}</div>
+    {% endif %}
+  </div>
+  <span class="actions">
     {% if comp.base_complete %}<span class="badge ok">base complete</span>
     {% else %}<span class="badge plain">{{ comp.missing | length }} gaps</span>{% endif %}
     {{ help("base_descriptor") }}
   </span>
 </div>
-{% if not comp.base_complete %}
-<div class="muted small">Still undescribed: {{ comp.missing | join(", ") | replace("_", " ") }}</div>
-{% endif %}
 
 <div class="kv" style="margin: 12px 0;">
   {% if doc.grain %}<div class="item"><b>Grain</b> {{ doc.grain }}</div>{% endif %}
@@ -79,13 +83,7 @@
 {% for c in table_checks.checks %}
 <tr>
   <td>{{ c.name }}<div class="faint mono small">{{ c.check_id }}</div></td>
-  <td>
-    {% if c.status == "pass" %}<span class="badge ok">pass</span>
-    {% elif c.status in ["fail", "error"] %}<span class="badge bad">{{ c.status }}</span>
-    {% elif c.status == "warn" %}<span class="badge attn">warn</span>
-    {% else %}<span class="badge plain">{{ c.status }}</span>{% endif %}
-    {% if c.overdue %}<span class="badge attn">overdue</span>{% endif %}
-  </td>
+  <td>{{ check_status(c) }}</td>
   <td class="muted small">{{ c.source }}</td>
   <td class="muted small mono">{{ c.run_at }}</td>
 </tr>
@@ -134,7 +132,7 @@
       {% endif %}
     </span>
   </div>
-  <div class="faint small" style="margin-top: 4px;">
+  <div class="faint small mt-1">
     {{ f.created_by }} · {{ f.created_at }}
     {% if f.evidence %} · evidence: {% for q in f.evidence %}<span class="chip">{{ q }}</span> {% endfor %}{% endif %}
     {% if f.confirmed_by %} · confirmed by {{ f.confirmed_by }}{% endif %}

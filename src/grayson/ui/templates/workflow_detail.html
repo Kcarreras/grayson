@@ -24,21 +24,20 @@
 </style>
 {% endblock %}
 {% block content %}
-<div class="faint small" style="margin-bottom: 8px;">
-  <a href="/workflows?t={{ token }}">Workflows</a> / {{ tpl.name }}</div>
+<nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
+  <span class="mono">{{ tpl.name }}</span></nav>
 
-<div class="row split" style="align-items: flex-start; margin-bottom: 14px;">
-  <div>
-    <div class="row" style="gap: 10px;">
-      <h1 style="margin: 0;">{{ tpl.title or tpl.name }}</h1>
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow">
+      <h1>{{ tpl.title or tpl.name }}</h1>
       {% if is_core %}<span class="badge plain">core</span>
       {% elif editable and user_id and tpl.created_by == user_id %}<span class="badge todo">mine</span>
       {% else %}<span class="badge act">team</span>{% endif %}
-      <span class="mono faint small">{{ tpl.name }}</span>
     </div>
-    <div class="muted small" style="max-width: 620px; margin-top: 4px;">{{ tpl.description.strip() }}</div>
+    <div class="lede">{{ tpl.description.strip() }}</div>
   </div>
-  <span class="row">
+  <span class="actions">
     <a class="btn ghost" href="/workflows/{{ tpl.name }}/yaml?t={{ token }}">YAML</a>
     {% if editable %}
     <a class="btn secondary" href="/workflows/{{ tpl.name }}/edit?t={{ token }}">Edit</a>
@@ -54,7 +53,7 @@
 </div>
 
 <div class="card">
-  <div class="overline" style="margin-bottom: 12px;">How a session runs {{ help("session_flow") }}</div>
+  <div class="overline mb-3">How a session runs {{ help("session_flow") }}</div>
   <div class="wfrail">
     <div class="wfnode">
       <div class="nh"><span class="wfdot" style="background: var(--ok);"></span>Setup</div>
@@ -90,10 +89,10 @@
     {% for c in tpl.required_checks %}
     <details class="fold" {% if loop.first %}open{% endif %}>
       <summary><span class="mono faint">{{ loop.index }}</span> {{ c.title }}
-        <span style="flex: 1;"></span><span class="mono faint small">{{ c.key }}</span></summary>
+        <span class="grow"></span><span class="mono faint small">{{ c.key }}</span></summary>
       <div class="fold-body">
-        {% if c.description %}<div class="ink2 small" style="margin-top: 8px;">{{ c.description.strip() }}</div>
-        {% else %}<div class="faint small" style="margin-top: 8px;">No description recorded.</div>{% endif %}
+        {% if c.description %}<div class="ink2 small mt-2">{{ c.description.strip() }}</div>
+        {% else %}<div class="faint small mt-2">No description recorded.</div>{% endif %}
         {% if c.depends_on or c.uses_inputs %}
         <div class="kv" style="margin-top: 9px;">
           {% if c.depends_on %}
@@ -115,9 +114,9 @@
     {% for c in tpl.suggested_checks %}
     <details class="fold">
       <summary><span class="mono faint">+</span> {{ c.title }}
-        <span style="flex: 1;"></span><span class="mono faint small">{{ c.key }}</span></summary>
+        <span class="grow"></span><span class="mono faint small">{{ c.key }}</span></summary>
       <div class="fold-body">
-        {% if c.description %}<div class="ink2 small" style="margin-top: 8px;">{{ c.description.strip() }}</div>{% endif %}
+        {% if c.description %}<div class="ink2 small mt-2">{{ c.description.strip() }}</div>{% endif %}
       </div>
     </details>
     {% endfor %}
@@ -173,7 +172,7 @@
         <dt>File</dt><dd class="mono small">workflows/{{ tpl.name }}.yaml</dd>
       </dl>
       {% if not editable %}
-      <div class="muted small" style="margin-top: 4px;">A teammate's — fork to edit.</div>
+      <div class="muted small mt-1">A teammate's — fork to edit.</div>
       {% endif %}
     </div>
     {% endif %}

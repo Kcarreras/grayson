@@ -50,7 +50,7 @@
 {% for name in cfg.guard_profiles %}
 <form id="pf-{{ name }}" method="post" action="/settings/profile/{{ name }}?t={{ token }}"></form>
 {% endfor %}
-<div class="faint small" style="margin-top: 8px;">0 = off. Applies to new sessions; a running session changes its guard on its own page.</div>
+<div class="faint small mt-2">0 = off. Applies to new sessions; a running session changes its guard on its own page.</div>
 </div>
 
 <h2>Per-workflow session defaults {{ help("workflow_defaults") }}</h2>

@@ -2,14 +2,11 @@
 {% block title %}grayson — workflows{% endblock %}
 {% block head %}
 <style>
-.wfgrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .wfcard { display: flex; flex-direction: column; gap: 7px; margin-bottom: 0; }
 .wfcard .desc { color: var(--ink-2); font-size: 13px; flex: 1; }
 .wfcard .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
   border-top: 1px solid var(--border-soft); padding-top: 9px; font-size: 12px;
   color: var(--muted); }
-a.wfcard { color: inherit; }
-a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
 .newcard { border-style: dashed; }
 </style>
 {% endblock %}
@@ -20,12 +17,12 @@ a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
   workflows and facts.{% endif %}</div>
 
 {% if problems %}
-<div class="banner" style="margin-top: 12px;">{{ problems | length }} workflow
+<div class="banner mt-3">{{ problems | length }} workflow
   file(s) fail lint and cannot start sessions.</div>
 {% endif %}
 
 <h2>Core</h2>
-<div class="wfgrid">
+<div class="grid">
   {% for row in cores %}
   <a class="card wfcard" href="/workflows/{{ row.tpl.name }}?t={{ token }}">
     <div class="row split">
@@ -38,7 +35,7 @@ a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
       <span>{{ row.tpl.required_checks | length }} checkpoints</span>
       <span class="faint">·</span>
       <span class="mono">{{ row.tpl.findings_schema }}</span>
-      <span style="flex: 1;"></span>
+      <span class="grow"></span>
       <span class="faint">{{ row.usage.count }} session{{ "s" if row.usage.count != 1 }}</span>
     </div>
   </a>
@@ -46,7 +43,7 @@ a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
 </div>
 
 <h2>Team library</h2>
-<div class="wfgrid">
+<div class="grid">
   {% for row in team %}
   <a class="card wfcard" href="/workflows/{{ row.tpl.name }}?t={{ token }}">
     <div class="row split">
@@ -66,7 +63,7 @@ a.wfcard:hover { text-decoration: none; border-color: var(--muted); }
       <span>{{ row.tpl.required_checks | length }} checkpoints</span>
       <span class="faint">·</span>
       <span class="mono">{{ row.tpl.findings_schema }}</span>
-      <span style="flex: 1;"></span>
+      <span class="grow"></span>
       {% if row.tpl.created_by %}<span class="mono faint">by {{ row.tpl.created_by }}</span>
       {% else %}<span class="faint">{{ row.usage.count }} session{{ "s" if row.usage.count != 1 }}</span>{% endif %}
     </div>

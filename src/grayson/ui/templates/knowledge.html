@@ -55,7 +55,7 @@
     {% else %}<span class="badge plain">{{ t.completeness.missing | length }} gaps</span>{% endif %}
   </div>
   {% if t.grain %}<div class="ink2 small" style="margin: 6px 0 2px;">{{ t.grain }}</div>{% endif %}
-  <div class="row" style="margin-top: 8px;">
+  <div class="row mt-2">
     {% if t.completeness.columns_total %}
       <span class="badge plain">{{ t.completeness.columns_described }}/{{ t.completeness.columns_total }} columns described</span>{% endif %}
     <span class="badge plain">{{ t.completeness.facts }} fact{{ "s" if t.completeness.facts != 1 }}</span>
