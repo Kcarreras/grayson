@@ -87,8 +87,14 @@ GLOSSARY: dict[str, str] = {
         "query budgets. 'strict' is tight, 'generous' is loose. Set per session."
     ),
     "strict_scope": (
-        "When on, queries touching tables outside the session's declared targets "
-        "are blocked instead of just warned about."
+        "When on, reading rows of a table outside the session's scope is blocked "
+        "instead of warned about. Names, columns, and DDL stay readable and are "
+        "recorded, so the agent can ask for a table by name."
+    ),
+    "scope": (
+        "Tables readable beside the targets: named at setup, brought in as library "
+        "views, granted on a scope request, or added here. Widening is always a "
+        "user action and lands in the event log."
     ),
     "target_tables": (
         "The tables this session is investigating. Evidence must actually touch "

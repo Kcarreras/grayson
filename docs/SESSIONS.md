@@ -171,7 +171,22 @@ grayson config workflow-defaults table-health --guard-profile strict --strict-sc
 
 Guard profiles bundle three cost controls — auto-`LIMIT`, per-statement
 timeout, per-session query budget — selected per session. Scope is per
-session: out-of-scope reads warn by default; `strict` blocks them.
+session and is a wall around *rows*: listings and single-object metadata
+(`SHOW TABLES`, `DESCRIBE`, `GET_DDL` of a table or view) are readable for
+any table and name their object; reading an out-of-scope table's rows warns
+by default, and `strict` blocks it.
+
+Scope widens only by a human's decision. The agent asks with a
+`scope_request` intervention naming the tables and why; ticking them in
+the console grants exactly those, from the next statement. Or widen it
+yourself:
+
+```bash
+grayson session scope <id>                        # show
+grayson session scope <id> DB.SCHEMA.SIBLING      # widen (a user action)
+```
+
+Both land in the audit trail as `scope_changed` events naming who and how.
 
 Defaults resolve per workflow: an explicit flag at session start always wins,
 then the workspace's per-workflow defaults (above; also editable on the

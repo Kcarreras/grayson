@@ -62,6 +62,21 @@
     <textarea name="note" rows="2" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
   </div>
 
+{% elif item.kind == "scope_request" %}
+  <div class="card">
+    <p><b>The agent asks to read rows from:</b></p>
+    {% for t in r.tables %}
+    <div><label><input type="checkbox" name="granted" value="{{ t }}" checked>
+      <span class="mono">{{ t }}</span></label></div>
+    {% endfor %}
+    <p style="margin-top:10px;"><b>Why:</b> {{ r.reason }}</p>
+    {% if r.context %}<p class="muted">{{ r.context }}</p>{% endif %}
+    <p class="muted small">Ticked tables join this session's readable scope from the next
+      statement, as a logged decision of yours. Untick any you do not want read; submit with
+      none ticked to decline. Metadata (columns, DDL) was readable already — this grants rows.</p>
+    <textarea name="note" rows="2" placeholder="notes (optional)" style="margin-top:10px;"></textarea>
+  </div>
+
 {% else %}
   <div class="card">
     {% if r.question %}<p>{{ r.question }}</p>{% endif %}

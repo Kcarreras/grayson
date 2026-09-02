@@ -22,6 +22,15 @@ they are equivalent. Never query Snowflake except through grayson.
 - Only read statements run: SELECT / SHOW / DESCRIBE / EXPLAIN. DML/DDL are blocked.
   You never get warehouse write rights — to change a table definition, write a *fix
   proposal* for the user to apply.
+- Scope is a wall around rows, not names. Listings (`SHOW TABLES IN SCHEMA ...`,
+  `INFORMATION_SCHEMA`) and single-object metadata (`DESCRIBE TABLE`, `SHOW COLUMNS`,
+  `SELECT GET_DDL('TABLE', 'DB.S.T')`) are readable for any table — orient freely, and
+  use GET_DDL when a check asks where a table is defined. Reading the *rows* of a table
+  outside the session scope warns, or is blocked under strict scope. When you need a
+  neighbour's rows, ask: file a `scope_request` intervention naming the tables and why;
+  the user grants it from the console and those tables join your scope, logged. Never
+  route around the wall — an out-of-scope read cited as evidence shows on the
+  checkpoint as off-scope.
 - Access warehouse data ONLY through grayson (`query run`, `cache query`). Never open
   warehouse or `.grayson/` database/state files directly — including local or sandbox
   files. Direct reads bypass the audit trail, so nothing learned from them counts as
@@ -94,8 +103,11 @@ they are equivalent. Never query Snowflake except through grayson.
    code block, so the user sees the shape right in the conversation.
 4. Human input when needed: `grayson intervention request <sid> --kind label_sample ...`,
    then `grayson intervention await <sid> <iid> --timeout 600`. The user answers in the
-   web console (`grayson ui serve`). When an answer settles a durable fact about a table
-   (its grain, a semantic rule, an expectation), persist it for future sessions:
+   web console (`grayson ui serve`). To read a table outside your scope, the ask is
+   `--kind scope_request --json '{"tables": ["DB.S.T"], "reason": "..."}'`; the answer's
+   `granted` list is already in scope when it comes back. When an answer settles a
+   durable fact about a table (its grain, a semantic rule, an expectation), persist it
+   for future sessions:
    `grayson knowledge add <table> --fact "..." --evidence <iid>` — the user confirms it
    from the console later.
 4b. Breadth: `workflow show <name>` lists **suggested checks** alongside the required

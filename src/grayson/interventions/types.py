@@ -1,16 +1,25 @@
 """Structured human-in-the-loop intervention types.
 
 An intervention is a typed task an agent files for the user: label a sample,
-confirm a semantic rule, pick an option, or free-respond. The UI renders it as
-an interactive form; the agent reads back a structured response. This replaces
-the CSV round-trip in the user's current workflow.
+confirm a semantic rule, pick an option, free-respond, or grant tables into
+the session's readable scope. The UI renders it as an interactive form; the
+agent reads back a structured response. This replaces the CSV round-trip in
+the user's current workflow.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-INTERVENTION_KINDS = {"label_sample", "confirm_semantics", "choose", "free_response"}
+from grayson.util import is_object_name
+
+INTERVENTION_KINDS = {
+    "label_sample",
+    "confirm_semantics",
+    "choose",
+    "free_response",
+    "scope_request",
+}
 
 
 class InterventionError(ValueError):
@@ -55,6 +64,28 @@ def build_request(kind: str, payload: dict) -> dict:
             "question": payload.get("question", ""),
             "multi": bool(payload.get("multi", False)),
         }
+    if kind == "scope_request":
+        # The ask that closes the scope loop: the agent names the tables whose
+        # rows it wants and why; the human ticks what to grant. Names are
+        # normalized here so the grant matches the guard's scope check.
+        raw = payload.get("tables")
+        if not isinstance(raw, list) or not raw:
+            raise InterventionError("scope_request requires a non-empty 'tables' list")
+        tables: list[str] = []
+        for item in raw:
+            name = str(item).strip().upper()
+            if not is_object_name(name):
+                raise InterventionError(
+                    f"'{item}' is not a table name — use DB.SCHEMA.TABLE, one per entry"
+                )
+            if name not in tables:
+                tables.append(name)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            raise InterventionError(
+                "scope_request requires a 'reason': what reading these tables settles"
+            )
+        return {"tables": tables, "reason": reason, "context": payload.get("context", "")}
     # free_response
     return {"question": str(payload.get("question", "")), "context": payload.get("context", "")}
 
@@ -77,6 +108,23 @@ def validate_response(kind: str, request: dict, response: dict) -> dict:
         elif selected not in valid:
             raise InterventionError("response.selected must be one of the options")
         return {"selected": selected, "note": response.get("note", "")}
+    if kind == "scope_request":
+        granted = response.get("granted")
+        if not isinstance(granted, list):
+            raise InterventionError(
+                "response.granted must be a list of the requested tables to allow "
+                "(empty to decline)"
+            )
+        requested = request.get("tables", [])
+        normalized = [str(g).strip().upper() for g in granted]
+        unknown = [g for g in normalized if g not in requested]
+        if unknown:
+            raise InterventionError(f"response.granted names tables not requested: {unknown}")
+        return {
+            "granted": list(dict.fromkeys(normalized)),
+            "declined": [t for t in requested if t not in normalized],
+            "note": response.get("note", ""),
+        }
     # free_response
     text = response.get("text")
     if not text:

@@ -30,6 +30,7 @@ from grayson.knowledge import KnowledgeDocError, KnowledgeStore, completeness
 from grayson.records import get_record, search_records
 from grayson.ui.format import GLOSSARY, paragraphs, relationship_graph, split_sections
 from grayson.ui.sqlhl import highlight_sql
+from grayson.util import parse_table_list
 from grayson.workspace import Workspace
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -917,6 +918,29 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             s.log_event("user", "guard_changed", changes)
         return _redirect(f"/session/{sid}")
 
+    @app.post("/session/{sid}/scope")
+    async def session_scope_widen(request: Request, sid: str) -> Any:
+        """Bring tables into a live session's readable scope — the UI twin of
+        `grayson session scope`. A user action, logged with who and how; the
+        agent-facing surfaces have no equivalent, by design."""
+        _check(request)
+        s = _session(sid)
+        if s.stage == "closed":
+            return templates.TemplateResponse(
+                request,
+                "session.html",
+                _session_context(s, "session is closed — its scope is part of the record"),
+                status_code=400,
+            )
+        form = await request.form()
+        try:
+            s.widen_scope(parse_table_list(str(form.get("tables", ""))), "user", via="console")
+        except ValueError as e:
+            return templates.TemplateResponse(
+                request, "session.html", _session_context(s, str(e)), status_code=400
+            )
+        return _redirect(f"/session/{sid}")
+
     @app.post("/session/{sid}/close")
     async def session_close_ui(request: Request, sid: str) -> Any:
         """Close from the console — the human boundary; the gates still decide
@@ -1094,6 +1118,9 @@ def _form_to_response(item: dict, form: Any) -> dict:
         if item["request"].get("multi"):
             return {"selected": form.getlist("selected"), "note": form.get("note", "")}
         return {"selected": form.get("selected"), "note": form.get("note", "")}
+    if kind == "scope_request":
+        # unticked everything and submitted = declined; the response records it
+        return {"granted": form.getlist("granted"), "note": form.get("note", "")}
     return {"text": form.get("text", "")}
 
 

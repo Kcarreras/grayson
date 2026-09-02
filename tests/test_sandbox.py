@@ -177,6 +177,23 @@ def test_describe_and_show_tables(sandbox_ws):
     assert any(r["name"] == "CUSTOMERS" for r in show["preview"])
 
 
+def test_get_ddl_in_sandbox(sandbox_ws):
+    sid = invoke(
+        "session", "start", "--workflow", "table-health", "--table", "SANDBOX.SHOP.CUSTOMERS"
+    )["session"]["id"]
+    out = invoke("query", "run", sid, "-q", "SELECT GET_DDL('TABLE', 'SANDBOX.SHOP.CUSTOMERS')")
+    assert out["status"] == "executed" and out["tables"] == ["SANDBOX.SHOP.CUSTOMERS"]
+    (ddl,) = out["preview"][0].values()
+    assert "create or replace TABLE SANDBOX.SHOP.CUSTOMERS" in ddl and "CUSTOMER_ID" in ddl
+    # a whole schema is a bulk read: warned in lenient scope, answered from the catalog
+    out = invoke("query", "run", sid, "-q", "SELECT GET_DDL('SCHEMA', 'SANDBOX.SHOP')")
+    assert out["status"] == "executed" and any("not scope-checked" in w for w in out["warnings"])
+    (ddl,) = out["preview"][0].values()
+    assert ddl.count("create or replace TABLE") > 1
+    out = invoke("query", "run", sid, "-q", "SELECT GET_DDL('STAGE', 'SANDBOX.SHOP.X')")
+    assert out["status"] == "rejected" and out["rule"] == "get_ddl_kind"
+
+
 def test_nested_workspace_init_refused(sandbox_ws, tmp_path):
     for cmd in (["sandbox", "init", "inner"], ["init", "inner2"]):
         result = runner.invoke(app, cmd)

@@ -218,6 +218,20 @@ The guard sees **every** statement before execution; there is no unguarded path.
   default (logged, surfaced in UI) and a hard block only if the session was started
   with `--strict-scope` — this is the "don't get agents in trouble for overly tight
   rules" dial.
+- **Scope is a wall around rows, not names.** Listings (`SHOW TABLES`, `SHOW VIEWS`,
+  `INFORMATION_SCHEMA`) are table-less and always allowed. A metadata read of one named
+  object — `DESCRIBE`, `SHOW COLUMNS IN`, `SELECT GET_DDL('TABLE'|'VIEW', '<name>')` —
+  names that object on the query row (so it counts as evidence when the object is a
+  target) and *warns* when it is outside scope, in both modes; it is never blocked,
+  because the same columns are one always-allowed `INFORMATION_SCHEMA` query away, and
+  a rule that binds only the agents who don't know the workaround is no rule. `GET_DDL`
+  is parsed for this: schema- and database-wide dumps and non-literal names cannot be
+  checked per object (strict blocks, lenient warns); every other object kind (stages,
+  pipes, tasks, procedures, functions, integrations) is denied.
+- **Scope widens only by a human's say-so**, and every widening is a `scope_changed`
+  event naming who and through what: setup inputs flagged `adds_scope` at session start,
+  registered library views, the console's scope control or `grayson session scope`, or a
+  granted `scope_request` intervention (§10). No agent-facing surface widens scope.
 - **Guard settings** are three *independent* controls, each individually toggleable and
   tunable — any combination is valid:
 
@@ -393,8 +407,15 @@ queries against it count as evidence.
 Structured tasks replacing the CSV round-trip:
 
 - Agent files an intervention: type (`label_sample`, `confirm_semantics`, `choose`,
-  `free_response`), payload (e.g. sample rows + label options), and what it will do with
-  the answer.
+  `free_response`, `scope_request`), payload (e.g. sample rows + label options), and
+  what it will do with the answer.
+- `scope_request` is the ask that closes the scope loop: the agent names the tables
+  whose rows it needs and why; the console renders them as checkboxes; the human's
+  grant widens the session's readable scope *as part of answering* (one write path,
+  shared by console and CLI), logged as `scope_changed` with the intervention id. The
+  agent reads back `granted` and `declined`. Without this, a human's "yes, read X" was
+  free text nobody could act on, and the read that followed was an out-of-scope
+  warning whose link to the answer that allowed it was left for a later reader to infer.
 - UI renders it as an interactive task (tabular labeling with keyboard flow, option
   pickers, text). Responses are stored as structured JSON the agent reads back.
 - CLI/MCP: `grayson intervention await` (poll/block) so agents in any harness can wait on

@@ -5,9 +5,10 @@ executor.snow.get_executor). Guarded statements arrive in Snowflake dialect;
 tables are stored under their quoted fully-qualified names (e.g.
 "SANDBOX.SHOP.ORDERS"), so FQN references are folded to those identifiers and
 the statement is transpiled to SQLite via sqlglot. Metadata queries
-(INFORMATION_SCHEMA.TABLES), SHOW TABLES, and DESCRIBE are answered from the
-seeded _grayson_meta catalog so freshness tracking works exactly as it would
-against a real warehouse.
+(INFORMATION_SCHEMA.TABLES), SHOW TABLES, DESCRIBE, and GET_DDL are answered
+from the seeded _grayson_meta catalog and SQLite's own table info, so freshness
+tracking and schema discovery work exactly as they would against a real
+warehouse.
 """
 
 from __future__ import annotations
@@ -29,6 +30,13 @@ SANDBOX_DIR_ENV = "GRAYSON_SANDBOX_DIR"  # override the warehouse store location
 
 _DESCRIBE_RE = re.compile(
     r"^\s*DESC(?:RIBE)?\s+(?:TABLE\s+|VIEW\s+)?([\w.\"$]+)\s*$", re.IGNORECASE
+)
+# SELECT GET_DDL('<kind>', '<name>'[, TRUE]) [AS alias] [LIMIT n] — the guard may
+# have appended a LIMIT; anything more elaborate is not emulated.
+_GET_DDL_RE = re.compile(
+    r"^\s*SELECT\s+GET_DDL\s*\(\s*'(\w+)'\s*,\s*'([\w.\"$]+)'\s*(?:,\s*\w+\s*)?\)"
+    r"\s*(?:AS\s+\w+\s*)?(?:LIMIT\s+\d+\s*)?$",
+    re.IGNORECASE,
 )
 
 
@@ -103,6 +111,14 @@ class SandboxExecutor:
         m = _DESCRIBE_RE.match(stripped)
         if m:
             return self._describe(m.group(1))
+        if "GET_DDL" in upper:
+            m = _GET_DDL_RE.match(stripped)
+            if not m:
+                raise SandboxSQLError(
+                    "only SELECT GET_DDL('TABLE'|'VIEW'|'SCHEMA'|'DATABASE', '<name>') is "
+                    "supported in the sandbox"
+                )
+            return self._get_ddl(m.group(1).upper(), m.group(2))
         return self._run_select(stripped)
 
     def _run_select(self, sql: str) -> list[dict]:
@@ -131,6 +147,30 @@ class SandboxExecutor:
             {"name": r["name"], "type": r["type"] or "TEXT", "kind": "COLUMN", "null?": "Y"}
             for r in rows
         ]
+
+    def _get_ddl(self, kind: str, target: str) -> list[dict]:
+        """One row, one column, the way Snowflake returns it: the column is named
+        after the call and holds CREATE statements for the object(s) named."""
+        name = target.replace('"', "").upper()
+        if kind in {"TABLE", "VIEW"}:
+            fqns = [name]
+        elif kind in {"SCHEMA", "DATABASE"}:
+            prefix = name + "."
+            fqns = [
+                str(r["fqn"])
+                for r in self._query("SELECT fqn FROM _grayson_meta ORDER BY fqn")
+                if str(r["fqn"]).startswith(prefix)
+            ]
+            if not fqns:
+                raise SandboxSQLError(f"{kind.lower()} '{name}' does not exist in the sandbox")
+        else:
+            raise SandboxSQLError(f"GET_DDL('{kind}', ...) is not supported in the sandbox")
+        statements = []
+        for fqn in fqns:
+            cols = self._describe(fqn)
+            body = ",\n".join(f"\t{c['name']} {c['type']}" for c in cols)
+            statements.append(f"create or replace TABLE {fqn} (\n{body}\n);")
+        return [{f"GET_DDL('{kind}', '{name}')": "\n".join(statements)}]
 
     def _show_tables(self) -> list[dict]:
         out = []

@@ -3,6 +3,15 @@
 Every statement an agent submits passes through validate_statement() before
 execution; there is no unguarded path. Default-deny: only read-shaped
 statements (SELECT/SHOW/DESCRIBE/EXPLAIN) survive, scoped and cost-capped.
+
+Scope is a wall around *rows*, not around names. Listings (SHOW TABLES,
+INFORMATION_SCHEMA) are table-less and always allowed; a metadata read of one
+named object (DESCRIBE, SHOW COLUMNS, GET_DDL of a table or view) names that
+object on the query row and warns when it is outside the session scope, in
+both modes; reading an out-of-scope table's *rows* warns by default and is
+blocked under strict scope. INFORMATION_SCHEMA is always readable and cannot
+be scope-checked statically, so a stricter rule on DESCRIBE would only bind
+the agents that do not know the workaround.
 """
 
 from __future__ import annotations
@@ -13,6 +22,8 @@ from fnmatch import fnmatch
 
 import sqlglot
 from sqlglot import exp
+
+from grayson.util import is_object_name
 
 # Statement/expression node types that are never allowed anywhere in the tree.
 # Built by name so the guard survives sqlglot additions/renames: a name that no
@@ -98,6 +109,16 @@ DENIED_TABLES = {
 
 # Built-in table functions that are safe as row sources (no scope/exfil concern).
 SAFE_TABLE_FUNCTIONS = {"GENERATOR", "FLATTEN", "SPLIT_TO_TABLE", "EXPLODE"}
+
+# GET_DDL is a metadata read hidden inside a scalar function: no exp.Table node
+# appears, so without special handling it read any object's definition with no
+# scope check at all — under strict scope, a way around the DESCRIBE rule. The
+# object kinds QA needs are checked like DESCRIBE; whole-schema/database dumps
+# are bulk reads (strict blocks, lenient warns); every other kind (stages,
+# pipes, tasks, procedures, functions, integrations...) reveals code and
+# locations rather than table shapes and is denied outright.
+GET_DDL_OBJECT_KINDS = {"TABLE", "VIEW"}
+GET_DDL_BULK_KINDS = {"SCHEMA", "DATABASE"}
 
 _SHOW_RE = re.compile(
     r"^\s*SHOW\s+(TERSE\s+)?"
@@ -219,14 +240,19 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
         # Metadata reads of ONE table (DESCRIBE TABLE, SHOW COLUMNS IN ...) name
         # that table like a SELECT does: it is recorded on the query row, so a
         # checkpoint can cite the DESCRIBE that opened the investigation as
-        # evidence that touched scope, and strict scope applies to it — column
-        # names of an out-of-scope table are still a read. Schema/database-level
-        # listings (SHOW TABLES IN SCHEMA ...) stay table-less.
+        # evidence that touched scope, and an out-of-scope object is flagged in
+        # both modes — but never blocked: the same columns are one
+        # INFORMATION_SCHEMA query away, and an agent that can see a
+        # neighbour's shape can ask for it by name instead of guessing.
+        # Schema/database-level listings (SHOW TABLES IN SCHEMA ...) stay
+        # table-less.
         meta_tables: list[str] = []
         meta_warnings: list[str] = []
         target = _metadata_target(tree)
         if target is not None:
-            rejected = _scope_check_table(target, context, set(), meta_tables, meta_warnings)
+            rejected = _scope_check_table(
+                target, context, set(), meta_tables, meta_warnings, metadata=True
+            )
             if rejected is not None:
                 return rejected
         return GuardVerdict(
@@ -269,6 +295,11 @@ def validate_statement(sql, settings, context: GuardContext | None = None) -> Gu
     cte_names = {c.alias_or_name.upper() for c in tree.find_all(exp.CTE) if c.alias_or_name}
     tables: list[str] = []
     warnings: list[str] = []
+
+    # GET_DDL names its object like DESCRIBE does (see GET_DDL_OBJECT_KINDS)
+    rejected = _check_get_ddl(tree, context, tables, warnings)
+    if rejected is not None:
+        return rejected
 
     # UDTF row sources (TABLE(udtf(...))) are invisible to the table scope check
     # and could read/exfiltrate outside scope. Built-in table funcs are safe.
@@ -351,11 +382,15 @@ def _scope_check_table(
     cte_names: set[str],
     tables: list[str],
     warnings: list[str],
+    *,
+    metadata: bool = False,
 ) -> GuardVerdict | None:
     """Record one table reference and check it against denylist and scope.
 
     Appends the qualified name to `tables` (and any advisory to `warnings`);
-    returns a rejection verdict when the reference must not run, else None."""
+    returns a rejection verdict when the reference must not run, else None.
+    `metadata` marks a read of the object's shape rather than its rows: the
+    denylist still applies, but scope only ever warns."""
     name = (t.name or "").upper()
     if not name:
         return None  # function-backed source, handled by the caller
@@ -380,7 +415,7 @@ def _scope_check_table(
     schema_key = f"{catalog}.{schema}" if catalog else schema
     if schema and any(fnmatch(schema_key, g.upper()) for g in context.allowed_globs):
         return None
-    if context.strict_scope:
+    if context.strict_scope and not metadata:
         # Unqualified names cannot be verified against scope; in strict mode
         # that ambiguity is itself a block (Snowflake resolves them against
         # the connection's current namespace, i.e. potentially anything).
@@ -392,12 +427,91 @@ def _scope_check_table(
         return _reject(
             "out_of_scope",
             detail,
-            "register the table at session start or ask the user to widen scope",
+            "ask the user to widen scope: file a scope_request intervention naming the "
+            "tables and why (they grant it from the console, or run "
+            "`grayson session scope`); DESCRIBE and GET_DDL of the table are readable "
+            "meanwhile, its rows are not",
         )
     if not schema:
         warnings.append(f"unqualified table '{fq}' cannot be scope-checked")
+    elif context.strict_scope:
+        warnings.append(
+            f"table '{fq}' is outside the session scope: its definition is readable, "
+            "its rows are not (strict mode) — file a scope_request intervention to "
+            "bring it into scope"
+        )
     else:
         warnings.append(f"table '{fq}' is outside the session scope")
+    return None
+
+
+def _check_get_ddl(
+    tree: exp.Expression,
+    context: GuardContext,
+    tables: list[str],
+    warnings: list[str],
+) -> GuardVerdict | None:
+    """Put every GET_DDL call through the metadata scope check.
+
+    GET_DDL('TABLE'|'VIEW', '<literal name>') names its object on the query row
+    and warns when it is outside scope, exactly like DESCRIBE. A schema- or
+    database-wide dump, or a name that is not a literal, cannot be checked per
+    object: strict scope blocks it, lenient warns. Other object kinds are
+    denied."""
+    for fn in tree.find_all(exp.Anonymous):
+        if str(fn.this or "").upper() != "GET_DDL":
+            continue
+        args = fn.expressions
+        kind_arg = args[0] if args else None
+        if not (isinstance(kind_arg, exp.Literal) and kind_arg.is_string):
+            return _reject(
+                "get_ddl_form",
+                "GET_DDL object type must be a string literal",
+                "write GET_DDL('TABLE', 'DB.SCHEMA.TABLE')",
+            )
+        kind = str(kind_arg.this).upper()
+        if kind in GET_DDL_BULK_KINDS:
+            if context.strict_scope:
+                return _reject(
+                    "get_ddl_scope",
+                    f"GET_DDL('{kind}', ...) dumps every object definition in the "
+                    f"{kind.lower()} and cannot be scope-checked (strict mode)",
+                    "name one TABLE or VIEW, or ask the user to relax strict scope",
+                )
+            warnings.append(
+                f"GET_DDL('{kind}', ...) reads every object definition in the "
+                f"{kind.lower()} — not scope-checked"
+            )
+            continue
+        if kind not in GET_DDL_OBJECT_KINDS:
+            return _reject(
+                "get_ddl_kind",
+                f"GET_DDL('{kind}', ...) is not allowed",
+                "only TABLE, VIEW, SCHEMA, and DATABASE definitions are readable; other "
+                "object kinds carry code and locations that read-only QA does not need",
+            )
+        name_arg = args[1] if len(args) > 1 else None
+        if not (isinstance(name_arg, exp.Literal) and name_arg.is_string):
+            if context.strict_scope:
+                return _reject(
+                    "get_ddl_scope",
+                    "GET_DDL object name is not a string literal and cannot be "
+                    "scope-checked (strict mode)",
+                    "pass the fully-qualified name as a literal: GET_DDL('TABLE', 'DB.S.T')",
+                )
+            warnings.append("GET_DDL object name is not a literal — not scope-checked")
+            continue
+        name = str(name_arg.this).strip()
+        if not is_object_name(name):
+            return _reject(
+                "get_ddl_form",
+                f"GET_DDL object name '{name}' is not a valid object identifier",
+                "write GET_DDL('TABLE', 'DB.SCHEMA.TABLE')",
+            )
+        target = exp.to_table(name, dialect="snowflake")
+        rejected = _scope_check_table(target, context, set(), tables, warnings, metadata=True)
+        if rejected is not None:
+            return rejected
     return None
 
 

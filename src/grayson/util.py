@@ -51,6 +51,16 @@ def write_json(path: Path, obj: Any) -> None:
     atomic_write_text(path, json.dumps(obj, indent=2, default=str))
 
 
+_OBJECT_NAME_RE = re.compile(r'^(?:"[^"]+"|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|[A-Za-z_][\w$]*)){0,2}$')
+
+
+def is_object_name(value: str) -> bool:
+    """Whether `value` is one warehouse object name: up to three dot-separated
+    identifiers, each bare or double-quoted. Free text ("the webinar table")
+    is not, and must never be registered as a name nothing will match."""
+    return bool(_OBJECT_NAME_RE.match(str(value).strip()))
+
+
 def parse_table_list(value: str) -> list[str]:
     """Table names from free text a human typed: comma/whitespace separated,
     uppercased, deduplicated, order kept."""
