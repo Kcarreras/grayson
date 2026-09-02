@@ -8,6 +8,7 @@ faster and more reliable than the last.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -58,7 +59,30 @@ _PROFILE_DEFAULTS: dict[str, object] = {
 
 #: frontmatter keys this format defines; anything else in a doc is preserved
 #: verbatim under the doc's "extra" key and written back untouched
-_KNOWN_FRONT_KEYS = {"table", "format", "facts", "definition_files", *PROFILE_KEYS}
+_KNOWN_FRONT_KEYS = {
+    "table",
+    "format",
+    "facts",
+    "definition_files",
+    "definitions",
+    "structure",
+    *PROFILE_KEYS,
+}
+
+#: where a table is defined, structured. `definition_files` (bare paths) is the
+#: format-1 spelling and is still written, derived from these, so an older
+#: grayson or a hand reader sees the same list ("a rename writes both names").
+#: An entry names a work-repo file (`path`), a captured copy beside the doc
+#: (`snapshot`), or both; `kind` says what it is (dbt_model, view, ddl, job, ...),
+#: `hash` fingerprints the text it was captured from so a later pass can say
+#: "changed since", and `captured_at` dates the observation.
+DEFINITION_KINDS = {"dbt_model", "dbt_seed", "dbt_snapshot", "view", "ddl", "job", "other"}
+#: sidecar snapshots live beside the doc as <TABLE>.<kind>.sql — a sidecar is
+#: a dated copy of derived state, never the doc itself, so it can be large and
+#: regenerated without touching the merge-friendly facts
+SNAPSHOT_SUFFIXES = {"dbt": ".dbt.sql", "ddl": ".ddl.sql"}
+#: how much of a snapshot rides along in `knowledge show` (the file holds it all)
+SNAPSHOT_INLINE_CHARS = 20_000
 
 
 class Fact(BaseModel):
@@ -108,6 +132,8 @@ class KnowledgeStore:
                 "format": KNOWLEDGE_FORMAT,
                 "facts": [],
                 "definition_files": [],
+                "definitions": [],
+                "structure": {},
                 "notes": "",
                 "extra": {},
                 **{
@@ -137,11 +163,15 @@ class KnowledgeStore:
             raise KnowledgeDocError(
                 f"knowledge doc {rel}: 'format' must be an integer, got {data.get('format')!r}"
             ) from e
+        definitions = _norm_definitions(data.get("definitions"), data.get("definition_files"))
         doc = {
             "table": table,
             "format": fmt,
             "facts": facts,
-            "definition_files": data.get("definition_files", []),
+            "definitions": definitions,
+            # the format-1 spelling, always consistent with `definitions`
+            "definition_files": [d["path"] for d in definitions if d.get("path")],
+            "structure": data["structure"] if isinstance(data.get("structure"), dict) else {},
             "notes": _strip_heading(body, table),
             # frontmatter this version does not define — kept verbatim so a
             # rewrite by this grayson never strips what a newer one (or a
@@ -182,8 +212,13 @@ class KnowledgeStore:
                 front[key] = doc[key]
         for key, value in (doc.get("extra") or {}).items():
             front.setdefault(key, value)  # round-trip, but never clobber a defined key
+        definitions = _norm_definitions(doc.get("definitions"), doc.get("definition_files"))
+        if definitions:
+            front["definitions"] = definitions
+        if doc.get("structure"):
+            front["structure"] = doc["structure"]
         front |= {
-            "definition_files": doc.get("definition_files", []),
+            "definition_files": [d["path"] for d in definitions if d.get("path")],
             "facts": doc.get("facts", []),
         }
         notes = doc.get("notes", "").strip()
@@ -298,10 +333,24 @@ class KnowledgeStore:
 
     def set_profile(self, fqn: str, updates: dict[str, Any]) -> dict:
         """Merge structured base-descriptor fields (grain, columns, ...) into the doc."""
-        allowed = {*PROFILE_KEYS, "definition_files", "notes"}
+        allowed = {*PROFILE_KEYS, "definition_files", "definitions", "notes"}
         bad = set(updates) - allowed
         if bad:
             raise ValueError(f"unknown profile fields: {sorted(bad)} (allowed: {sorted(allowed)})")
+        if "definitions" in updates or "definition_files" in updates:
+            # both spellings land as structured entries; setting either replaces the
+            # path-bearing entries, and captured snapshots (no path) are kept
+            incoming = _norm_definitions(
+                updates.get("definitions"), updates.get("definition_files")
+            )
+            for d in incoming:
+                _validate_definition(d)
+            current = self.read(fqn)["definitions"]
+            kept = [d for d in current if not d.get("path")]
+            updates = {
+                k: v for k, v in updates.items() if k not in ("definitions", "definition_files")
+            }
+            updates["definitions"] = _merge_definitions(kept, incoming)
         if "columns" in updates:
             cols = updates["columns"]
             if not isinstance(cols, list) or not all(
@@ -326,10 +375,111 @@ class KnowledgeStore:
         return self.read(fqn)
 
     def set_definition_files(self, fqn: str, files: list[str]) -> dict:
+        """The format-1 way to say where a table is defined: bare paths. They
+        become structured entries (kind unknown); snapshots already captured
+        stay."""
+        return self.set_profile(fqn, {"definition_files": list(dict.fromkeys(files))})
+
+    def upsert_definition(self, fqn: str, entry: dict) -> dict:
+        """Add or refresh one definition entry, matched by path (or, for a
+        path-less snapshot, by kind). Other entries are untouched — this is
+        how an ingester records what it found without discarding what a human
+        pointed at."""
+        entry = _norm_definitions([entry], None)
+        if not entry:
+            raise ValueError("a definition needs at least a 'path' or a 'snapshot'")
+        _validate_definition(entry[0])
         doc = self.read(fqn)
-        doc["definition_files"] = list(dict.fromkeys(files))
+        doc["definitions"] = _merge_definitions(doc["definitions"], entry)
         self._write(fqn, doc)
-        return doc
+        return self.read(fqn)
+
+    # -- snapshots (sidecar copies of a definition) -------------------------
+
+    def snapshot_path(self, fqn: str, kind: str) -> Path:
+        suffix = SNAPSHOT_SUFFIXES.get(kind)
+        if suffix is None:
+            raise ValueError(f"unknown snapshot kind {kind!r} (kinds: {sorted(SNAPSHOT_SUFFIXES)})")
+        return self.table_path(fqn).with_suffix(suffix)
+
+    def write_snapshot(self, fqn: str, kind: str, text: str, header: str = "") -> dict:
+        """Write a captured definition beside the doc and return the entry fields
+        that describe it (snapshot name, hash of the text, capture time). The
+        header — who captured it, from what — goes in as SQL comment lines so
+        the file reads standalone."""
+        from grayson.util import atomic_write_text
+
+        path = self.snapshot_path(fqn, kind)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = text.strip() + "\n"
+        lines = [f"-- {line}" for line in header.strip().splitlines() if line.strip()]
+        atomic_write_text(path, ("\n".join(lines) + "\n\n" if lines else "") + body)
+        return {"snapshot": path.name, "hash": text_hash(text), "captured_at": utcnow()}
+
+    def read_snapshot(self, fqn: str, name: str) -> str | None:
+        """A snapshot's text by its file name (as recorded on the entry); None
+        when the file is gone. Names are confined to the doc's own directory."""
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            return None
+        path = self.table_path(fqn).parent / name
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+
+    # -- structure (columns observed from the warehouse) ----------------------
+
+    def sync_columns(
+        self,
+        fqn: str,
+        live: list[dict],
+        source: str = "describe",
+        evidence: list[str] | None = None,
+    ) -> dict:
+        """Merge the warehouse's view of the columns into the doc: machine fields
+        (type, nullable, order) come from the warehouse, human fields
+        (description and anything else) are preserved. A recorded column the
+        warehouse no longer has keeps its description and is flagged `dropped`;
+        one with nothing human on it is simply removed. Records when and how
+        the structure was observed under `structure`."""
+        doc = self.read(fqn)
+        drift = column_drift(doc, live)
+        recorded = {str(c["name"]).upper(): dict(c) for c in doc["columns"]}
+        merged: list[dict] = []
+        for col in live:
+            name = str(col["name"])
+            entry = recorded.pop(name.upper(), {"name": name})
+            entry["name"] = name
+            if col.get("type"):
+                entry["type"] = str(col["type"])
+            if col.get("nullable") is not None:
+                entry["nullable"] = bool(col["nullable"])
+            entry.pop("dropped", None)
+            merged.append(entry)
+        removed: list[str] = []
+        for name, entry in recorded.items():
+            human = {k: v for k, v in entry.items() if k not in _MACHINE_COLUMN_KEYS and v}
+            if human:
+                entry["dropped"] = True
+                merged.append(entry)
+            else:
+                removed.append(name)
+        doc["columns"] = merged
+        doc["structure"] = {
+            "observed_at": utcnow(),
+            "source": source,
+            **({"evidence": list(evidence)} if evidence else {}),
+        }
+        self._write(fqn, doc)
+        return {
+            "table": doc["table"],
+            "columns_total": len(merged),
+            "added": drift["added"],
+            "dropped": drift["dropped"],
+            "type_changed": drift["type_changed"],
+            "removed": removed,
+            "first_observation": drift["status"] == "unrecorded",
+            "structure": doc["structure"],
+        }
 
     # -- search ----------------------------------------------------------
 
@@ -422,6 +572,16 @@ class KnowledgeStore:
                         f"path ('{fqn.upper()}') — was the file moved by hand?",
                     }
                 )
+            for d in doc["definitions"]:
+                snap = d.get("snapshot")
+                if snap and self.read_snapshot(fqn, str(snap)) is None:
+                    warnings.append(
+                        {
+                            "file": rel,
+                            "problem": f"definition snapshot '{snap}' is referenced but "
+                            "missing beside the doc — re-run the capture or drop the entry",
+                        }
+                    )
             ids = [f["id"] for f in doc["facts"]]
             dupes = sorted({i for i in ids if ids.count(i) > 1})
             if dupes:
@@ -536,7 +696,7 @@ def completeness(doc: dict[str, Any]) -> dict[str, Any]:
         missing.append("freshness")
     if not doc.get("relationships"):
         missing.append("relationships")
-    if not doc.get("definition_files"):
+    if not (doc.get("definitions") or doc.get("definition_files")):
         missing.append("definition_files")
     return {
         "base_complete": not missing,
@@ -549,6 +709,169 @@ def completeness(doc: dict[str, Any]) -> dict[str, Any]:
         ),
         "open_questions": len(doc.get("open_questions") or []),
     }
+
+
+#: column fields the warehouse owns; everything else on a column entry is human
+_MACHINE_COLUMN_KEYS = {"name", "type", "nullable", "dropped"}
+
+
+def text_hash(text: str) -> str:
+    """A short, stable fingerprint of a definition's text (whitespace-insensitive
+    at line ends, so an editor's trailing-space churn is not a 'change')."""
+    norm = "\n".join(line.rstrip() for line in text.strip().splitlines())
+    return "sha256:" + hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def columns_from_describe(rows: list[dict]) -> list[dict]:
+    """DESCRIBE TABLE output as column entries ({name, type, nullable}). Snowflake
+    and the sandbox both return `name`/`type`/`null?`; casing varies by driver."""
+    out: list[dict] = []
+    for row in rows:
+        upper = {str(k).upper(): v for k, v in row.items()}
+        name = str(upper.get("NAME") or upper.get("COLUMN_NAME") or "").strip()
+        if not name:
+            continue
+        kind = str(upper.get("KIND") or "COLUMN").upper()
+        if kind != "COLUMN":  # Snowflake lists clustering keys etc. under other kinds
+            continue
+        null_flag = upper.get("NULL?", upper.get("NULLABLE"))
+        nullable: bool | None
+        if isinstance(null_flag, bool):
+            nullable = null_flag
+        elif isinstance(null_flag, str) and null_flag.strip().upper() in {"Y", "N", "YES", "NO"}:
+            nullable = null_flag.strip().upper() in {"Y", "YES"}
+        else:
+            nullable = None
+        out.append(
+            {"name": name, "type": str(upper.get("TYPE") or "").strip(), "nullable": nullable}
+        )
+    return out
+
+
+def _norm_type(value: object) -> str:
+    return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def column_drift(doc: dict[str, Any], live: list[dict]) -> dict[str, Any]:
+    """How the recorded column list differs from the warehouse's, right now.
+
+    `unrecorded` means the doc lists no columns (nothing to drift from — that
+    is a completeness gap, reported elsewhere). Otherwise: columns the
+    warehouse has that the doc does not (`added`), recorded columns the
+    warehouse no longer has (`dropped`), and same-name columns whose recorded
+    type no longer matches (`type_changed`). Columns already flagged dropped
+    on the doc are not counted again.
+    """
+    recorded = [c for c in doc.get("columns") or [] if not c.get("dropped")]
+    if not recorded:
+        return {"status": "unrecorded", "added": [], "dropped": [], "type_changed": []}
+    rec_by_name = {str(c["name"]).upper(): c for c in recorded}
+    live_by_name = {str(c["name"]).upper(): c for c in live}
+    added = [str(c["name"]) for c in live if str(c["name"]).upper() not in rec_by_name]
+    dropped = [str(c["name"]) for c in recorded if str(c["name"]).upper() not in live_by_name]
+    type_changed = []
+    for name, rec in rec_by_name.items():
+        cur = live_by_name.get(name)
+        if cur is None or not rec.get("type") or not cur.get("type"):
+            continue
+        if _norm_type(rec["type"]) != _norm_type(cur["type"]):
+            type_changed.append(
+                {"name": str(rec["name"]), "recorded": str(rec["type"]), "live": str(cur["type"])}
+            )
+    status = "drifted" if (added or dropped or type_changed) else "in_sync"
+    return {
+        "status": status,
+        "added": added,
+        "dropped": dropped,
+        "type_changed": type_changed,
+        "observed_at": (doc.get("structure") or {}).get("observed_at"),
+    }
+
+
+def drift_report(store: KnowledgeStore, live_by_table: dict[str, list[dict]]) -> dict[str, dict]:
+    """Column drift for every table with a live column list AND a recorded
+    one — the session-start briefing line. Tables the library does not
+    describe yet are left out (they are `knowledge_gaps`, not drift)."""
+    out: dict[str, dict] = {}
+    for fqn, live in live_by_table.items():
+        try:
+            doc = store.read(fqn)
+        except ValueError:
+            continue
+        drift = column_drift(doc, live)
+        if drift["status"] != "unrecorded":
+            out[doc["table"]] = drift
+    return out
+
+
+def describe_drift(table: str, drift: dict) -> str:
+    """One line a briefing can carry: what moved, by name."""
+    parts = []
+    if drift.get("added"):
+        parts.append(f"{len(drift['added'])} added ({', '.join(drift['added'])}) — undescribed")
+    if drift.get("dropped"):
+        parts.append(f"{len(drift['dropped'])} dropped ({', '.join(drift['dropped'])})")
+    if drift.get("type_changed"):
+        changes = ", ".join(
+            f"{c['name']} {c['recorded']}→{c['live']}" for c in drift["type_changed"]
+        )
+        parts.append(f"{len(drift['type_changed'])} type change(s) ({changes})")
+    return f"{table}: " + "; ".join(parts)
+
+
+def _validate_definition(entry: dict) -> None:
+    kind = entry.get("kind")
+    if kind is not None and str(kind) not in DEFINITION_KINDS:
+        raise ValueError(
+            f"unknown definition kind {kind!r} (kinds: {', '.join(sorted(DEFINITION_KINDS))})"
+        )
+
+
+def _norm_definitions(value: object, legacy_files: object) -> list[dict]:
+    """Canonicalize definition entries: dicts with a path or snapshot pass
+    through (string-valued fields as strings), a bare string is shorthand for
+    its path, and bare `definition_files` paths not already covered are folded
+    in — so a doc written by either spelling reads the same."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(entry: dict) -> None:
+        key = f"path:{entry['path']}" if entry.get("path") else f"snap:{entry.get('snapshot')}"
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(entry)
+
+    for item in value if isinstance(value, list) else []:
+        if isinstance(item, dict):
+            entry = {k: v for k, v in item.items() if v not in (None, "", [])}
+            for k in ("path", "snapshot", "kind", "repo", "ref", "hash", "captured_at"):
+                if k in entry:
+                    entry[k] = str(entry[k])
+            if entry.get("path") or entry.get("snapshot"):
+                _add(entry)
+        elif isinstance(item, str) and item.strip():
+            _add({"path": item.strip()})
+    for item in legacy_files if isinstance(legacy_files, list) else []:
+        if isinstance(item, str) and item.strip():
+            _add({"path": item.strip()})
+    return out
+
+
+def _merge_definitions(current: list[dict], incoming: list[dict]) -> list[dict]:
+    """Upsert incoming entries into current, matched by path — or, for a
+    path-less snapshot, by kind (one captured DDL per table, one dbt copy).
+    An incoming entry replaces its match whole: it is the newer observation."""
+
+    def _key(d: dict) -> str:
+        if d.get("path"):
+            return f"path:{d['path']}"
+        return f"snap:{d.get('kind') or d.get('snapshot')}"
+
+    merged = {_key(d): d for d in current}
+    for d in incoming:
+        merged[_key(d)] = d
+    return list(merged.values())
 
 
 def _strip_heading(body: str, table: str) -> str:

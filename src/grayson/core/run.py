@@ -177,7 +177,13 @@ def run_statement(
 
 
 def snapshot_metadata(session: Session, executor: Executor | None = None) -> dict:
-    """Fetch ROW_COUNT/LAST_ALTERED for session targets; store in session meta."""
+    """Fetch ROW_COUNT/LAST_ALTERED for session targets; store in session meta.
+
+    Also DESCRIBEs each target the knowledge library records columns for, so
+    the briefing can say where the recorded descriptor has fallen behind the
+    warehouse (`knowledge_drift`). Targets nobody has described yet are not
+    described here — that is a knowledge gap, reported as one, and an
+    unrequested statement per table is not free."""
     sql = metadata_query(session.targets)
     if sql is None:
         return {"status": "skipped", "reason": "no fully-qualified targets"}
@@ -197,8 +203,42 @@ def snapshot_metadata(session: Session, executor: Executor | None = None) -> dic
         }
     session.set_meta("metadata_snapshot", json.dumps(snapshot))
     session.set_meta("metadata_snapshot_at", utcnow())
-    session.log_event("system", "metadata_snapshot", {"tables": list(snapshot)})
-    return {"status": "ok", "tables": snapshot}
+    columns = _snapshot_columns(session, executor)
+    session.set_meta("columns_snapshot", json.dumps(columns))
+    session.log_event(
+        "system",
+        "metadata_snapshot",
+        {"tables": list(snapshot), "columns_described": list(columns)},
+    )
+    return {"status": "ok", "tables": snapshot, "columns": columns}
+
+
+def _snapshot_columns(session: Session, executor: Executor) -> dict[str, list[dict]]:
+    """Live columns for each target with a recorded column list, best-effort:
+    advisory data that must never fail a session start."""
+    from grayson.knowledge import KnowledgeStore, columns_from_describe
+    from grayson.profile.plan import ProfilePlanError, qualify
+
+    store = KnowledgeStore(session.workspace.knowledge_dir)
+    out: dict[str, list[dict]] = {}
+    for target in session.targets:
+        try:
+            doc = store.read(target)
+            quoted = qualify(doc["table"])
+        except (ValueError, ProfilePlanError):  # not an FQN, or an unreadable doc
+            continue
+        if not any(not c.get("dropped") for c in doc["columns"]):
+            continue
+        try:
+            result = executor.execute(f"DESCRIBE TABLE {quoted}", timeout_seconds=60)
+        except Exception:  # noqa: BLE001 — advisory; degrade to 'drift unknown'
+            continue
+        if not result.ok:
+            continue
+        live = columns_from_describe(result.rows)
+        if live:
+            out[doc["table"]] = live
+    return out
 
 
 def _last_altered_snapshot(session: Session) -> dict[str, str]:

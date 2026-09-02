@@ -243,6 +243,11 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "nav": "knowledge",
                 "doc": doc,
                 "comp": completeness(doc),
+                "snapshots": {
+                    str(d["snapshot"]): store.read_snapshot(doc["table"], str(d["snapshot"]))
+                    for d in doc["definitions"]
+                    if d.get("snapshot")
+                },
                 "graph": relationship_graph(
                     {**_library_docs(store), doc["table"]: doc}, focus=doc["table"]
                 ),

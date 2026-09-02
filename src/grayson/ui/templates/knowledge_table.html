@@ -20,9 +20,35 @@
   {% if doc.grain %}<div class="item"><b>Grain</b> {{ doc.grain }}</div>{% endif %}
   {% if doc.freshness %}<div class="item"><b>Freshness</b> {{ doc.freshness }}</div>{% endif %}
   {% if doc.owners %}<div class="item"><b>Owners</b> {{ doc.owners | join(", ") }}</div>{% endif %}
-  {% if doc.definition_files %}
-    <div class="item"><b>Defined in</b> <span class="mono">{{ doc.definition_files | join(", ") }}</span></div>{% endif %}
+  {% if doc.structure and doc.structure.observed_at %}
+    <div class="item"><b>Columns observed</b> <span class="mono small">{{ doc.structure.observed_at }}</span>
+      <span class="muted small">via {{ doc.structure.source }}{% if doc.structure.evidence %} ({{ doc.structure.evidence | join(", ") }}){% endif %}</span></div>{% endif %}
 </div>
+
+{% if doc.definitions %}
+<h2>Defined in {{ help("definitions") }}</h2>
+<div class="card scroll">
+<table>
+<tr><th>Where</th><th>Kind</th><th>Captured</th><th>Hash</th></tr>
+{% for d in doc.definitions %}
+<tr>
+  <td class="mono">{{ d.path or d.snapshot }}{% if d.repo %}<div class="faint small">{{ d.repo }}</div>{% endif %}
+    {% if d.description %}<div class="muted small">{{ d.description }}</div>{% endif %}</td>
+  <td class="muted small">{{ (d.kind or "unknown") | replace("_", " ") }}{% if d.materialized %} · {{ d.materialized }}{% endif %}</td>
+  <td class="muted small mono">{{ d.captured_at or "" }}</td>
+  <td class="faint small mono">{{ d.hash or "" }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% for d in doc.definitions if d.snapshot and snapshots.get(d.snapshot) %}
+<details class="fold" style="margin: 8px 0;">
+  <summary class="muted small">Captured copy — <span class="mono">{{ d.snapshot }}</span>
+    (a dated snapshot; the {{ "dbt repo" if d.kind and d.kind.startswith("dbt") else "warehouse" }} is the authority)</summary>
+  <pre class="card scroll small" style="margin-top: 6px; white-space: pre; overflow-x: auto;">{{ snapshots[d.snapshot] }}</pre>
+</details>
+{% endfor %}
+{% endif %}
 
 <details class="fold" style="margin: 12px 0;" {{ "open" if not comp.base_complete }}>
   <summary class="muted small">Describe this table — grain, freshness, owners
@@ -79,8 +105,8 @@
 <tr><th>Column</th><th>Type</th><th>Description</th><th></th></tr>
 {% for c in doc.columns %}
 <tr>
-  <td class="mono">{{ c.name }}</td>
-  <td class="muted mono small">{{ c.type or "" }}</td>
+  <td class="mono">{{ c.name }}{% if c.dropped %} <span class="badge attn" title="Recorded here, but the warehouse no longer has it">dropped</span>{% endif %}</td>
+  <td class="muted mono small">{{ c.type or "" }}{% if c.nullable is sameas false %} <span class="faint">not null</span>{% endif %}</td>
   <td><input form="col-{{ loop.index }}" name="description" value="{{ c.description or '' }}"
         placeholder="not described yet" style="width: 100%; min-width: 220px;"></td>
   <td><button form="col-{{ loop.index }}" class="btn secondary sm" type="submit">Save</button></td>

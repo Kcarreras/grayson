@@ -21,7 +21,7 @@ from grayson.core.session import STAGES, Session, find_recent_duplicate, resolve
 from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request, validate_response
 from grayson.interventions.types import InterventionError
-from grayson.knowledge import KnowledgeStore, completeness
+from grayson.knowledge import KnowledgeStore, completeness, describe_drift, drift_report
 from grayson.util import parse_table_list, write_json
 from grayson.views import ViewEntry, ViewRegistry, enter_session_scope
 from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
@@ -733,6 +733,9 @@ def session_start(
     knowledge = KnowledgeStore(ws.knowledge_dir)
     result["knowledge"] = {t: knowledge.read(t)["facts"] for t in tables}
     result["knowledge_gaps"] = sorted(t for t, facts in result["knowledge"].items() if not facts)
+    result["knowledge_drift"] = drift_report(
+        knowledge, (result.get("metadata_snapshot") or {}).get("columns") or {}
+    )
     from grayson.checks import ChecksStore
 
     result["external_checks"] = ChecksStore(ws.checks_dir).summary(tables or None)
@@ -747,6 +750,17 @@ def session_start(
             f"no recorded knowledge for {', '.join(result['knowledge_gaps'])} — confirm "
             "grain/semantics with the user early (intervention), record durable answers "
             "with `grayson knowledge add`, or run the table-onboarding workflow first",
+        )
+    drifted = {t: d for t, d in result["knowledge_drift"].items() if d["status"] == "drifted"}
+    if drifted:
+        lines = "; ".join(describe_drift(t, d) for t, d in drifted.items())
+        result["hints"].insert(
+            0,
+            f"the recorded column list is behind the warehouse — {lines}. Run "
+            f"`grayson knowledge sync <table> --session {session.id}` to bring the "
+            "descriptor up to date (it keeps every description), then describe the new "
+            "columns and ask the user what they mean; a column that appeared or vanished "
+            "since the library last looked is a lead, not noise",
         )
     failing = result["external_checks"]["failing"]
     if failing:
@@ -2035,14 +2049,129 @@ def _attach_library_sync(out: dict, ws: Workspace, message: str) -> None:
 
 @knowledge_app.command("show")
 def knowledge_show(table: str) -> None:
-    """Show a table's knowledge entry, with a base-descriptor completeness report."""
+    """Show a table's knowledge entry, with a base-descriptor completeness report
+    and the text of any captured definition snapshots."""
+    from grayson.knowledge import SNAPSHOT_INLINE_CHARS
+
     ws = _workspace()
+    store = KnowledgeStore(ws.knowledge_dir)
     try:
-        doc = KnowledgeStore(ws.knowledge_dir).read(table)
+        doc = store.read(table)
     except ValueError as e:
         fail(str(e))
         return
-    emit({**doc, "completeness": completeness(doc)})
+    snapshots: dict[str, str] = {}
+    for d in doc["definitions"]:
+        name = d.get("snapshot")
+        text = store.read_snapshot(doc["table"], str(name)) if name else None
+        if text is not None:
+            snapshots[str(name)] = text[:SNAPSHOT_INLINE_CHARS]
+    emit({**doc, "completeness": completeness(doc), "definition_snapshots": snapshots})
+
+
+@knowledge_app.command("sync")
+def knowledge_sync(
+    table: str,
+    session_id: str = typer.Option(
+        None,
+        "--session",
+        "-s",
+        help="Run the DESCRIBE through this session: guarded, audited, and its query "
+        "id becomes the observation's evidence. Omit for a system query.",
+    ),
+    ddl: bool = typer.Option(
+        False,
+        "--ddl",
+        help="Also capture GET_DDL beside the doc as a dated snapshot (a view's "
+        "defining SELECT; for a base table, use it when no definition repo exists).",
+    ),
+) -> None:
+    """Bring a table's recorded columns up to date from the warehouse.
+
+    Types, nullability, and order come from DESCRIBE; every description and
+    human field is kept; a recorded column the warehouse no longer has keeps
+    its description and is flagged `dropped`. Reports what changed against the
+    record — a column that appeared since the library last looked is a lead."""
+    from grayson.knowledge.sync import SyncError, sync_table
+
+    ws = _workspace()
+    try:
+        session = _session(session_id) if session_id else None
+        out = sync_table(ws, table, session=session, ddl=ddl)
+    except (SyncError, ValueError, FileNotFoundError) as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    _attach_library_sync(out, ws, f"grayson knowledge: sync {table.upper()}")
+    emit(out)
+
+
+@knowledge_app.command("ingest")
+def knowledge_ingest(
+    manifest: Path = typer.Option(
+        ..., "--manifest", help="dbt manifest.json (target/manifest.json after a run)."
+    ),
+    tables: list[str] = typer.Option(
+        [], "--table", "-t", help="Also record these tables (DB.SCHEMA.TABLE), repeatable."
+    ),
+    everything: bool = typer.Option(
+        False,
+        "--all",
+        help="Every model, seed, and snapshot in the manifest, not just "
+        "the tables the library already documents.",
+    ),
+    repo: str = typer.Option(
+        None, "--repo", help="The dbt repo (URL or name) to stamp on each definition entry."
+    ),
+    no_snapshot: bool = typer.Option(
+        False,
+        "--no-snapshot",
+        help="Record the pointer and hash only; do not copy the compiled SQL beside the doc.",
+    ),
+    no_descriptions: bool = typer.Option(
+        False,
+        "--no-descriptions",
+        help="Do not fill empty column descriptions from the model's schema.yml.",
+    ),
+) -> None:
+    """Record where tables are defined, from a dbt manifest.
+
+    For each documented table (or every model with --all): a `definitions`
+    entry pointing at the model file with a hash of its text, a dated snapshot
+    of the compiled SQL beside the doc, and schema.yml column descriptions
+    filled where the doc has none. Re-running reports what changed since."""
+    from grayson.knowledge.dbt import ingest_dbt_definitions, looks_like_dbt_manifest
+    from grayson.util import read_json
+
+    ws = _workspace()
+    if not manifest.is_file():
+        fail(f"manifest not found: {manifest}")
+        return
+    try:
+        data = read_json(manifest)
+    except (json.JSONDecodeError, OSError) as e:
+        fail(f"unreadable manifest: {e}")
+        return
+    if not looks_like_dbt_manifest(data):
+        fail("not a dbt manifest.json (expected metadata.dbt_version and nodes)")
+        return
+    try:
+        out = ingest_dbt_definitions(
+            KnowledgeStore(ws.knowledge_dir),
+            data,
+            tables=list(tables),
+            everything=everything,
+            repo=repo,
+            snapshot=not no_snapshot,
+            fill_descriptions=not no_descriptions,
+        )
+    except ValueError as e:
+        fail(str(e))
+        return
+    if out["updated"]:
+        _attach_library_sync(
+            out, ws, f"grayson knowledge: dbt definitions for {len(out['updated'])} table(s)"
+        )
+    emit(out)
 
 
 @knowledge_app.command("set")

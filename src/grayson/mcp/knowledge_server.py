@@ -54,11 +54,22 @@ def build_knowledge_server(library_root: Path) -> Any:
         "base-descriptor completeness report."
     )
     def knowledge_show(table: str) -> dict:
+        from grayson.knowledge import SNAPSHOT_INLINE_CHARS
+
         try:
-            doc = KnowledgeStore(knowledge_dir).read(table)
-            return {**doc, "completeness": completeness(doc)}
+            store = KnowledgeStore(knowledge_dir)
+            doc = store.read(table)
         except ValueError as e:
             return _err(e)
+        # captured definitions ride along: this server's readers have no
+        # warehouse, so the library's dated copy is the definition they can read
+        snapshots: dict[str, str] = {}
+        for d in doc["definitions"]:
+            name = d.get("snapshot")
+            text = store.read_snapshot(doc["table"], str(name)) if name else None
+            if text is not None:
+                snapshots[str(name)] = text[:SNAPSHOT_INLINE_CHARS]
+        return {**doc, "completeness": completeness(doc), "definition_snapshots": snapshots}
 
     @mcp.tool(description="Search the knowledge library (facts and glossary) for a term.")
     def knowledge_search(term: str) -> list[dict]:

@@ -1,17 +1,31 @@
 from grayson.knowledge.store import (
+    DEFINITION_KINDS,
     KNOWLEDGE_FORMAT,
     PROFILE_KEYS,
+    SNAPSHOT_INLINE_CHARS,
     Fact,
     KnowledgeDocError,
     KnowledgeStore,
+    column_drift,
+    columns_from_describe,
     completeness,
+    describe_drift,
+    drift_report,
+    text_hash,
 )
 
 __all__ = [
+    "DEFINITION_KINDS",
     "KNOWLEDGE_FORMAT",
     "PROFILE_KEYS",
+    "SNAPSHOT_INLINE_CHARS",
     "Fact",
     "KnowledgeDocError",
     "KnowledgeStore",
+    "column_drift",
+    "columns_from_describe",
     "completeness",
+    "describe_drift",
+    "drift_report",
+    "text_hash",
 ]

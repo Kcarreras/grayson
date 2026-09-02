@@ -55,6 +55,76 @@ The console's Knowledge tab adds a relationship canvas of the whole library
 (Cytoscape + ELK, vendored); each table page shows its completeness report,
 facts, and covering external checks.
 
+## Where a table is defined, and what it is made of
+
+A knowledge doc holds three different things, and they come from different
+authorities:
+
+- **Semantics** — grain, what a column means, relationships, owners. Only
+  humans know these; they are facts and descriptor fields with provenance.
+- **Structure** — the column list the warehouse actually has. The warehouse
+  owns it, and a hand-typed copy silently falls behind.
+- **Definition** — the dbt model, the view's SELECT, the DDL: what actually
+  explains *why* the table looks the way it does. For a base table this lives
+  outside the warehouse, in the repo that owns it.
+
+The library records the first as testimony, and the other two as *pointers
+plus dated observations* — never as an undated copy posing as the authority.
+
+**Structure: `knowledge sync`.** Merges DESCRIBE into the doc: names, types,
+nullability, and order come from the warehouse; every description and human
+field is kept; a recorded column the warehouse no longer has keeps its
+description and is flagged `dropped`. Through a session the DESCRIBE is an
+ordinary guarded, audited statement and its query id is the observation's
+evidence, recorded under `structure`:
+
+```bash
+grayson knowledge sync DB.SCHEMA.TABLE --session <sid>      # MCP: knowledge_sync
+grayson knowledge sync DB.SCHEMA.TABLE --session <sid> --ddl  # also capture GET_DDL
+```
+
+At session start grayson DESCRIBEs each target the library records columns
+for and reports `knowledge_drift` — columns added, dropped, or retyped since
+the library last looked — with a hint to sync and describe the new ones. A
+column that appeared since the last investigation is a lead, not noise.
+Targets nobody has described are a `knowledge_gap`, not drift.
+
+**Definitions.** The doc's `definitions` list says where the table is
+defined: a `path` into the repo that owns it, a `kind` (`dbt_model`, `view`,
+`ddl`, `job`, ...), optionally a `repo`, and a `hash` of the text it was
+recorded from, so a later pass can say "changed since". Agents record them
+with `knowledge set` (the format-1 `definition_files` list of bare paths is
+still written and read; it is the same record). A dbt project fills them in
+bulk from the manifest that already feeds `checks ingest`:
+
+```bash
+grayson knowledge ingest --manifest target/manifest.json [--repo org/dbt] [--all]
+```
+
+For every table the library documents (`--all` for every model), that records
+the model's path, unique id, package, materialization, and hash; copies the
+compiled SQL beside the doc as `TABLE.dbt.sql`; and fills column descriptions
+from the model's `schema.yml` where the doc has none — a description already
+written in grayson stands. Re-running reports which definitions changed.
+
+**Snapshots** (`TABLE.dbt.sql`, `TABLE.ddl.sql`) are dated copies beside the
+doc, headed with when and from what they were captured. They exist for one
+reader: the collaborator served the library read-only, with no warehouse and
+no dbt checkout, whose agent can otherwise dereference nothing. `knowledge
+show` and the console carry them; `library doctor` flags a referenced snapshot
+that has gone missing. The `--ddl` capture is for views, where GET_DDL is the
+defining SELECT, or for a table with no definition repo at all.
+
+**A verified fix is knowledge.** When a proposal's verification passes, the
+fix lands as a `data_inferred` fact on the tables the before/after queries
+touched — title, what changed, proposal and session ids, both query ids as
+evidence. The published record already holds the full story for `records
+search`; the fact is what puts it in the *briefing* of the next session over
+the same table. The structure does not refresh itself: if the fix changed
+columns or a model, `knowledge sync` (and a manifest re-ingest) is the step
+that makes the descriptor follow, and the next session's drift line catches
+it if nobody does.
+
 ## Format stability
 
 The library's file formats are a public interface with a compatibility
