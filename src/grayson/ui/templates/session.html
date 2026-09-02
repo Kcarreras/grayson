@@ -2,7 +2,7 @@
 {% block title %}grayson — {{ s.title or s.id }}{% endblock %}
 {# live view: refresh so agent activity appears without manual reloads. The
    intervention form page deliberately has no refresh (it would clear input). #}
-{% block head %}{% if not error %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block head %}{% endblock %}
 {% block content %}
 {# query chip: links to the query page; hover shows the SQL (first 300 chars) #}
 {% macro qc(qid) -%}
@@ -119,6 +119,21 @@
   <div class="item"><b>Created</b> <span class="mono">{{ s.created_at }}</span></div>
 </div>
 
+{% if open_iv %}
+<h2>Needs your input {{ help("interventions") }}</h2>
+{% for iv in open_iv %}
+<div class="card attn">
+  <div class="row split">
+    <b>{{ iv.title }}</b><span class="badge attn">{{ iv.kind }}</span>
+  </div>
+  {% if iv.prompt %}<div class="ink2 small" style="margin: 6px 0;">{{ iv.prompt }}</div>{% endif %}
+
+
+  <a class="btn confirm" style="margin-top: 6px;" href="/session/{{ s.id }}/intervention/{{ iv.iid }}?t={{ token }}">Respond →</a>
+</div>
+{% endfor %}
+{% endif %}
+
 {% if setup_inputs %}
 <div class="card">
   <div class="overline" style="margin-bottom: 6px;">Setup inputs — why this session was started</div>
@@ -128,19 +143,6 @@
     {% endfor %}
   </dl>
 </div>
-{% endif %}
-
-{% if open_iv %}
-<h2>Needs your input {{ help("interventions") }}</h2>
-{% for iv in open_iv %}
-<div class="card attn">
-  <div class="row split">
-    <b>{{ iv.title }}</b><span class="badge attn">{{ iv.kind }}</span>
-  </div>
-  {% if iv.prompt %}<div class="ink2 small" style="margin: 6px 0;">{{ iv.prompt }}</div>{% endif %}
-  <a class="btn confirm" style="margin-top: 6px;" href="/session/{{ s.id }}/intervention/{{ iv.iid }}?t={{ token }}">Respond →</a>
-</div>
-{% endfor %}
 {% endif %}
 
 {% if charts %}
@@ -157,6 +159,8 @@
     <span class="row" style="margin-left: auto;">
       <span class="badge plain">{{ c.spec.kind }}</span>
       {{ qc(c.spec.qid) }}
+      <a class="chip" href="/session/{{ s.id }}/chart/{{ c.spec.chart_id }}?t={{ token }}"
+         title="Full size, with the data and the query behind it">⤢</a>
     </span>
   </summary>
   {% if c.spec.y | length > 1 %}
@@ -167,7 +171,9 @@
     {% endfor %}
   </div>
   {% endif %}
-  <div style="margin: 6px 0 2px;">{{ c.svg }}</div>
+  <div class="chartbody" style="margin: 6px 0 2px;" data-chart="{{ c.spec.chart_id }}"
+       data-title="{{ c.spec.title }}" data-caption="{{ c.spec.x }} × {{ c.spec.y | join(', ') }}{% if c.spec.note %} — {{ c.spec.note }}{% endif %}"
+       title="Click to enlarge">{{ c.svg }}</div>
   {% if c.spec.note %}<div class="muted small" style="margin-top: 4px;">{{ c.spec.note }}</div>{% endif %}
   <div class="faint small" style="margin-top: 4px;">
     {{ c.spec.x }} × {{ c.spec.y | join(", ") }}
@@ -434,4 +440,70 @@
     </form>
   </div>
 </details>
+<dialog id="chart-lightbox" class="lightbox" aria-label="Chart, enlarged">
+  <div class="row split" style="margin-bottom: 8px;">
+    <b id="lb-title"></b>
+    <span class="row">
+      <span id="lb-pos" class="faint small"></span>
+      <button type="button" class="btn ghost sm" id="lb-prev" title="Previous chart (←)">←</button>
+      <button type="button" class="btn ghost sm" id="lb-next" title="Next chart (→)">→</button>
+      <a class="btn secondary sm" id="lb-open" href="#">Data &amp; query</a>
+      <button type="button" class="btn ghost sm" id="lb-close" title="Close (Esc)">✕</button>
+    </span>
+  </div>
+  <div id="lb-body" class="lb-body"></div>
+  <div id="lb-caption" class="faint small" style="margin-top: 8px;"></div>
+</dialog>
+<script>
+/* Chart lightbox: any chart tile enlarges in place; ← → walk the charts in the
+   order the agent made them, so the analysis can be told as a sequence. */
+(function () {
+  var dlg = document.getElementById("chart-lightbox");
+  if (!dlg || !dlg.showModal) return;
+  var tiles = Array.prototype.slice.call(document.querySelectorAll(".chartbody[data-chart]"));
+  if (!tiles.length) return;
+  var at = -1;
+  function show(i) {
+    if (i < 0 || i >= tiles.length) return;
+    at = i;
+    var tile = tiles[i];
+    var svg = tile.querySelector("svg");
+    document.getElementById("lb-title").textContent = tile.dataset.title || "";
+    document.getElementById("lb-caption").textContent = tile.dataset.caption || "";
+    document.getElementById("lb-pos").textContent = (i + 1) + " / " + tiles.length;
+    document.getElementById("lb-open").href =
+      "/session/{{ s.id }}/chart/" + tile.dataset.chart + "?t={{ token }}";
+    var body = document.getElementById("lb-body");
+    body.innerHTML = "";
+    if (svg) body.appendChild(svg.cloneNode(true));
+    document.getElementById("lb-prev").disabled = i === 0;
+    document.getElementById("lb-next").disabled = i === tiles.length - 1;
+    if (!dlg.open) dlg.showModal();
+  }
+  tiles.forEach(function (tile, i) {
+    tile.addEventListener("click", function () { show(i); });
+  });
+  document.getElementById("lb-prev").addEventListener("click", function () { show(at - 1); });
+  document.getElementById("lb-next").addEventListener("click", function () { show(at + 1); });
+  document.getElementById("lb-close").addEventListener("click", function () { dlg.close(); });
+  dlg.addEventListener("click", function (e) { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowLeft") { show(at - 1); e.preventDefault(); }
+    else if (e.key === "ArrowRight") { show(at + 1); e.preventDefault(); }
+  });
+})();
+{% if not error %}
+/* Live view: reload every 10s so agent activity appears — but never while a
+   chart is enlarged or a field has focus (a half-typed note is not to be lost). */
+(function () {
+  function busy() {
+    var el = document.activeElement;
+    var typing = el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+    return typing || !!document.querySelector("dialog[open]");
+  }
+  function tick() { if (busy()) setTimeout(tick, 3000); else location.reload(); }
+  setTimeout(tick, 10000);
+})();
+{% endif %}
+</script>
 {% endblock %}

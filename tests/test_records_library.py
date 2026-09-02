@@ -153,3 +153,32 @@ def test_library_search_is_verdict_scoped(workspace, session):
     rows = search_library_records(workspace.records_dir, "fan-out")
     assert len(rows) == 1
     assert "payload" not in rows[0]  # summaries only; records_get has the full record
+
+
+def test_published_records_carry_their_evidence_queries(workspace, session):
+    # A query id is a per-session counter and its SQL lives in local state; a
+    # published record carries the cited statements so the evidence survives
+    # the trip to the library.
+    fid, qid = _finding(session)
+    session.accept_finding(fid)
+    path = workspace.records_dir / session.id / f"{fid}.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    ev = doc["evidence_queries"]
+    assert [e["qid"] for e in ev] == [qid]
+    assert ev[0]["session_id"] == session.id
+    assert "SELECT * FROM DB.S.T1" in ev[0]["sql"]
+    assert ev[0]["tables"] == ["DB.S.T1"] and ev[0]["status"] == "executed"
+    # proposal: the before/after pair
+    p = proposals.record_proposal(session, "ddl_snippet", "fix join", {"ddl": "SELECT 1"}, fid)
+    proposals.decide(session, p["pid"], approve=True)
+    after = run_statement(
+        session, "SELECT * FROM DB.S.T1 WHERE dup > 1", executor=FakeExecutor(rows=[])
+    )["qid"]
+    proposals.verify(session, p["pid"], qid, after, "pass", "anomaly gone")
+    pdoc = json.loads((workspace.records_dir / session.id / f"{p['pid']}.json").read_text())
+    assert [e["qid"] for e in pdoc["evidence_queries"]] == [qid, after]
+    # list rows stay light; the full record carries the snapshot either way
+    rows = search_library_records(workspace.records_dir)
+    assert all("evidence_queries" not in r for r in rows)
+    local = get_record(workspace, session.id, "finding", fid)
+    assert [e["qid"] for e in local["evidence_queries"]] == [qid]

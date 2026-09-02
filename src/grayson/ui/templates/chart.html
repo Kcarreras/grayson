@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}grayson — {{ spec.title }}{% endblock %}
+{% block content %}
+<p class="small"><a href="/session/{{ s.id }}?t={{ token }}">← {{ s.title or s.id }}</a>
+  {% if count > 1 %}<span class="faint"> · chart {{ position }} of {{ count }}</span>{% endif %}</p>
+<div class="row split">
+  <h1>{{ spec.title }}</h1>
+  <span class="row">
+    {% if prev_id %}<a class="btn ghost sm" href="/session/{{ s.id }}/chart/{{ prev_id }}?t={{ token }}" title="Previous chart">←</a>{% endif %}
+    {% if next_id %}<a class="btn ghost sm" href="/session/{{ s.id }}/chart/{{ next_id }}?t={{ token }}" title="Next chart">→</a>{% endif %}
+    <a class="btn secondary sm" href="/session/{{ s.id }}/chart/{{ spec.chart_id }}.svg?t={{ token }}"
+       title="Download as an SVG file (carries the grayson mark)">Download SVG</a>
+  </span>
+</div>
+<div class="row" style="margin: 2px 0 10px;">
+  <span class="badge plain">{{ spec.kind }}</span>
+  <a class="chip" href="/session/{{ s.id }}/query/{{ spec.qid }}?t={{ token }}"
+     title="The executed query this chart is built from">{{ spec.qid }}</a>
+  <span class="faint small">{{ spec.x }} × {{ spec.y | join(", ") }}
+    {% if data.truncated %} · first {{ data.cap }} rows plotted{% endif %}
+    {% if spec.worker %} · {{ spec.worker }}{% endif %} · {{ spec.created_at }}</span>
+</div>
+
+<div class="card chart-large">
+  {% if spec.y | length > 1 %}
+  <div class="row small" style="gap: 14px; margin: 0 0 6px;">
+    {% for name in spec.y %}
+    <span class="row" style="gap: 5px;"><span class="swatch s{{ loop.index }}"></span>
+      <span class="ink2">{{ name }}</span></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {{ svg }}
+  {% if spec.note %}<div class="ink2 small" style="margin-top: 8px;">{{ spec.note }}</div>{% endif %}
+</div>
+
+<h2>Plotted data ({{ data.points | length }} rows)</h2>
+<div class="card scroll" style="max-height: 480px; overflow-y: auto;">
+<table>
+<tr><th>{{ spec.x }}</th>{% for name in spec.y %}<th class="num">{{ name }}</th>{% endfor %}</tr>
+{% for p in data.points %}
+<tr><td class="small">{{ p.x }}</td>
+  {% for v in p.y %}<td class="num small">{{ v if v is not none else "—" }}</td>{% endfor %}</tr>
+{% endfor %}
+</table>
+</div>
+
+{% if sql_html %}
+<h2>Source query <span class="faint small mono">{{ s.id }} · {{ spec.qid }}</span></h2>
+<div class="card">
+  <pre class="sql">{{ sql_html }}</pre>
+  {% if q %}<div class="faint small" style="margin-top: 6px;">{{ q.ts }} · {{ q.status }}
+    {% if q.row_count is not none %} · {{ q.row_count }} rows{% endif %}{% if q.truncated %} (capped){% endif %}</div>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

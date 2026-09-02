@@ -105,6 +105,14 @@ small, author-stamped JSON. Rejected findings never publish; accepting a
 superseding finding republishes the superseded one so the library copy stops
 reading as current.
 
+Every published record carries the queries it cites — statement, executed
+form, timestamp, outcome, tables — as `evidence_queries`, because a query id
+is a per-session counter (`q_0002` means nothing outside its session) and the
+SQL lives only in local session state. The record page shows them one fold
+away, links them to the query page while the session is local, and qualifies
+every id with its session. Results stay local; the statement and its stats
+are what a reviewer needs.
+
 From any linked workspace, `grayson records search` answers "how did anyone
 on the team diagnose and fix something like this" — collaborators' records
 merge into every search, badge `team` in the console, and open from the

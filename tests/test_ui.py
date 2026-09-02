@@ -542,3 +542,60 @@ def test_report_record_renders_locally_and_from_the_library(client, session, wor
     page = other_client.get(f"/records/{session.id}/report/report?t={TOKEN}")
     assert page.status_code == 200
     assert "from a teammate" in page.text and "Session report" in page.text
+
+
+def test_record_page_shows_the_cited_queries(client, session, workspace):
+    from grayson.records import get_record
+
+    qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    f = engine.record_finding(
+        session,
+        {
+            "title": "Bad category mapping",
+            "severity": "medium",
+            "confidence": "high",
+            "affected_objects": ["DB.S.URLS"],
+            "reproduction": "re-run the cited query",
+            "summary": "Several URLs map to two categories at once.",
+            "evidence": [qid],
+            "extra": {
+                "finding_kind": "rule_defect",
+                "rule_location": "categorize_url()",
+                "observed_behaviour": "some URLs carry two categories",
+                "expected_behaviour": "exactly one category per URL",
+            },
+        },
+    )
+    page = client.get(f"/records/{session.id}/finding/{f['fid']}?t={TOKEN}")
+    assert page.status_code == 200
+    assert f"/session/{session.id}/query/{qid}" in page.text  # linked, not a bare number
+    assert "SELECT * FROM DB.S.URLS" in page.text  # the statement itself, one fold away
+    assert get_record(workspace, session.id, "finding", f["fid"])["evidence_queries"]
+
+
+def test_chart_page_and_svg_download(client, session):
+    from grayson.charts import add_chart
+
+    rows = [{"DAY": f"2026-01-0{i}", "NULL_RATE": i / 10} for i in range(1, 6)]
+    qid = run_statement(
+        session, "SELECT DAY, NULL_RATE FROM DB.S.URLS", executor=FakeExecutor(rows=rows)
+    )["qid"]
+    spec = add_chart(session, qid, "line", "DAY", ["NULL_RATE"], "NULL rate by day")
+    # the session page: tiles are lightbox-able and link to the full page
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert 'id="chart-lightbox"' in page
+    assert f'data-chart="{spec["chart_id"]}"' in page
+    assert "http-equiv" not in page  # refresh is script-driven now (pauses while typing)
+    # the full page: chart, data, and the query behind it
+    detail = client.get(f"/session/{session.id}/chart/{spec['chart_id']}?t={TOKEN}")
+    assert detail.status_code == 200
+    assert "NULL rate by day" in detail.text and "Plotted data (5 rows)" in detail.text
+    assert "DAY, NULL_RATE" in detail.text and 'class="sql-k"' in detail.text  # highlighted
+    assert f"/session/{session.id}/query/{qid}" in detail.text
+    # the file
+    svg = client.get(f"/session/{session.id}/chart/{spec['chart_id']}.svg?t={TOKEN}")
+    assert svg.status_code == 200
+    assert svg.headers["content-type"].startswith("image/svg+xml")
+    assert "attachment" in svg.headers["content-disposition"]
+    assert svg.text.lstrip().startswith("<svg")
+    assert client.get(f"/session/{session.id}/chart/c_999?t={TOKEN}").status_code == 404

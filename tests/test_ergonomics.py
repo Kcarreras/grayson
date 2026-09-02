@@ -127,7 +127,10 @@ def test_ui_pages_auto_refresh(workspace, fake_snow_env, sid):
     dash = client.get("/?t=tok")
     assert 'http-equiv="refresh"' in dash.text
     detail = client.get(f"/session/{sid}?t=tok")
-    assert 'http-equiv="refresh"' in detail.text
+    # the session page refreshes by script instead: it waits while a field has
+    # focus or a chart is enlarged, so a half-typed note is never lost
+    assert 'http-equiv="refresh"' not in detail.text
+    assert "location.reload()" in detail.text
     # the intervention form page must NOT refresh (it would clear user input)
     from grayson.core.session import Session
     from grayson.interventions import build_request
