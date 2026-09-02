@@ -40,6 +40,8 @@ _AUTH_MARKERS = [
 ]
 _AUTH_MARKER_RES = [re.compile(r"connection\b.*\bnot found")]
 _TIMEOUT_MARKERS = ["statement reached its statement or warehouse timeout", "604 "]
+#: Snowflake names the limit it enforced: "... timeout of 300 second(s) and was canceled"
+_TIMEOUT_SECONDS_RE = re.compile(r"timeout of (\d+) second")
 
 
 @dataclass
@@ -87,6 +89,36 @@ def classify_failure(stderr: str, stdout: str = "") -> str:
     if any(marker in text for marker in _TIMEOUT_MARKERS):
         return "timeout"
     return "error"
+
+
+def explain_timeout(error: str, requested_seconds: int) -> str:
+    """Say which timeout actually fired, when Snowflake's text names one.
+
+    The guard sets STATEMENT_TIMEOUT_IN_SECONDS at session level, but Snowflake
+    enforces the lowest non-zero value across the session and the warehouse the
+    statement ran on (and the account/user levels above it). A warehouse capped
+    at 300s cancels at 300s however generous the guard profile is — and the
+    agent, reading "timeout of 300 second(s)", reasonably blames the guard.
+    Returns an empty string when there is nothing to add."""
+    match = _TIMEOUT_SECONDS_RE.search(error or "")
+    if not match:
+        return ""
+    enforced = int(match.group(1))
+    if requested_seconds and enforced < requested_seconds:
+        return (
+            f" [grayson: the session guard asked for {requested_seconds}s, but Snowflake "
+            f"enforced {enforced}s — a lower STATEMENT_TIMEOUT_IN_SECONDS set on the "
+            "warehouse, user, or account wins over the session-level value. Raising the "
+            "guard profile cannot lift this; a Snowflake admin must raise the parameter "
+            "on that warehouse, or the query must be narrowed.]"
+        )
+    if requested_seconds and enforced == requested_seconds:
+        return (
+            f" [grayson: this is the session guard's {requested_seconds}s timeout. A "
+            "human can move the session to a profile with a longer one (console guard "
+            "fold, or `grayson session guard <sid> --guard-profile <name>`).]"
+        )
+    return ""
 
 
 def parse_snow_json(stdout: str, drop_status_rows: bool = False) -> list[dict]:
@@ -159,6 +191,8 @@ class SnowExecutor:
         if proc.returncode != 0:
             status = classify_failure(proc.stderr or "", proc.stdout or "")
             detail = (proc.stderr or proc.stdout or "").strip()[-2000:]
+            if status == "timeout":
+                detail += explain_timeout(detail, timeout_seconds)
             return ExecutionResult(status=status, duration_ms=duration_ms, error=detail)
 
         try:

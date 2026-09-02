@@ -37,6 +37,18 @@ def test_init_library(tmp_path):
     assert (lib / "views" / "registry.yaml").is_file()
     assert (lib / "workflows").is_dir()
     assert (lib / "README.md").is_file()
+    # every asset folder explains itself to a browser of the repo
+    for folder in ("knowledge", "views", "workflows", "checks", "records", "reports"):
+        assert (lib / folder / "README.md").is_file(), folder
+    assert "profiles" in (lib / "reports" / "README.md").read_text()
+    assert "reports/" in (lib / "README.md").read_text()
+
+
+def test_init_library_never_overwrites_a_teams_readme(tmp_path):
+    lib = init_library(tmp_path / "teamlib")
+    (lib / "views" / "README.md").write_text("ours\n", encoding="utf-8")
+    init_library(lib)
+    assert (lib / "views" / "README.md").read_text() == "ours\n"
 
 
 def test_status_solo_mode(workspace):

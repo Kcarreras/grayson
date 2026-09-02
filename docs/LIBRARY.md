@@ -28,6 +28,23 @@ and points the workspace at the clone. Collaborators run the same command.
 - `grayson library extract` splits a solo workspace's assets into a new repo.
 - Git auth stays inside git — grayson never handles those credentials.
 
+### What each folder holds
+
+| Folder | Contents | Written by |
+|---|---|---|
+| `knowledge/` | One document per table (`<db>/<schema>/<table>.md`): descriptors, dated definition observations, facts with provenance; `glossary.md` | agents propose, humans confirm |
+| `views/` | The QA view library: `registry.yaml` (name, purpose, source tables, base files, DDL path) and `ddl/*.sql` | humans register the views agents proposed |
+| `workflows/` | Workflow templates: overrides of the built-ins and custom investigation types | humans, `grayson workflow fork` |
+| `checks/` | External check results as JSON (Airflow, dbt, scheduled QA jobs) | automation |
+| `records/` | Published session output: accepted findings, verified fixes, and each closed session's `report.md` + `report.json` | sessions, at human-approved moments |
+| `reports/` | Report **profiles** (`*.yaml`) — how reports render. The reports themselves are in `records/` | humans |
+
+The scaffold writes a README into each folder saying the same, so the repo
+explains itself when browsed on the git host. Linking a library scaffolds
+only what is missing, so re-running `grayson library link <path-or-url>`
+against a library made by an older grayson adds the READMEs without touching
+anything else.
+
 ## Knowledge, with provenance
 
 Facts about tables carry a status — `proposed` / `data_inferred` /
@@ -246,7 +263,8 @@ Report facts render deterministically from the session record and are not
 configurable. *Presentation* is a **report profile** — a small YAML in
 `reports/` (scaffolded with a commented `default.yaml`): section order and
 inclusion, `engineering` vs `stakeholder` audience, header/footer. Pick one
-with `grayson session report --profile <name>`.
+with `grayson session report --profile <name>`. That is all `reports/`
+holds: profiles, not reports.
 
 When a session closes, its full report publishes into `records/<sid>/`
 (`report.md` + searchable `report.json`), so `records search` returns whole

@@ -108,6 +108,8 @@ opened in the IDE alongside the user's SQL repos:
 │   └── ddl/*.sql
 ├── workflows/                  # LIBRARY ASSET — workflow template overrides/custom types
 ├── checks/                     # LIBRARY ASSET — external check results (Airflow, dbt, …)
+├── records/                    # LIBRARY ASSET — published findings, fixes, and <sid>/report.md
+├── reports/                    # LIBRARY ASSET — report *profiles* (*.yaml), not reports
 └── .grayson/                    # sessions & data
     └── sessions/<id>/
         ├── state.db            # SQLite (WAL): state machine, event log, locks
