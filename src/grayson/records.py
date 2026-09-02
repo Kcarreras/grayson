@@ -109,7 +109,47 @@ def _record_path(records_dir: Path, session_id: str, record_id: str) -> Path:
     return records_dir / session_id / f"{record_id}.json"
 
 
-def _publish(workspace: Workspace, row: dict, record: dict, message: str) -> None:
+def evidence_snapshot(session: Session, qids: list[str]) -> list[dict]:
+    """The cited queries themselves — statement, executed form, timestamp,
+    outcome, tables — in citation order, deduplicated, unknown ids skipped.
+
+    Query ids are per-session counters (`q_0002` means nothing outside its
+    session), and the SQL lives only in local session state. Publishing this
+    beside a record is what lets "evidence or it didn't happen" survive the
+    trip to the library: a teammate reading a finding sees the queries that
+    proved it, not just their numbers. Results stay local — the statement and
+    its stats are what a reviewer needs; rows can be large and sensitive."""
+    out: list[dict] = []
+    for qid in dict.fromkeys(q for q in qids if q):
+        row = session.query_row(qid)
+        if row is None:
+            continue
+        executed = row.get("sql_executed")
+        entry = {
+            "qid": qid,
+            "session_id": session.id,
+            "ts": row.get("ts"),
+            "status": row.get("status"),
+            "sql": row.get("sql_raw") or "",
+            "row_count": row.get("row_count"),
+            "truncated": bool(row.get("truncated")),
+            "tables": json.loads(row["tables_json"]) if row.get("tables_json") else [],
+        }
+        if executed and executed != entry["sql"]:
+            entry["sql_executed"] = executed  # e.g. the guard's injected LIMIT
+        if row.get("label"):
+            entry["label"] = row["label"]
+        out.append(entry)
+    return out
+
+
+def _publish(
+    workspace: Workspace,
+    row: dict,
+    record: dict,
+    message: str,
+    evidence: list[dict] | None = None,
+) -> None:
     """Write one distilled record into the library and auto-push if configured.
 
     Best-effort by design: publication must never fail the user action
@@ -128,6 +168,8 @@ def _publish(workspace: Workspace, row: dict, record: dict, message: str) -> Non
             "published_at": utcnow(),
             "record": record,
         }
+        if evidence:
+            doc["evidence_queries"] = evidence
         atomic_write_text(path, json.dumps(doc, indent=2, default=str) + "\n")
         maybe_auto_push(workspace, message)
     except OSError:
@@ -149,6 +191,7 @@ def publish_finding(session: Session, fid: str) -> None:
         _finding_row(base, f),
         f,
         f"grayson records: finding {fid} ({session.id})",
+        evidence=evidence_snapshot(session, f["payload"].get("evidence") or []),
     )
     target = f["payload"].get("supersedes")
     if target:
@@ -159,6 +202,7 @@ def publish_finding(session: Session, fid: str) -> None:
                 _finding_row(base, old),
                 old,
                 f"grayson records: supersede {target} ({session.id})",
+                evidence=evidence_snapshot(session, old["payload"].get("evidence") or []),
             )
 
 
@@ -169,11 +213,15 @@ def publish_proposal(session: Session, pid: str) -> None:
     if p is None or not p.get("verification"):
         return
     base = _session_base(session.id, session.meta_all())
+    verification = p.get("verification") or {}
     _publish(
         session.workspace,
         _proposal_row(base, p),
         p,
         f"grayson records: proposal {pid} ({session.id})",
+        evidence=evidence_snapshot(
+            session, [verification.get("before_qid"), verification.get("after_qid")]
+        ),
     )
 
 
@@ -221,7 +269,18 @@ def publish_report(session: Session) -> None:
                 "narrative": report.get("narrative", ""),
             },
         }
-        _publish(session.workspace, row, report, f"grayson records: report ({session.id})")
+        cited: list[str] = []
+        for cp in report.get("checkpoints") or []:
+            cited += cp.get("evidence") or []
+        for finding in report.get("findings") or []:
+            cited += (finding.get("payload") or {}).get("evidence") or []
+        _publish(
+            session.workspace,
+            row,
+            report,
+            f"grayson records: report ({session.id})",
+            evidence=evidence_snapshot(session, cited),
+        )
     except (OSError, ValueError, KeyError):  # pragma: no cover - best-effort
         return
 
@@ -253,7 +312,12 @@ def library_records(records_dir: Path, kind: str | None = None) -> list[dict]:
             continue
         if kind is not None and data["kind"] != kind:
             continue
-        out.append({**{k: v for k, v in data.items() if k != "record"}, "source": "library"})
+        out.append(
+            {
+                **{k: v for k, v in data.items() if k not in ("record", "evidence_queries")},
+                "source": "library",
+            }
+        )
     return out
 
 
@@ -323,7 +387,20 @@ def get_record(workspace: Workspace, session_id: str, kind: str, record_id: str)
     except (OSError, ValueError, FileNotFoundError):
         pass
     if item is not None:
-        return {"session_id": session_id, "kind": kind, "record": item, "source": "session"}
+        # local: the evidence is a query away, so snapshot it live — the same
+        # shape a library copy carries, whichever way the record is reached
+        if kind == "finding":
+            cited = (item.get("payload") or {}).get("evidence") or []
+        else:
+            verification = item.get("verification") or {}
+            cited = [verification.get("before_qid"), verification.get("after_qid")]
+        return {
+            "session_id": session_id,
+            "kind": kind,
+            "record": item,
+            "source": "session",
+            "evidence_queries": evidence_snapshot(s, cited),
+        }
     published = get_library_record(workspace.records_dir, session_id, record_id)
     if published is None or published.get("kind") != kind:
         return None
@@ -334,4 +411,5 @@ def get_record(workspace: Workspace, session_id: str, kind: str, record_id: str)
         "source": "library",
         "session_title": published.get("session_title", ""),
         "author": published.get("author"),
+        "evidence_queries": published.get("evidence_queries") or [],
     }

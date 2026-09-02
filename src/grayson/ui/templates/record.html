@@ -1,6 +1,30 @@
 {% extends "base.html" %}
 {% block title %}grayson — {{ record.title }}{% endblock %}
 {% block content %}
+{# evidence chips: query ids are per-session counters, so every chip carries the
+   session in its tooltip; local sessions link to the query page, and the cited
+   statements themselves are one fold away either way (published beside the
+   record, so a teammate sees the queries that proved it, not just numbers) #}
+{% macro evq(qid) -%}
+{% if from_library %}<span class="chip" title="{{ session_id }} · {{ qid }}">{{ qid }}</span>
+{% else %}<a class="chip" href="/session/{{ session_id }}/query/{{ qid }}?t={{ token }}"
+  title="{{ session_id }} · {{ qid }}">{{ qid }}</a>{% endif %}
+{%- endmacro %}
+{% macro evidence_block(ids) %}
+{% set shown = evidence_queries | selectattr("qid", "in", ids) | list %}
+{% if shown %}
+<details class="inlinefold" style="margin-top: 8px;">
+  <summary>Show the {{ shown | length }} cited quer{{ "y" if shown | length == 1 else "ies" }}</summary>
+  {% for e in shown %}
+  <div style="margin: 8px 0;">
+    <div class="faint small"><span class="mono">{{ e.session_id }} · {{ e.qid }}</span>
+      · {{ e.ts }} · {{ e.status }}{% if e.row_count is not none %} · {{ e.row_count }} rows{% endif %}{% if e.truncated %} (capped){% endif %}{% if e.tables %} · {{ e.tables | join(", ") }}{% endif %}{% if e.label %} · {{ e.label }}{% endif %}</div>
+    <pre class="sql">{{ e.sql }}</pre>
+  </div>
+  {% endfor %}
+</details>
+{% endif %}
+{% endmacro %}
 <p class="small"><a href="/records?t={{ token }}">← Records</a> ·
   {% if from_library %}
   from a teammate's session <span class="{{ 'mono' if not session_title }}"
@@ -57,7 +81,8 @@
     {% for o in record.payload.affected_objects %}<span class="chip">{{ o }}</span>{% endfor %}</div>
   {% endif %}
   <div class="row" style="margin-top: 6px;"><span class="overline">Evidence</span>
-    {% for q in record.payload.evidence %}<span class="chip">{{ q }}</span>{% endfor %}</div>
+    {% for q in record.payload.evidence %}{{ evq(q) }}{% endfor %}</div>
+  {{ evidence_block(record.payload.evidence) }}
   {% if record.payload.proposed_remediation %}
   <h2>Suggested remediation</h2>
   <div class="sections">{% for sec in record.payload.proposed_remediation | sections %}
@@ -105,9 +130,10 @@
   <div class="row" style="margin: 4px 0; gap: 8px;">
     <span class="badge {{ 'ok' if c.status == 'complete' else 'plain' }}">{{ c.status }}</span>
     <span>{{ c.title or c.key }}</span>
-    {% if c.evidence %}<span class="faint small">{% for q in c.evidence %}<span class="chip">{{ q }}</span> {% endfor %}</span>{% endif %}
+    {% if c.evidence %}<span class="faint small">{% for q in c.evidence %}{{ evq(q) }} {% endfor %}</span>{% endif %}
   </div>
   {% endfor %}
+  {{ evidence_block(evidence_queries | map(attribute="qid") | list) }}
 </div>
 {% endif %}
 {% if record.findings %}
@@ -165,10 +191,11 @@
     <span class="badge {{ 'ok' if record.verification.verdict == 'pass' else 'bad' }}">{{ record.verification.verdict }}</span>
     <span class="muted small">rows {{ record.verification.comparison.before.row_count }}
       → {{ record.verification.comparison.after.row_count }}</span>
-    <span class="chip">{{ record.verification.before_qid }}</span>
+    {{ evq(record.verification.before_qid) }}
     <span class="faint">→</span>
-    <span class="chip">{{ record.verification.after_qid }}</span>
+    {{ evq(record.verification.after_qid) }}
   </div>
+  {{ evidence_block([record.verification.before_qid, record.verification.after_qid]) }}
   {% if record.verification.note %}<div class="ink2 small" style="margin-top: 6px;">{{ record.verification.note }}</div>{% endif %}
   {% endif %}
 </div>

@@ -149,6 +149,12 @@ Kinds: `bar`, `line`, `scatter`; up to three series (the palette is
 validated colorblind-safe at three — more dimensions means more charts).
 `grayson chart render --out chart.svg` exports SVGs.
 
+Any chart tile enlarges in a lightbox on click (← → walk the charts in the
+order the agent made them), and `⤢` opens the chart's own page: full size,
+the plotted rows, the source query, and a **Download SVG** for a slide or a
+ticket. The session page's live refresh waits while a chart is enlarged or a
+field has focus, so a half-typed note is never lost.
+
 ## Settings and guard profiles
 
 Configuration lives in `grayson.toml` — committed, reviewable, diffable.
