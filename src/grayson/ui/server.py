@@ -972,17 +972,21 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         workspace.reload_config()
         changes: dict[str, Any] = {}
         profile = str(form.get("guard_profile", "")).strip()
-        if profile and profile != current["guard_profile"]:
+        if profile:
             try:
                 settings = workspace.config.resolve_profile(profile)
             except KeyError as e:
                 return templates.TemplateResponse(
                     request, "session.html", _session_context(s, str(e.args[0])), status_code=400
                 )
-            s.set_meta("guard", settings.model_dump_json())
-            s.set_meta("guard_profile", profile)
-            changes["guard_profile"] = profile
-            changes["guard"] = settings.model_dump()
+            # Re-applying the session's own profile name is not a no-op: its
+            # numbers may have been edited in Settings since the session
+            # snapshotted them. Compare the resolved settings, not the label.
+            if profile != current["guard_profile"] or settings.model_dump() != current["guard"]:
+                s.set_meta("guard", settings.model_dump_json())
+                s.set_meta("guard_profile", profile)
+                changes["guard_profile"] = profile
+                changes["guard"] = settings.model_dump()
         strict_raw = str(form.get("strict_scope", "")).strip()
         strict = {"true": True, "false": False}.get(strict_raw)
         if strict is not None and strict != current["strict_scope"]:
