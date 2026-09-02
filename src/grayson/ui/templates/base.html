@@ -281,6 +281,52 @@ details.opening > :not(summary) { animation: fade-down .2s ease-out both; }
 @keyframes fade-down { from { opacity: 0; transform: translateY(-4px); } }
 @keyframes fade-in { from { opacity: 0; } }
 
+/* ---- lists ------------------------------------------------------------
+   One treatment for every long list (knowledge tables, checks, records):
+   a toolbar above, a bounded scroll box below, folding items whose title
+   row carries the name and standing, and names that wrap inside the tile. */
+.listtools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  margin: 0 0 10px; }
+.listtools .lt-q { width: auto; flex: 1 1 180px; max-width: 260px; }
+.listtools .lt-sort { display: inline-flex; align-items: center; gap: 6px; }
+.listtools .lt-sort select { width: auto; }
+.listtools .lt-filters { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.listtools .lt-count { margin-left: auto; white-space: nowrap; }
+.listtools .lt-fold { display: inline-flex; gap: 4px; }
+.fchip { cursor: pointer; font-family: inherit; font-size: 12px; padding: 3px 9px;
+  transition: border-color .12s, color .12s, background .12s; }
+.fchip:hover { border-color: var(--muted); color: var(--ink); }
+.fchip.on { border-color: var(--act); background: var(--act-soft); color: var(--act); }
+.fchip .lt-n { color: var(--faint); font-variant-numeric: tabular-nums; }
+.fchip.on .lt-n { color: var(--act); }
+.listwrap { max-height: 72vh; overflow-y: auto; overscroll-behavior: contain; }
+/* a fade at the foot of the box says "more below" without a border */
+.listwrap::after { content: ""; display: block; position: sticky; bottom: 0; height: 22px;
+  margin-top: -22px; pointer-events: none;
+  background: linear-gradient(transparent, var(--bg)); }
+.listwrap.card { padding-top: 0; }
+.listwrap.card::after { background: linear-gradient(transparent, var(--panel)); }
+.listwrap.card thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.listgrid { align-items: start; }
+.foldcard.attn { border-color: var(--attn); }
+/* caret and name are one unit: a long name takes the first line whole and
+   wraps at its dots (the template plants <wbr>s), badges drop to the next
+   line; a short one shares its line with them */
+.chartsum .name { flex: 1 1 auto; min-width: 0; display: flex; gap: 8px; align-items: baseline;
+  overflow-wrap: anywhere; }
+.chartsum .name > a, .chartsum .name > b { min-width: 0; }
+.listgrid .foldcard { padding: 12px 14px; }
+.listgrid .foldcard .badge { font-size: 11px; }
+.chartsum .name a { color: var(--ink); }
+.chartsum .name a:hover { color: var(--act); }
+[data-item][hidden] { display: none !important; }
+th[data-sortkey] { cursor: pointer; user-select: none; white-space: nowrap; }
+th[data-sortkey]:hover { color: var(--ink); }
+th[data-sortkey]::after { content: "↕"; color: var(--faint); margin-left: 5px; font-size: 10px; }
+th[data-sortkey].sorted { color: var(--act); }
+th[data-sortkey].sorted.asc::after { content: "↑"; color: var(--act); }
+th[data-sortkey].sorted.desc::after { content: "↓"; color: var(--act); }
+
 /* ---- inline help ----------------------------------------------------- */
 .help { position: relative; display: inline-flex; }
 .help > span.h-i { width: 15px; height: 15px; border-radius: 50%; font-size: 10.5px;
@@ -732,6 +778,121 @@ document.addEventListener("toggle", function (e) {
     if (el) { unfold(el); spot(el); }
     if (history.replaceState) history.replaceState(null, "", location.pathname + location.search);
   }
+})();
+
+/* Lists: a [data-list] container's [data-item] children sort by their
+   data-s-<key> values (numeric when every value parses as a number), filter
+   by data-tags (every active chip must match) and by a text search over the
+   item, and fold together. Sortable table headers (th[data-sortkey]) drive
+   the same order. State is remembered per list per page. */
+(function () {
+  document.querySelectorAll("[data-list]").forEach(function (list) {
+    var id = list.dataset.list;
+    var items = Array.prototype.slice.call(list.querySelectorAll("[data-item]"));
+    var tools = document.querySelector('[data-list-tools="' + id + '"]');
+    if (!items.length || !tools) return;
+    var sel = tools.querySelector("select");
+    var q = tools.querySelector(".lt-q");
+    var chips = Array.prototype.slice.call(tools.querySelectorAll(".fchip"));
+    var count = tools.querySelector(".lt-count");
+    var table = list.closest("table");
+    var heads = table ? Array.prototype.slice.call(table.querySelectorAll("th[data-sortkey]")) : [];
+    var noun = list.dataset.noun || "item";
+    var key = "grayson_list_" + location.pathname + "_" + id;
+    var st = { sort: sel ? sel.value : "", tags: [], q: "" };
+    try { st = Object.assign(st, JSON.parse(localStorage.getItem(key) || "{}")); } catch (e) {}
+    if (!Array.isArray(st.tags)) st.tags = [];
+    if (sel && !sel.querySelector('option[value="' + st.sort + '"]')) {
+      var extra = document.createElement("option");   /* set from a column header */
+      extra.value = st.sort; extra.textContent = st.sort.replace(":", " "); extra.hidden = true;
+      sel.appendChild(extra);
+    }
+    function tagsOf(it) { return (it.dataset.tags || "").split(/\s+/); }
+    function val(it, k) { return it.getAttribute("data-s-" + k) || ""; }
+    function sort() {
+      var parts = st.sort.split(":"), k = parts[0], dir = parts[1] === "desc" ? -1 : 1;
+      if (!k) return;
+      var numeric = items.every(function (it) { return val(it, k) === "" || !isNaN(parseFloat(val(it, k))); });
+      var keyed = items.map(function (it, i) {
+        var v = val(it, k);
+        return { it: it, i: i, v: numeric ? (v === "" ? -Infinity : parseFloat(v)) : v };
+      });
+      keyed.sort(function (a, b) {
+        var c = numeric ? (a.v < b.v ? -1 : a.v > b.v ? 1 : 0)
+          : a.v.localeCompare(b.v, undefined, { numeric: true, sensitivity: "base" });
+        return c * dir || a.i - b.i;
+      });
+      items = keyed.map(function (x) { return x.it; });
+      items.forEach(function (it) { it.parentNode.appendChild(it); });
+      heads.forEach(function (h) {
+        var on = h.dataset.sortkey === k;
+        h.classList.toggle("sorted", on);
+        h.classList.toggle("asc", on && dir === 1);
+        h.classList.toggle("desc", on && dir === -1);
+      });
+    }
+    function filter() {
+      var needle = st.q.trim().toLowerCase(), shown = 0;
+      items.forEach(function (it) {
+        var tg = tagsOf(it);
+        var ok = st.tags.every(function (t) { return tg.indexOf(t) >= 0; }) &&
+          (!needle || it.textContent.toLowerCase().indexOf(needle) >= 0);
+        it.hidden = !ok;
+        if (ok) shown++;
+      });
+      if (count) {
+        var all = items.length + " " + noun + (items.length === 1 ? "" : "s");
+        count.textContent = shown === items.length ? all : shown + " of " + all;
+      }
+      chips.forEach(function (c) {
+        var on = st.tags.indexOf(c.dataset.tag) >= 0;
+        c.classList.toggle("on", on);
+        c.setAttribute("aria-pressed", String(on));
+        var n = c.querySelector(".lt-n");
+        if (n) n.textContent = items.filter(function (it) { return tagsOf(it).indexOf(c.dataset.tag) >= 0; }).length;
+      });
+    }
+    function apply() {
+      sort(); filter();
+      try { localStorage.setItem(key, JSON.stringify(st)); } catch (e) {}
+    }
+    if (sel) {
+      sel.value = st.sort;
+      sel.addEventListener("change", function () { st.sort = sel.value; apply(); });
+    }
+    if (q) {
+      q.value = st.q;
+      q.addEventListener("input", function () { st.q = q.value; apply(); });
+    }
+    chips.forEach(function (c) {
+      c.addEventListener("click", function () {
+        var i = st.tags.indexOf(c.dataset.tag);
+        if (i >= 0) st.tags.splice(i, 1); else st.tags.push(c.dataset.tag);
+        apply();
+      });
+    });
+    heads.forEach(function (h) {
+      h.addEventListener("click", function () {
+        var parts = st.sort.split(":");
+        var dir = parts[0] === h.dataset.sortkey && parts[1] === "asc" ? "desc" : "asc";
+        st.sort = h.dataset.sortkey + ":" + dir;
+        if (sel && !sel.querySelector('option[value="' + st.sort + '"]')) {
+          var o = document.createElement("option");
+          o.value = st.sort; o.textContent = h.textContent.trim() + (dir === "asc" ? " ↑" : " ↓"); o.hidden = true;
+          sel.appendChild(o);
+        }
+        if (sel) sel.value = st.sort;
+        apply();
+      });
+    });
+    function foldAll(open) {
+      items.forEach(function (it) { if (!it.hidden && it.tagName === "DETAILS") it.open = open; });
+    }
+    var ex = tools.querySelector(".lt-expand"), co = tools.querySelector(".lt-collapse");
+    if (ex) ex.addEventListener("click", function () { foldAll(true); });
+    if (co) co.addEventListener("click", function () { foldAll(false); });
+    apply();
+  });
 })();
 
 /* Session action bar: the picked tab shows its panel; the pick is remembered

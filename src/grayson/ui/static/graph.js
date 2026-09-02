@@ -234,6 +234,14 @@
       }
     });
 
+    // Inside a fold, the canvas may have been built at zero size (the fold
+    // remembered closed); refit each time the fold opens.
+    for (var fold = root.closest("details"); fold; fold = fold.parentElement && fold.parentElement.closest("details")) {
+      fold.addEventListener("toggle", function (evt) {
+        if (evt.target.open) { cy.resize(); cy.fit(undefined, 24); }
+      });
+    }
+
     // -- controls -------------------------------------------------------
     function on(sel, fn) {
       var b = root.querySelector(sel);

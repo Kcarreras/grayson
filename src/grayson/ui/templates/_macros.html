@@ -90,3 +90,37 @@
   <span class="lbl">{{ stage }}</span>
 </div>
 {%- endmacro %}
+
+{# A list's toolbar: quick text filter, sort order, filter chips (each shows
+   how many items carry its tag), a visible count, and expand/collapse for
+   folding items. Purely client-side — the base script wires it to the
+   [data-list] container of the same id, whose [data-item] children carry
+   data-s-<key> sort values and data-tags. State is remembered per page. #}
+{% macro list_tools(id, sorts, filters=[], placeholder="Filter this list…", foldable=true) -%}
+<div class="listtools" data-list-tools="{{ id }}">
+  <input type="search" class="lt-q" placeholder="{{ placeholder }}" aria-label="Filter this list">
+  <label class="lt-sort"><span class="overline">Sort</span>
+    <select aria-label="Sort order">
+      {% for s in sorts %}<option value="{{ s[0] }}:{{ s[1] }}">{{ s[2] }}</option>{% endfor %}
+    </select></label>
+  {% if filters %}
+  <span class="lt-filters" role="group" aria-label="Show only">
+    {% for f in filters %}<button type="button" class="chip fchip" data-tag="{{ f[0] }}" aria-pressed="false">{{ f[1] }} <span class="lt-n"></span></button>{% endfor %}
+  </span>
+  {% endif %}
+  <span class="faint small lt-count"></span>
+  {% if foldable %}
+  <span class="lt-fold">
+    <button type="button" class="btn ghost sm lt-expand" title="Open every item shown">Expand all</button>
+    <button type="button" class="btn ghost sm lt-collapse" title="Fold every item to its title">Collapse all</button>
+  </span>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{# an object name with a soft break after each dot and underscore, so a long
+   DB.SCHEMA.TABLE_NAME wraps at its parts inside a tile instead of running
+   past it (or breaking mid-word) #}
+{% macro fqn(name) -%}
+{% for seg in name.split(".") %}{% set outer = loop %}{% for part in seg.split("_") %}{{ part }}{% if not loop.last %}_<wbr>{% endif %}{% endfor %}{% if not outer.last %}.<wbr>{% endif %}{% endfor %}
+{%- endmacro %}

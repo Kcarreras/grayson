@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import severity, finding_state, outcome %}
+{% from "_macros.html" import severity, finding_state, outcome, list_tools %}
 {% block title %}grayson — records{% endblock %}
 {% block content %}
 <h1>Records {{ help("records") }}</h1>
@@ -19,14 +19,36 @@
 
 {% if not records %}
 <div class="card empty">{% if q %}Nothing matches “{{ q }}”.{% else %}No records yet.{% endif %}</div>
-{% endif %}
-
+{% else %}
+{# severity rank for sorting #}
+{% set sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1} %}
+{{ list_tools("records", [
+  ("ts", "desc", "Newest first"),
+  ("ts", "asc", "Oldest first"),
+  ("sev", "desc", "Severity, highest first"),
+  ("kind", "asc", "Kind"),
+  ("title", "asc", "Title A–Z"),
+], [
+  ("finding", "findings"),
+  ("proposal", "proposals"),
+  ("report", "reports"),
+  ("accepted", "accepted"),
+  ("rejected", "rejected"),
+  ("superseded", "superseded"),
+  ("severe", "high or critical"),
+  ("team", "from the team"),
+], "Narrow the list shown…") }}
+{# each record folds to its title row; the summary and provenance are inside #}
+<div class="listwrap" data-list="records" data-noun="record">
 {% for r in records %}
-<div class="card">
-  <div class="row split">
-    <a href="/records/{{ r.session_id }}/{{ r.kind }}/{{ r.id }}?t={{ token }}">
-      <b>{{ r.title }}</b></a>
-    <span class="row">
+<details class="card foldcard" data-item data-fold="{{ r.session_id }}/{{ r.id }}"
+  data-tags="{{ r.kind }}{% if r.kind == 'finding' %}{{ ' accepted' if r.accepted and not r.superseded_by }}{{ ' rejected' if r.rejected }}{{ ' superseded' if r.superseded_by }}{{ ' severe' if r.severity in ['high', 'critical'] }}{% endif %} {{ 'team' if r.source == 'library' else 'local' }}"
+  data-s-ts="{{ r.ts or '' }}" data-s-sev="{{ sev_rank.get(r.severity, 0) if r.kind == 'finding' else 0 }}"
+  data-s-kind="{{ r.kind }}" data-s-title="{{ r.title }}">
+  <summary class="chartsum">
+    <span class="name"><span class="c-caret">▸</span>
+      <a href="/records/{{ r.session_id }}/{{ r.kind }}/{{ r.id }}?t={{ token }}"><b>{{ r.title }}</b></a></span>
+    <span class="row" style="margin-left: auto;">
       {% if r.kind == "finding" %}
         {{ severity(r.severity) }}
         {{ finding_state(r) }}
@@ -40,21 +62,26 @@
         {% elif r.verdict == "fail" %}<span class="badge bad">verification failed</span>
         {% elif r.status %}<span class="badge plain">{{ r.status }}</span>{% endif %}
       {% endif %}
+      {% if r.source == "library" %}<span class="badge act">team</span>{% endif %}
+      <span class="faint small mono">{{ (r.ts or "")[:10] }}</span>
     </span>
-  </div>
-  {% if r.summary %}<div class="ink2 small" style="margin: 5px 0;">{{ r.summary[:260] }}{% if r.summary | length > 260 %}…{% endif %}</div>{% endif %}
-  <div class="faint small">
+  </summary>
+  {% if r.summary %}<div class="ink2 small" style="margin: 8px 0 5px;">{{ r.summary[:260] }}{% if r.summary | length > 260 %}…{% endif %}</div>{% endif %}
+  <div class="faint small" style="margin-top: 6px;">
     <span class="chip">{{ r.id }}</span> · {{ r.workflow }} ·
     {% if r.source == "library" %}
     <span class="{{ 'mono' if not r.session_title }}"
       title="{{ r.session_id }}">{{ r.session_title or r.session_id }}</span>
-    <span class="badge act">team</span>{% if r.author %} <span class="mono">by {{ r.author }}</span>{% endif %}
+    {% if r.author %} <span class="mono">by {{ r.author }}</span>{% endif %}
     {% else %}
     <a class="{{ 'mono' if not r.session_title }}" href="/session/{{ r.session_id }}?t={{ token }}"
       title="{{ r.session_id }}">{{ r.session_title or r.session_id }}</a>
     {% endif %}
     · {{ r.ts }}
   </div>
-</div>
+  <a class="btn secondary sm" style="margin-top: 10px;" href="/records/{{ r.session_id }}/{{ r.kind }}/{{ r.id }}?t={{ token }}">Open →</a>
+</details>
 {% endfor %}
+</div>
+{% endif %}
 {% endblock %}
