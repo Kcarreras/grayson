@@ -422,3 +422,53 @@ def close_session(
 
     publish_report(session)
     return readiness(session, overrides_dir)
+
+
+def abandon_session(
+    session: Session,
+    actor: str = "user",
+    reason: str = "",
+    overrides_dir: Path | None = None,
+) -> dict:
+    """Close a session without a result, on purpose.
+
+    The third honest ending beside `findings` and `clean`: the run broke, was
+    started by mistake, or stopped mattering. It skips every gate, so it earns
+    no result label — the outcome is `abandoned`, with the reason as the only
+    record of why — and it publishes nothing to the library: an abandoned
+    session leaves no report behind. Records already published on the way
+    (accepted findings, verified fixes) stay until their author removes them.
+
+    A user action, like every other ending: agents that are stuck ask; they
+    do not tidy their own sessions away.
+    """
+    if actor != "user":
+        raise EnforcementError(
+            "abandoning a session is a user action. If this session is broken or no "
+            "longer relevant, say so and ask the user to abandon it (console, or "
+            "`grayson session abandon`)."
+        )
+    if session.stage == "closed":
+        raise EnforcementError("session is already closed")
+    reason = reason.strip()
+    if not reason:
+        raise EnforcementError(
+            "abandoning needs a reason — it is the only record of why this session has no result"
+        )
+    ready = readiness(session, overrides_dir)
+    cancelled = [iv["iid"] for iv in session.interventions("open")]
+    for iid in cancelled:
+        session.cancel_intervention(iid, actor)  # nothing is awaiting the user any more
+    session.set_outcome("abandoned", actor, reason)
+    session.set_stage("closed", actor)
+    session.log_event(
+        actor,
+        "session_abandoned",
+        {
+            "reason": reason,
+            "open_checks": ready["open_checks"],
+            "findings_pending": ready["findings_pending"],
+            "interventions_cancelled": cancelled,
+        },
+    )
+    return readiness(session, overrides_dir)

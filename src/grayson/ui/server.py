@@ -27,7 +27,13 @@ from grayson.core.session import STAGES, Session
 from grayson.interventions import validate_response
 from grayson.interventions.types import InterventionError
 from grayson.knowledge import KnowledgeDocError, KnowledgeStore, completeness
-from grayson.records import get_record, search_records
+from grayson.records import (
+    delete_session_records,
+    deletion_verdict,
+    get_record,
+    search_records,
+    session_records,
+)
 from grayson.ui.format import GLOSSARY, paragraphs, relationship_graph, split_sections
 from grayson.ui.sqlhl import highlight_sql
 from grayson.util import parse_table_list
@@ -87,6 +93,24 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             return Session(workspace, sid)
         except (FileNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+
+    def _removal(sid: str) -> dict:
+        """Whether the person at the console may remove this session's
+        published records — the author's or an admin's call, judged from the
+        configured user id (docs/LIBRARY.md: a guard rail, not access control)."""
+        from grayson.identity import get_user_id
+        from grayson.library import library_admins, library_root
+
+        return {
+            "me": get_user_id(),
+            **deletion_verdict(
+                workspace.records_dir,
+                sid,
+                get_user_id(),
+                library_admins(library_root(workspace)),
+                solo=workspace.config.library_path is None,
+            ),
+        }
 
     def _redirect(path: str) -> RedirectResponse:
         sep = "&" if "?" in path else "?"
@@ -538,15 +562,23 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
     def _settings_context(error: str | None = None) -> dict:
         from grayson.config_edit import config_summary
-        from grayson.library import library_status
+        from grayson.library import (
+            library_admins,
+            library_root,
+            library_status,
+            settings_last_change,
+        )
         from grayson.workflows import list_workflows
 
         workspace.reload_config()
+        root = library_root(workspace)
         return {
             "nav": "settings",
             "cfg": config_summary(workspace.root),
             "workflow_names": sorted(t.name for t in list_workflows(workspace.workflows_dir)),
             "lib": library_status(workspace),
+            "admins": library_admins(root),
+            "admins_changed": settings_last_change(root),
             "error": error,
         }
 
@@ -743,12 +775,38 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "from_library": from_library,
                 "author": item.get("author"),
                 "evidence_queries": item.get("evidence_queries") or [],
+                "removal": _removal(sid),
             },
         )
 
+    @app.post("/records/{sid}/delete")
+    async def records_delete_ui(request: Request, sid: str) -> Any:
+        """Remove a session's published records from the library — the
+        author's action or an admin's; one commit with the reason."""
+        _check(request)
+        try:
+            workspace.session_dir(sid)  # shape only; the session need not be local
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        form = await request.form()
+        reason = str(form.get("reason", "")).strip()
+        try:
+            delete_session_records(workspace, sid, reason)
+        except PermissionError as e:
+            records = search_records(workspace, "", None, limit=200)
+            return templates.TemplateResponse(
+                request,
+                "records.html",
+                {"nav": "records", "records": records, "q": "", "kind": "", "error": str(e)},
+                status_code=400,
+            )
+        return _redirect("/records")
+
     # -- charts: one chart, full size, with its data and the query behind it --
 
-    def _chart_page(sid: str, chart_id: str) -> tuple[Session, dict, dict, str]:
+    def _chart_page(
+        sid: str, chart_id: str, detail: bool = False
+    ) -> tuple[Session, dict, dict, str]:
         from grayson.charts import chart_data, get_chart, render_svg
 
         s = _session(sid)
@@ -757,31 +815,40 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"no chart '{chart_id}'")
         try:
             data = chart_data(s, spec)
-            svg = render_svg(spec, data)
+            svg = render_svg(spec, data, detail=detail)
         except (OSError, ValueError, KeyError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return s, spec, data, svg
 
     @app.get("/session/{sid}/chart/{chart_id}.svg")
-    def chart_svg(request: Request, sid: str, chart_id: str) -> Any:
+    def chart_svg(request: Request, sid: str, chart_id: str, detail: bool = False) -> Any:
         """The chart as a file — for a slide, a ticket, a message. Carries the
-        export mark, like `chart render --out`."""
+        export mark, like `chart render --out`; `detail` is the chart page's
+        size, so the download matches what was on screen."""
         _check(request)
         from grayson.charts import brand_export
 
-        _s, _spec, _data, svg = _chart_page(sid, chart_id)
+        _s, _spec, _data, svg = _chart_page(sid, chart_id, detail)
         return Response(
             brand_export(svg),
             media_type="image/svg+xml",
             headers={"Content-Disposition": f'attachment; filename="{sid}-{chart_id}.svg"'},
         )
 
+    @app.get("/session/{sid}/chart/{chart_id}/svg")
+    def chart_svg_inline(request: Request, sid: str, chart_id: str, detail: bool = False) -> Any:
+        """The chart's markup for the console itself (the lightbox swaps the
+        tile's rendering for the detail one) — unbranded, not a download."""
+        _check(request)
+        _s, _spec, _data, svg = _chart_page(sid, chart_id, detail)
+        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+
     @app.get("/session/{sid}/chart/{chart_id}", response_class=HTMLResponse)
     def chart_detail(request: Request, sid: str, chart_id: str) -> Any:
         _check(request)
         from grayson.charts import list_charts
 
-        s, spec, data, svg = _chart_page(sid, chart_id)
+        s, spec, data, svg = _chart_page(sid, chart_id, detail=True)
         specs = list_charts(s)
         ids = [c["chart_id"] for c in specs]
         pos = ids.index(chart_id) if chart_id in ids else -1
@@ -795,6 +862,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "spec": spec,
                 "data": data,
                 "svg": Markup(svg),
+                "labels_cut": 'class="tick-cut"' in svg,
                 "q": q,
                 "sql_html": highlight_sql(q["sql_raw"]) if q else None,
                 "prev_id": ids[pos - 1] if pos > 0 else None,
@@ -843,6 +911,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "qsql": {q["qid"]: q.get("sql_raw") or "" for q in queries},
             "events": s.events(40),
             "charts": _charts_context(s),
+            "published": _removal(s.id),
             "error": error,
         }
 
@@ -957,6 +1026,44 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 request, "session.html", _session_context(s, str(e)), status_code=400
             )
         return _redirect(f"/session/{sid}")
+
+    @app.post("/session/{sid}/abandon")
+    async def session_abandon_ui(request: Request, sid: str) -> Any:
+        """The third ending: close without a result, on purpose and with a
+        reason. Open interventions are cancelled; nothing publishes."""
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        reason = str(form.get("reason", "")).strip()
+        try:
+            engine.abandon_session(s, "user", reason, workspace.workflows_dir)
+        except EnforcementError as e:
+            return templates.TemplateResponse(
+                request, "session.html", _session_context(s, str(e)), status_code=400
+            )
+        return _redirect(f"/session/{sid}")
+
+    @app.post("/session/{sid}/delete")
+    async def session_delete_ui(request: Request, sid: str) -> Any:
+        """Remove the session from this workspace — audit trail and cache
+        included — and, when asked and allowed, its published records from the
+        library. The library goes first: a refused removal deletes nothing."""
+        _check(request)
+        s = _session(sid)
+        form = await request.form()
+        reason = str(form.get("reason", "")).strip()
+        if form.get("library") == "true" and session_records(workspace.records_dir, sid):
+            try:
+                delete_session_records(workspace, sid, reason)
+            except PermissionError as e:
+                return templates.TemplateResponse(
+                    request,
+                    "session.html",
+                    _session_context(s, f"nothing deleted — {e}"),
+                    status_code=400,
+                )
+        s.delete()
+        return _redirect("/")
 
     @app.post("/session/{sid}/title")
     async def session_rename(request: Request, sid: str) -> Any:

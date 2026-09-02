@@ -18,8 +18,10 @@ STAGES = ["setup", "analysis", "synthesis", "review", "fixes", "verification", "
 
 #: how a closed session ended. 'clean' means the required checks cleared and
 #: nothing was found worth acting on — an outcome a human confirmed, not a
-#: session that merely ran out of road.
-OUTCOMES = ["clean", "findings"]
+#: session that merely ran out of road. 'abandoned' is the honest label for a
+#: session closed without any result (broken, mistaken, no longer relevant):
+#: it skipped the gates on purpose, says why, and published nothing.
+OUTCOMES = ["clean", "findings", "abandoned"]
 
 #: aliases accepted anywhere a session id is expected; resolve to the newest session
 LATEST_ALIASES = {"latest", "last", "."}
@@ -318,7 +320,8 @@ class Session:
 
     @property
     def outcome(self) -> str:
-        """How a closed session ended: '' while open, then 'clean' or 'findings'.
+        """How a closed session ended: '' while open, then 'clean', 'findings',
+        or 'abandoned' (closed on purpose without a result).
 
         A clean run — checks cleared, nothing wrong found — is a real result, not
         an unfinished investigation. Recording it as such is what lets "we looked

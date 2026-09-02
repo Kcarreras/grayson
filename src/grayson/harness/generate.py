@@ -153,7 +153,9 @@ they are equivalent. Never query Snowflake except through grayson.
    either on accepted findings, or as a **clean** result when the checks cleared and
    nothing turned up. `grayson session readiness <sid>` reports which route applies
    (`clean_close_available`, `next_action`); tell the user what you found, or that you
-   found nothing, and let them close it.
+   found nothing, and let them close it. A session that is broken, was started by
+   mistake, or stopped mattering is the user's to **abandon** or **delete** — say so
+   and ask; never abandon, delete, or remove a session's published records yourself.
 
 Run `grayson --help` (and `grayson <group> --help`) for the full command surface.
 """

@@ -331,6 +331,15 @@ dialog.lightbox { border: 1px solid var(--border); border-radius: var(--radius);
   width: min(1100px, 94vw); max-height: 92vh; overflow: auto; }
 dialog.lightbox::backdrop { background: rgba(0, 0, 0, .55); }
 .lb-body svg { width: 100%; height: auto; display: block; }
+/* chart labels: a shortened tick carries its full text — hover, tap, or focus */
+.chartbody svg text.tick-cut, .lb-body svg text.tick-cut, .chart-large svg text.tick-cut {
+  cursor: help; }
+svg text.tick-cut:hover, svg text.tick-cut:focus { fill: var(--ink); outline: none; }
+.viz-tip { position: fixed; z-index: 30; max-width: 360px; background: var(--panel3);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 10px;
+  font-size: 12px; line-height: 1.5; color: var(--ink-2); pointer-events: none;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); overflow-wrap: anywhere; }
+.viz-tip.mono { font-family: ui-monospace, Consolas, monospace; }
 </style>
 </head>
 <body>
@@ -405,6 +414,75 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .55); }
       });
     });
     pre.appendChild(btn);
+  });
+})();
+
+/* Chart tooltips. A shortened axis label carries its full text in data-full
+   and a mark carries its value in a <title>; both show in an HTML tip at once,
+   where the native SVG tooltip is slow, hover-only, and absent on touch.
+   Delegated from the document, so the lightbox's cloned or fetched SVG needs
+   no rebinding; mark titles move into data-tip once so the native tooltip does
+   not double up (exports render fresh and keep theirs). */
+(function () {
+  var SCOPE = ".chartbody svg, .lb-body svg, .chart-large svg";
+  function adopt(root) {
+    if (!root.querySelectorAll) return;
+    root.querySelectorAll(SCOPE).forEach(function (svg) {
+      svg.querySelectorAll("path > title, circle > title").forEach(function (t) {
+        t.parentNode.dataset.tip = t.textContent; t.remove();
+      });
+      svg.querySelectorAll("text[data-full] > title").forEach(function (t) { t.remove(); });
+    });
+  }
+  adopt(document);
+  new MutationObserver(function (records) {
+    records.forEach(function (r) { r.addedNodes.forEach(adopt); });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  var tip = document.createElement("div");
+  tip.className = "viz-tip"; tip.hidden = true;
+  document.body.appendChild(tip);
+  var pinned = null;
+  function target(e) {
+    var el = e.target && e.target.closest && e.target.closest("[data-full], [data-tip]");
+    return el && el.closest(SCOPE) ? el : null;
+  }
+  function place(x, y) {
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    var left = Math.min(x + 12, window.innerWidth - w - 8);
+    var top = y - h - 10;
+    if (top < 8) top = y + 16;
+    tip.style.left = Math.max(8, left) + "px"; tip.style.top = top + "px";
+  }
+  function show(el, x, y) {
+    tip.textContent = el.dataset.full || el.dataset.tip || "";
+    tip.classList.toggle("mono", !!el.dataset.full);
+    tip.hidden = false;
+    place(x, y);
+  }
+  function hide() { if (!pinned) tip.hidden = true; }
+  document.addEventListener("pointerover", function (e) {
+    var el = target(e);
+    if (el && e.pointerType !== "touch") show(el, e.clientX, e.clientY);
+  });
+  document.addEventListener("pointermove", function (e) {
+    if (!tip.hidden && !pinned && e.pointerType !== "touch") place(e.clientX, e.clientY);
+  });
+  document.addEventListener("pointerout", function (e) { if (target(e)) hide(); });
+  document.addEventListener("pointerdown", function (e) {
+    var el = target(e);
+    if (e.pointerType === "touch" && el) { pinned = el; show(el, e.clientX, e.clientY); }
+    else { pinned = null; tip.hidden = true; }
+  });
+  document.addEventListener("focusin", function (e) {
+    var el = target(e);
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    show(el, r.left + r.width / 2, r.top);
+  });
+  document.addEventListener("focusout", function (e) { if (target(e)) hide(); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { pinned = null; tip.hidden = true; }
   });
 })();
 

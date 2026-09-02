@@ -141,9 +141,13 @@ def build_knowledge_server(library_root: Path) -> Any:
         "(behind/ahead of its git remote)."
     )
     def library_info() -> dict:
-        from grayson.library import repo_status
+        from grayson.library import library_admins, repo_status
 
-        return {"mode": "knowledge-only (read-only)", **repo_status(library_root)}
+        return {
+            "mode": "knowledge-only (read-only)",
+            **repo_status(library_root),
+            "admins": library_admins(library_root),
+        }
 
     return mcp
 

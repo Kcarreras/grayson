@@ -18,6 +18,7 @@ read-only.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from grayson.core.session import Session
@@ -294,6 +295,125 @@ def _outcome_summary(meta: dict, ready: dict) -> str:
     }.get(outcome, f"stage {meta.get('stage', '')}")
     counts = f"{ready.get('queries_executed', 0)} queries executed"
     return f"{head}; {counts}" + (f" — {note}" if note else "")
+
+
+# -- removal (the author's action, or an admin's) --------------------------
+
+
+def session_records(records_dir: Path, session_id: str) -> list[dict]:
+    """What the library holds for one session: each published record's kind,
+    id, and author (report.md rides with report.json and is not listed)."""
+    folder = records_dir / session_id
+    if not folder.is_dir():
+        return []
+    out: list[dict] = []
+    for path in sorted(folder.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        if not isinstance(data, dict) or data.get("kind") not in RECORD_KINDS:
+            continue
+        out.append(
+            {
+                "file": path.name,
+                "kind": data["kind"],
+                "id": data.get("id"),
+                "title": data.get("title", ""),
+                "author": data.get("author") or None,
+            }
+        )
+    return out
+
+
+def deletion_verdict(
+    records_dir: Path,
+    session_id: str,
+    user_id: str | None,
+    admins: list[str],
+    solo: bool = False,
+) -> dict:
+    """Whether `user_id` may remove this session's published records, and why.
+
+    The rule: the records' author, or a library admin. Records with no author
+    (published before a user id was set) are an admin's to remove, or git's.
+    In solo mode there is no team to protect — the records are the workspace
+    owner's own. Declared identity makes this a guard rail against the
+    accidental and the casual, not access control (docs/LIBRARY.md).
+    """
+    records = session_records(records_dir, session_id)
+    count = len(records)
+    authors = sorted({r["author"] for r in records if r["author"]})
+    base = {"count": count, "authors": authors}
+    if not records:
+        return {**base, "allowed": False, "reason": "nothing is published for this session"}
+    if solo:
+        return {**base, "allowed": True, "as": "solo workspace — the records are yours"}
+    if user_id and user_id in admins:
+        return {**base, "allowed": True, "as": "library admin"}
+    if not user_id:
+        who = f"their author ({', '.join(authors)})" if authors else "a library admin"
+        return {
+            **base,
+            "allowed": False,
+            "reason": f"no user id is set (`grayson user set <id>`) — these records are "
+            f"{who}'s to remove, or a library admin's",
+        }
+    if any(not r["author"] for r in records):
+        return {
+            **base,
+            "allowed": False,
+            "reason": "some of these records carry no author, so only a library admin "
+            "removes them (or a git commit by hand)",
+        }
+    if authors != [user_id]:
+        return {
+            **base,
+            "allowed": False,
+            "reason": f"published by {', '.join(authors)}, not you ({user_id}) — only the "
+            "author or a library admin removes a session's records",
+        }
+    return {**base, "allowed": True, "as": f"author ({user_id})"}
+
+
+def delete_session_records(workspace: Workspace, session_id: str, reason: str = "") -> dict:
+    """Remove a session's published records from the library as one commit.
+
+    A user action (the CLI gates it on an interactive terminal; the console is
+    the human's surface; MCP has no twin). The commit carries the reason and
+    the actor's trailer, so `git log` answers who removed what and why, and
+    `git revert` brings it back. Raises PermissionError with the verdict's
+    reason when the caller is neither the author nor an admin.
+    """
+    from grayson.identity import get_user_id
+    from grayson.library import commit_library_paths, library_admins, library_root
+    from grayson.util import ensure_within
+
+    records_dir = workspace.records_dir
+    solo = workspace.config.library_path is None
+    verdict = deletion_verdict(
+        records_dir,
+        session_id,
+        get_user_id(),
+        library_admins(library_root(workspace)),
+        solo=solo,
+    )
+    if not verdict["allowed"]:
+        raise PermissionError(verdict["reason"])
+    folder = ensure_within(records_dir, records_dir / session_id)
+    removed = sorted(p.name for p in folder.iterdir())
+    shutil.rmtree(folder)
+    message = f"grayson records: remove {session_id} ({verdict['count']} record(s))"
+    if reason.strip():
+        message += f"\n\n{reason.strip()}"
+    sync = commit_library_paths(workspace, [f"records/{session_id}"], message)
+    return {
+        "session_id": session_id,
+        "removed": removed,
+        "count": verdict["count"],
+        "as": verdict["as"],
+        "library_sync": sync,
+    }
 
 
 def library_records(records_dir: Path, kind: str | None = None) -> list[dict]:

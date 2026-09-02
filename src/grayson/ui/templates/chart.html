@@ -8,7 +8,7 @@
   <span class="row">
     {% if prev_id %}<a class="btn ghost sm" href="/session/{{ s.id }}/chart/{{ prev_id }}?t={{ token }}" title="Previous chart">←</a>{% endif %}
     {% if next_id %}<a class="btn ghost sm" href="/session/{{ s.id }}/chart/{{ next_id }}?t={{ token }}" title="Next chart">→</a>{% endif %}
-    <a class="btn secondary sm" href="/session/{{ s.id }}/chart/{{ spec.chart_id }}.svg?t={{ token }}"
+    <a class="btn secondary sm" href="/session/{{ s.id }}/chart/{{ spec.chart_id }}.svg?detail=1&t={{ token }}"
        title="Download as an SVG file (carries the grayson mark)">Download SVG</a>
   </span>
 </div>
@@ -31,6 +31,9 @@
   </div>
   {% endif %}
   {{ svg }}
+  {% if labels_cut %}<div class="faint small" style="margin-top: 6px;">
+    Some axis labels are shortened — hover or tap one for its full text; every value is
+    in the table below.</div>{% endif %}
   {% if spec.note %}<div class="ink2 small" style="margin-top: 8px;">{{ spec.note }}</div>{% endif %}
 </div>
 
