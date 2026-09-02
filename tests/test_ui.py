@@ -630,13 +630,37 @@ def test_chart_labels_detail_and_inline_svg(client, session):
     assert client.get(f"/session/{session.id}/chart/c_999/svg?t={TOKEN}").status_code == 404
     # a label the detail size still shortens carries its full text, and the
     # page says how to see it
-    fq = [{"T": n, "N": i} for i, n in enumerate(["ANALYTICS.WEB.PAGE_EVENTS", "RAW.X.REFUNDS"])]
+    # a label the detail size still shortens carries its full text, and the
+    # page says how to see it (forced vertical: long names would go horizontal)
+    long_name = "ANALYTICS.WEB.PAGE_EVENTS_ENRICHED_DAILY_SNAPSHOT"
+    fq = [{"T": n, "N": i} for i, n in enumerate([long_name, "RAW.X.REFUNDS"])]
     q2 = run_statement(session, "SELECT T, N FROM DB.S.URLS", executor=FakeExecutor(rows=fq))
-    spec2 = add_chart(session, q2["qid"], "bar", "T", ["N"], "rows by table")
+    spec2 = add_chart(
+        session, q2["qid"], "bar", "T", ["N"], "rows by table", orientation="vertical"
+    )
     page2 = client.get(f"/session/{session.id}/chart/{spec2['chart_id']}?t={TOKEN}").text
-    assert 'data-full="ANALYTICS.WEB.PAGE_EVENTS"' in page2 and "…WEB.PAGE_EVENTS" in page2
+    assert f'data-full="{long_name}"' in page2 and "PAGE_EVENTS_ENRIC…" in page2
     assert "Some axis labels are shortened" in page2
-    assert "Some axis labels are shortened" not in detail  # nothing shortened there
+
+
+def test_many_categories_render_horizontally(client, session):
+    from grayson.charts import add_chart
+
+    rows = [{"PAGE": f"page_{i:02d}_checkout_flow", "N": 100 - i} for i in range(30)]
+    qid = run_statement(session, "SELECT PAGE, N FROM DB.S.URLS", executor=FakeExecutor(rows=rows))
+    spec = add_chart(session, qid["qid"], "bar", "PAGE", ["N"], "rows by page")
+    # the tile: horizontal rows, the ones that fit, and how many more there are
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert 'data-rows-hidden="14"' in page and "+14 more rows" in page
+    tile = client.get(f"/session/{session.id}/chart/{spec['chart_id']}/svg?t={TOKEN}").text
+    assert "page_15_checkout_flow" in tile and "page_16_checkout_flow" not in tile
+    assert "page_16_checkout_flow" in page  # the plotted-data fold still lists every row
+    # the detail rendering (lightbox, chart page) holds every row, taller as needed
+    inline = client.get(f"/session/{session.id}/chart/{spec['chart_id']}/svg?detail=1&t={TOKEN}")
+    assert "rows-hidden" not in inline.text and "page_29_checkout_flow" in inline.text
+    assert 'viewBox="0 0 1000 652"' in inline.text  # 30 rows at 20px plus margins
+    detail = client.get(f"/session/{session.id}/chart/{spec['chart_id']}?t={TOKEN}").text
+    assert "page_29_checkout_flow" in detail and "Some axis labels are shortened" not in detail
 
 
 # -- endings and removal from the console -------------------------------------

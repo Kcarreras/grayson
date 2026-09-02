@@ -24,6 +24,10 @@ if TYPE_CHECKING:
     from grayson.core.session import Session
 
 ChartKind = Literal["bar", "line", "scatter"]
+#: bar charts only — `auto` renders many categories or long names as horizontal
+#: bars (one row per category, labels on the y axis where they have room) and
+#: ordered scales (dates, numbers) as vertical ones; the others force it
+Orientation = Literal["auto", "vertical", "horizontal"]
 
 CHART_ID_RE = re.compile(r"^c_[0-9]{3,}$")
 
@@ -47,6 +51,7 @@ class ChartSpec(BaseModel):
     y: list[str] = Field(min_length=1, max_length=MAX_SERIES)
     title: str
     note: str = ""
+    orientation: Orientation = "auto"
     worker: str | None = None
     created_at: str = Field(default_factory=utcnow)
 
@@ -105,6 +110,7 @@ def add_chart(
     title: str,
     note: str = "",
     worker: str | None = None,
+    orientation: str = "auto",
 ) -> dict:
     """Validate a chart against the cached artifact and persist it."""
     if kind not in ("bar", "line", "scatter"):
@@ -114,6 +120,10 @@ def add_chart(
             "bar charts take one y column — make one chart per measure "
             "(grouped bars are unreadable at query-result widths)"
         )
+    if orientation not in ("auto", "vertical", "horizontal"):
+        raise ChartError(f"orientation must be auto, vertical, or horizontal, got {orientation!r}")
+    if orientation != "auto" and kind != "bar":
+        raise ChartError("orientation applies to bar charts only")
     sidecar = session.cache.get(qid)
     if sidecar is None:
         raise ChartError(f"no cached artifact '{qid}' in this session")
@@ -148,6 +158,7 @@ def add_chart(
             y=y_cols,
             title=title,
             note=note,
+            orientation=orientation,
             worker=worker,
         )
     except PydanticValidationError as e:

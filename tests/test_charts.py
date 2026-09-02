@@ -274,10 +274,17 @@ def _ticks(svg: str) -> list[str]:
     return re.findall(r'text-anchor="middle"[^>]*>(?:<title>[^<]*</title>)?([^<]*)</text>', svg)
 
 
-def _chart(kind: str, xs: list[str], detail: bool = False) -> str:
-    pts = [{"x": x, "y": [i + 1]} for i, x in enumerate(xs)]
+def _chart(kind: str, xs: list, detail: bool = False, values: list | None = None, **spec) -> str:
+    pts = [{"x": x, "y": [values[i] if values else (i % 7) + 1]} for i, x in enumerate(xs)]
     data = {"points": pts, "y": ["N"], "truncated": False, "cap": 300, "skipped": 0}
-    return render_svg({"kind": kind, "x": "T", "y": ["N"]}, data, detail=detail)
+    return render_svg({"kind": kind, "x": "T", "y": ["N"], **spec}, data, detail=detail)
+
+
+def _rows(svg: str) -> list[str]:
+    """Horizontal bars' category labels (the only end-anchored text there)."""
+    import re
+
+    return re.findall(r'text-anchor="end"[^>]*>(?:<title>[^<]*</title>)?([^<]*)</text>', svg)
 
 
 def test_shared_affixes_and_tail_labels():
@@ -298,29 +305,53 @@ def test_shared_affixes_and_tail_labels():
 
 
 def test_long_labels_never_hide_what_varies():
+    days = [f"2026-08-{d:02d}T00:00:00" for d in range(1, 31)]
     # timestamps: the shared date and time parts come off and are captioned once;
-    # the ticks show the day, which is what differs
-    svg = _chart("line", [f"2026-08-{d:02d}T00:00:00" for d in range(1, 31)])
-    assert _ticks(svg) == ["01", "05", "09", "13", "17", "21", "25", "29"]
+    # the ticks show the day, and two-character days fit every other slot
+    svg = _chart("line", days)
+    assert _ticks(svg) == [f"{d:02d}" for d in range(1, 31, 2)]
     assert 'data-shared="2026-08-…T00:00:00"' in svg
     assert 'data-full="2026-08-01T00:00:00"' in svg  # a residue still reveals the whole
-    # fully qualified names: nothing shared by all, so they shorten from the
-    # front (the table name is the distinguishing part) and carry the full name
+    # fully qualified names on a vertical axis: nothing shared by all, so they
+    # shorten from the front (the table name is the distinguishing part), carry
+    # the full name, and get as many characters as three slots allow
     fqns = ["ANALYTICS.WEB.PAGE_EVENTS", "ANALYTICS.WEB.SESSIONS", "RAW.STRIPE.REFUNDS"]
-    svg = _chart("bar", fqns)
-    assert _ticks(svg) == ["…PAGE_EVENTS", "…SESSIONS", "…REFUNDS"]
+    svg = _chart("bar", fqns, orientation="vertical")
+    assert _ticks(svg) == ["…WEB.PAGE_EVENTS", "…WEB.SESSIONS", "RAW.STRIPE.REFUNDS"]
     assert 'class="tick-cut" tabindex="0" data-full="ANALYTICS.WEB.PAGE_EVENTS"' in svg
     assert "<title>ANALYTICS.WEB.PAGE_EVENTS</title>" in svg  # the file explains itself
     # a shared schema is captioned, the residue is the bare table name
-    svg = _chart("bar", ["ANALYTICS.WEB.PAGE_EVENTS", "ANALYTICS.WEB.SESSIONS"])
+    svg = _chart("bar", fqns[:2], orientation="vertical")
     assert _ticks(svg) == ["PAGE_EVENTS", "SESSIONS"] and 'data-shared="ANALYTICS.WEB.…"' in svg
     # short labels render exactly as before: no caption, no extra markup
     svg = _chart("bar", ["a<b", 'q"uote', "plain"])
     assert _ticks(svg) == ["a&lt;b", 'q"uote', "plain"]
     assert "data-full" not in svg and "data-shared" not in svg
-    # hostile long labels stay escaped in every carrier
-    svg = _chart("bar", [f'<script>alert("{i}")</script>{i}' for i in range(3)])
-    assert "<script>" not in svg and "&lt;script&gt;" in svg
+    # hostile long labels stay escaped in every carrier, either way round
+    hostile = [f'<script>alert("{i}")</script>{i}' for i in range(3)]
+    for svg in (_chart("bar", hostile, orientation="vertical"), _chart("bar", hostile)):
+        assert "<script>" not in svg and "&lt;script&gt;" in svg
+
+
+def test_labels_never_collide():
+    """How many labels are drawn, and how long, comes from the plot width: a
+    drawn label always fits its slot, in either layout, for any cardinality."""
+    from grayson.charts.render import DETAIL, TILE
+
+    shapes = [
+        lambda n: [f"category_{i}" for i in range(n)],
+        lambda n: [f"a very long category label number {i} of the cohort" for i in range(n)],
+        lambda n: [f"2026-08-{i % 28 + 1:02d}T00:00:00" for i in range(n)],
+    ]
+    for layout, detail in ((TILE, False), (DETAIL, True)):
+        width = layout.width - layout.margin["left"] - layout.margin["right"]
+        for n in (2, 7, 13, 30, 60):
+            for shape in shapes:
+                svg = _chart("line", shape(n), detail=detail)
+                shown = _ticks(svg)
+                assert shown, (n, detail)  # something is always labelled
+                assert max(len(t) for t in shown) * layout.char_px <= width / len(shown)
+                assert max(len(t) for t in shown) <= layout.max_chars
 
 
 def test_detail_layout_shows_more_labels():
@@ -328,7 +359,91 @@ def test_detail_layout_shows_more_labels():
     tile, detail = _chart("line", days), _chart("line", days, detail=True)
     assert tile.startswith('<svg viewBox="0 0 640 308"')
     assert detail.startswith('<svg viewBox="0 0 1000 440"')
-    assert len(_ticks(tile)) == 8 and len(_ticks(detail)) == 15
-    assert _ticks(detail)[0] == "2026-08-01T00:00:00"  # fits the longer budget, unshortened
-    out = _chart("bar", ["ANALYTICS.WEB.PAGE_EVENTS", "RAW.STRIPE.REFUNDS"], detail=True)
-    assert _ticks(out) == ["…WEB.PAGE_EVENTS", "RAW.STRIPE.REFUNDS"]
+    assert len(_ticks(tile)) == 15 and len(_ticks(detail)) == 30  # every day, on the wide canvas
+    out = _chart("bar", ["ANALYTICS.WEB.PAGE_EVENTS", "RAW.STRIPE.REFUNDS"], detail=True,
+                 orientation="vertical")  # fmt: skip
+    assert _ticks(out) == ["ANALYTICS.WEB.PAGE_EVENTS", "RAW.STRIPE.REFUNDS"]  # room for all of it
+
+
+def test_many_or_long_categories_go_horizontal():
+    from grayson.charts.render import bar_orientation
+
+    def auto(labels):
+        return bar_orientation({"kind": "bar"}, [{"x": x, "y": [1]} for x in labels])
+
+    # ordered scales keep vertical bars; names go horizontal past eight or twelve chars
+    assert auto([f"2026-08-{d:02d}" for d in range(1, 31)]) == "vertical"
+    assert auto([str(h) for h in range(24)]) == "vertical"
+    assert auto(["checkout", "search", "cart", "home"]) == "vertical"
+    assert auto([f"page_{i}" for i in range(9)]) == "horizontal"
+    assert auto(["ANALYTICS.WEB.PAGE_EVENTS", "RAW.STRIPE.REFUNDS"]) == "horizontal"
+    assert bar_orientation({"orientation": "vertical"}, [{"x": f"p{i}"} for i in range(30)]) == (
+        "vertical"
+    )
+    # horizontal: the full names sit on the y axis, one row each, nothing shortened
+    fqns = ["ANALYTICS.WEB.PAGE_EVENTS", "ANALYTICS.WEB.SESSIONS", "RAW.STRIPE.REFUNDS"]
+    svg = _chart("bar", fqns)
+    assert _rows(svg) == fqns and "tick-cut" not in svg
+    assert svg.startswith('<svg viewBox="0 0 640 142"')  # three rows, not three planks
+    assert "<title>ANALYTICS.WEB.PAGE_EVENTS: 1</title>" in svg  # value tooltips on the bars
+    # sixty bars: the tile shows what fits and says so; the detail size holds them all
+    many = [f"PAGE_{i:02d}_EVENTS_LONG_NAME" for i in range(60)]
+    tile = _chart("bar", many)
+    assert tile.startswith('<svg viewBox="0 0 640 322"')
+    assert len(_rows(tile)) == 16 and 'data-rows-hidden="44"' in tile
+    assert "+44 more rows — enlarge to see them all" in tile
+    detail = _chart("bar", many, detail=True)
+    assert len(_rows(detail)) == 60 and "rows-hidden" not in detail
+    assert detail.startswith('<svg viewBox="0 0 1000 1252"')
+    # negative values grow left of the zero line; a null gets its label but no bar
+    values = [5, -3, 8, -1, 0, None, 2, 4, 9, 1]
+    svg = _chart("bar", [f"segment_{i}_of_the_cohort" for i in range(10)], values=values)
+    assert svg.count("<path") == 9 and len(_rows(svg)) == 10
+    assert "<title>segment_1_of_the_cohort: -3</title>" in svg
+    # a label wider than the margin allows is shortened and still carries the whole
+    wide = [f"{'X' * 60}_{i}" for i in range(3)]
+    svg = _chart("bar", wide)
+    assert "tick-cut" in svg and f'data-full="{"X" * 60}_0"' in svg
+
+
+def test_orientation_is_validated_and_stored(session, qid):
+    with pytest.raises(ChartError, match="bar charts only"):
+        add_chart(session, qid, "line", "DAY", ["NULL_RATE"], "t", orientation="horizontal")
+    with pytest.raises(ChartError, match="orientation must be"):
+        add_chart(session, qid, "bar", "DAY", ["ROW_COUNT"], "t", orientation="sideways")
+    spec = add_chart(session, qid, "bar", "DAY", ["ROW_COUNT"], "t", orientation="horizontal")
+    assert spec["orientation"] == "horizontal"
+    assert get_chart(session, spec["chart_id"])["orientation"] == "horizontal"
+    svg = render_svg(spec, chart_data(session, spec))
+    assert len(_rows(svg)) == len(DAILY)  # dates would default to vertical; forced sideways
+    assert add_chart(session, qid, "bar", "DAY", ["ROW_COUNT"], "t")["orientation"] == "auto"
+
+
+def test_cli_and_mcp_take_orientation(workspace, fake_snow_env):
+    import asyncio
+
+    from grayson.mcp.server import build_server
+
+    started = invoke(
+        "session", "start", "--workflow", "table-health", "--table", "DB.S.T1",
+        "--guard-profile", "moderate", "--skip-snapshot",
+    )  # fmt: skip
+    sid = started["session"]["id"]
+    s = Session(workspace, sid)
+    q = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=DAILY))["qid"]
+    spec = invoke(
+        "chart", "add", sid, "--artifact", q, "--kind", "bar", "-x", "day", "-y", "row_count",
+        "--title", "rows per day", "--orientation", "horizontal",
+    )  # fmt: skip
+    assert spec["orientation"] == "horizontal"
+    refused = runner.invoke(cli_app, [
+        "chart", "add", sid, "--artifact", q, "--kind", "line", "-x", "day", "-y", "row_count",
+        "--title", "t", "--orientation", "horizontal",
+    ])  # fmt: skip
+    assert refused.exit_code == 1 and "bar charts only" in refused.output
+    server = build_server(workspace)
+    result = asyncio.run(server.call_tool("chart_add", {
+        "session_id": sid, "qid": q, "kind": "bar", "x": "DAY", "y": ["ROW_COUNT"],
+        "title": "rows per day", "orientation": "vertical",
+    }))  # fmt: skip
+    assert json.loads(result.content[0].text)["orientation"] == "vertical"

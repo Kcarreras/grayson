@@ -6,11 +6,15 @@ standalone .svg file still renders (fallbacks apply). Series colors are the
 three validated categorical slots (all-pairs CVD-safe on both console
 surfaces); text and grid always wear text/border tokens, never series color.
 
-Axis labels never hide what varies. Categorical x labels that would be
-truncated first lose whatever every label shares (a date prefix, a schema
-path, a constant time part), which is printed once under the axis; a label
-that is still cut carries its full text in a `<title>` and a `data-full`
-attribute, so the file explains itself and the console can show it on hover.
+Axis labels never collide and never hide what varies. How many category
+labels are drawn, and how long, is computed from the plot width (labels that
+would not fit are skipped, not overlapped); labels that would be truncated
+first lose whatever every label shares (a date prefix, a schema path, a
+constant time part), which is printed once as a caption; a label that is
+still cut carries its full text in a `<title>` and a `data-full` attribute,
+so the file explains itself and the console can show it on hover. Bar charts
+with many categories or long names render horizontally, one row per
+category, where the labels have room.
 """
 
 from __future__ import annotations
@@ -45,24 +49,42 @@ _MIN_AFFIX = 3
 
 @dataclass(frozen=True)
 class Layout:
-    """Canvas and label budget for one rendering size.
+    """Canvas and label geometry for one rendering size.
 
     The tile layout is the console's default (session tiles, exports); the
     detail layout backs the chart page and the lightbox, where the picture is
-    shown large enough that more, longer labels are legible.
+    shown large enough that more, longer labels are legible. Labels are never
+    drawn where they cannot fit: how many and how long is computed from the
+    plot width and an estimated glyph advance, not fixed in advance.
     """
 
     width: int
     height: int
     margin: dict = field(default_factory=lambda: dict(MARGIN))
-    max_labels: int = 8  # categorical x labels drawn; beyond this every k-th
-    max_chars: int = 12  # x label length before the ellipsis
+    max_chars: int = 20  # hard cap on a category label, however much room there is
+    min_chars: int = 8  # below this many characters, draw fewer labels instead
+    char_px: float = 6.4  # glyph advance assumed at the 11px axis font (generous)
+    row_px: int = 16  # horizontal bars: row height once rows are packed
+    grow: bool = False  # horizontal bars: grow the canvas to fit every row
 
 
 TILE = Layout(W, H)
 DETAIL = Layout(
-    1000, 440, {"top": 16, "right": 20, "bottom": 36, "left": 66}, max_labels=16, max_chars=24
+    1000,
+    440,
+    {"top": 16, "right": 20, "bottom": 36, "left": 66},
+    max_chars=32,
+    min_chars=10,
+    row_px=20,
+    grow=True,
 )
+
+#: bars this thick at most (dataviz: never fill the slot; let the band be air)
+_BAR_MAX = 24.0
+#: horizontal rows this tall at most, so a three-row chart is not three planks
+_ROW_MAX = 32.0
+#: category axes that read as an ordered scale keep vertical bars
+_DATE_RE = re.compile(r"^\d{4}-\d{2}(-\d{2})?")
 
 
 def _fmt(v: float) -> str:
@@ -202,6 +224,83 @@ def shared_affixes(labels: list[str]) -> tuple[str, str]:
     return prefix, suffix
 
 
+@dataclass
+class _Categories:
+    """How one axis shows its category labels: what every label shares (shown
+    once as a caption), whether path-like labels shorten from the front, and
+    the character cap. `display(x)` gives (shown, full) for a value."""
+
+    prefix: str = ""
+    suffix: str = ""
+    tail: bool = False
+    chars: int = 20
+
+    @classmethod
+    def plan(cls, labels: list[str], fit: int, cap: int) -> _Categories:
+        """Decide for `labels` given `fit` characters of room per label (and
+        `cap`, the layout's ceiling). Short labels come back untouched, so a
+        chart whose labels always fitted renders exactly as before."""
+        chars = max(1, min(fit, cap))
+        me = cls(chars=chars)
+        if not labels or max(len(lbl) for lbl in labels) <= chars:
+            return me
+        me.prefix, me.suffix = shared_affixes(labels)
+        residues = list(dict.fromkeys(me.residue(lbl) for lbl in labels))
+        if any(len(r) > chars for r in residues):
+            tails = [_tail_label(r, chars) for r in residues]
+            heads = [_tick_label(r, chars) for r in residues]
+            if all(t is not None for t in tails) and len(set(tails)) >= len(set(heads)):
+                me.tail = True
+        return me
+
+    @property
+    def caption(self) -> str:
+        return f"{self.prefix}…{self.suffix}" if (self.prefix or self.suffix) else ""
+
+    def residue(self, x: object) -> str:
+        full = str(x)
+        if (
+            (self.prefix or self.suffix)
+            and full.startswith(self.prefix)
+            and full.endswith(self.suffix)
+        ):
+            return full[len(self.prefix) : len(full) - len(self.suffix)] or full
+        return full
+
+    def display(self, x: object) -> tuple[str, str]:
+        """(shown, full): the residue, shortened to the cap — from the front
+        for paths when that keeps them apart, else with a trailing ellipsis."""
+        full, text = str(x), self.residue(x)
+        shown = (_tail_label(text, self.chars) if self.tail else None) or _tick_label(
+            text, self.chars
+        )
+        return shown, full
+
+
+def _label_text(px: float, py: float, anchor: str, shown: str, full: str) -> str:
+    """One axis label. Anything hidden rides along: a `<title>` (the file
+    explains itself) and data-full (the console's hover tip), plus focusability."""
+    attrs = ""
+    if shown != full:
+        attrs = (
+            f' class="tick-cut" tabindex="0" data-full={quoteattr(full)}'
+            f"><title>{escape(full)}</title"
+        )
+    return (
+        f'<text x="{round(px, 2)}" y="{round(py, 2)}" text-anchor="{anchor}" {_FONT}{attrs}>'
+        f"{escape(shown)}</text>"
+    )
+
+
+def _caption_text(px: float, py: float, caption: str) -> str:
+    return (
+        f'<text x="{round(px, 2)}" y="{round(py, 2)}" {_FONT} font-size="10" fill="{_FAINT}" '
+        f"data-shared={quoteattr(caption)}>"
+        "<title>shared by every label on this axis; the labels show the part "
+        f"that varies</title>{escape(caption)}</text>"
+    )
+
+
 class _Plot:
     """Shared frame: scales, grid, axes. Marks are appended by kind."""
 
@@ -214,16 +313,34 @@ class _Plot:
         self.y1 = m["top"]
         self.lo, self.hi = _y_domain(y_values, anchor_zero)
         self.parts: list[str] = []
-        self.prefix = ""
-        self.suffix = ""
-        self.tail = False  # shorten path-like labels from the front, keeping the end
+        self.cats = _Categories(chars=layout.max_chars)
 
     def sy(self, v: float) -> float:
         frac = (v - self.lo) / (self.hi - self.lo)
         return round(self.y0 - frac * (self.y0 - self.y1), 2)
 
-    def every_kth(self, n: int) -> int:
-        return max(1, math.ceil(n / self.layout.max_labels))
+    def fit_chars(self, shown: int) -> int:
+        """Characters that fit in one label slot when `shown` labels share the
+        axis, less one for breathing room."""
+        return int((self.x1 - self.x0) / max(shown, 1) / self.layout.char_px) - 1
+
+    def plan_x(self, labels: list[str]) -> int:
+        """Decide the x labels: what they share, how they shorten, and every
+        k-th one drawn — the smallest k at which the drawn labels cannot
+        collide while still saying something (min_chars, or the whole label
+        when it is shorter). Returns k."""
+        n = len(labels)
+        if not n:
+            return 1
+        self.cats = _Categories.plan(labels, self.fit_chars(n), self.layout.max_chars)
+        residues = [self.cats.residue(lbl) for lbl in labels]
+        want = min(max(len(r) for r in residues), self.layout.min_chars)
+        for k in range(1, n + 1):
+            chars = self.fit_chars(math.ceil(n / k))
+            if chars >= want:
+                self.cats.chars = max(1, min(chars, self.layout.max_chars))
+                return k
+        return n
 
     def frame(self) -> None:
         for t in _nice_ticks(self.lo, self.hi):
@@ -241,62 +358,14 @@ class _Plot:
             f'stroke="{_AXIS}" stroke-width="1"/>'
         )
 
-    def set_affixes(self, labels: list[str]) -> None:
-        """Decide how the categorical labels shorten — only when at least one
-        would otherwise be truncated, so short labels render exactly as before.
+    def caption(self) -> None:
+        """What every x label shares, once, under the axis."""
+        if self.cats.caption:
+            self.parts.append(_caption_text(self.x0, self.layout.height - 3, self.cats.caption))
 
-        First whatever every label shares comes off (printed once under the
-        axis). Then, if the residues are paths whose ends tell them apart,
-        they shorten from the front: `…PAGE_EVENTS`, not `ANALYTICS.W…`.
-        """
-        max_chars = self.layout.max_chars
-        if not labels or max(len(lbl) for lbl in labels) <= max_chars:
-            return
-        self.prefix, self.suffix = shared_affixes(labels)
-        residues = list(dict.fromkeys(self.category(lbl)[0] for lbl in labels))
-        if any(len(r) > max_chars for r in residues):
-            tails = [_tail_label(r, max_chars) for r in residues]
-            heads = [_tick_label(r, max_chars) for r in residues]
-            if all(t is not None for t in tails) and len(set(tails)) >= len(set(heads)):
-                self.tail = True
-        if self.prefix or self.suffix:
-            caption = f"{self.prefix}…{self.suffix}"
-            self.parts.append(
-                f'<text x="{self.x0}" y="{self.layout.height - 3}" {_FONT} '
-                f'font-size="10" fill="{_FAINT}" data-shared={quoteattr(caption)}>'
-                "<title>shared by every label on this axis; the labels show the part "
-                f"that varies</title>{escape(caption)}</text>"
-            )
-
-    def x_label(self, px: float, text: str, full: str | None = None) -> None:
-        """One categorical tick. `full` is the label as the data has it; `text`
-        is what the axis shows before truncation (the residue once shared
-        affixes are stripped). Anything hidden rides along in the markup."""
-        full = text if full is None else full
-        shown = (_tail_label(text, self.layout.max_chars) if self.tail else None) or _tick_label(
-            text, self.layout.max_chars
-        )
-        attrs = ""
-        if shown != full:
-            attrs = (
-                f' class="tick-cut" tabindex="0" data-full={quoteattr(full)}'
-                f"><title>{escape(full)}</title"
-            )
-        self.parts.append(
-            f'<text x="{round(px, 2)}" y="{self.y0 + 16}" text-anchor="middle" {_FONT}{attrs}>'
-            f"{escape(shown)}</text>"
-        )
-
-    def category(self, x: object) -> tuple[str, str]:
-        """(display text, full text) for a categorical x value."""
-        full = str(x)
-        if (
-            (self.prefix or self.suffix)
-            and full.startswith(self.prefix)
-            and full.endswith(self.suffix)
-        ):
-            return full[len(self.prefix) : len(full) - len(self.suffix)] or full, full
-        return full, full
+    def x_label(self, px: float, x: object) -> None:
+        shown, full = self.cats.display(x)
+        self.parts.append(_label_text(px, self.y0 + 16, "middle", shown, full))
 
     def svg(self) -> str:
         return (
@@ -311,9 +380,9 @@ def _bar(plot: _Plot, points: list[dict]) -> None:
     slot = (plot.x1 - plot.x0) / n
     w = max(2.0, min(slot * 0.72, 48.0))
     base = plot.sy(0.0) if plot.lo <= 0 <= plot.hi else plot.y0
-    k = plot.every_kth(n)
+    k = plot.plan_x([str(p["x"]) for p in points])
+    plot.caption()
     color = SERIES_COLORS[0]
-    plot.set_affixes([str(p["x"]) for p in points])
     for i, p in enumerate(points):
         v = p["y"][0]
         cx = plot.x0 + slot * (i + 0.5)
@@ -344,7 +413,7 @@ def _bar(plot: _Plot, points: list[dict]) -> None:
                 f"<title>{escape(str(p['x']))}: {_fmt(v)}</title></path>"
             )
         if i % k == 0:
-            plot.x_label(cx, *plot.category(p["x"]))
+            plot.x_label(cx, p["x"])
 
 
 def _line(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
@@ -363,11 +432,10 @@ def _line(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
         def px(i: int) -> float:
             return plot.x0 + (plot.x1 - plot.x0) * ((i + 0.5) / n if n > 1 else 0.5)
 
-    k = plot.every_kth(n)
-    if not numeric_x:
-        plot.set_affixes([str(p["x"]) for p in points])
+    k = plot.plan_x([str(p["x"]) for p in points])
+    plot.caption()
     for i in range(0, n, k):
-        plot.x_label(px(i), *plot.category(points[i]["x"]))
+        plot.x_label(px(i), points[i]["x"])
     show_markers = n <= 40
     for si in range(len(y_names)):
         color = SERIES_COLORS[si]
@@ -409,7 +477,7 @@ def _scatter(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
         xlo, xhi = xlo - 1, xhi + 1
     for t in _nice_ticks(xlo, xhi, 6):
         px = plot.x0 + (t - xlo) / (xhi - xlo) * (plot.x1 - plot.x0)
-        plot.x_label(px, _fmt(t))
+        plot.x_label(px, _fmt(t))  # numeric ticks: short, never shortened
     for si in range(len(y_names)):
         color = SERIES_COLORS[si]
         for xv, p in pairs:
@@ -422,6 +490,121 @@ def _scatter(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
                 f'fill-opacity="0.85" stroke="{_SURFACE}" stroke-width="1.5">'
                 f"<title>{_fmt(xv)} · {escape(y_names[si])}: {_fmt(v)}</title></circle>"
             )
+
+
+def _bar_path(x0: float, x1: float, y: float, h: float, r: float) -> str:
+    """A horizontal bar from x0 (the baseline end, square) to x1 (the data
+    end, rounded), r the corner radius; works for bars growing either way."""
+    y2 = round(y + h, 2)
+    if x1 >= x0:
+        xe = max(x1, x0 + 0.01)
+        return (
+            f"M{round(x0, 2)},{round(y, 2)} L{round(xe - r, 2)},{round(y, 2)} "
+            f"Q{round(xe, 2)},{round(y, 2)} {round(xe, 2)},{round(y + r, 2)} "
+            f"L{round(xe, 2)},{round(y2 - r, 2)} "
+            f"Q{round(xe, 2)},{y2} {round(xe - r, 2)},{y2} L{round(x0, 2)},{y2} Z"
+        )
+    xe = min(x1, x0 - 0.01)
+    return (
+        f"M{round(x0, 2)},{round(y, 2)} L{round(xe + r, 2)},{round(y, 2)} "
+        f"Q{round(xe, 2)},{round(y, 2)} {round(xe, 2)},{round(y + r, 2)} "
+        f"L{round(xe, 2)},{round(y2 - r, 2)} "
+        f"Q{round(xe, 2)},{y2} {round(xe + r, 2)},{y2} L{round(x0, 2)},{y2} Z"
+    )
+
+
+def _hbar(points: list[dict], layout: Layout) -> str:
+    """Horizontal bars: one row per category, the label margin sized to the
+    longest name. The right form for many categories or long names — the
+    labels sit on the y axis where there is room, so nothing collides.
+
+    The tile shows the rows that fit its height and says how many more there
+    are; the detail layout grows to hold every row.
+    """
+    n = len(points)
+    top, bottom, right = layout.margin["top"], layout.margin["bottom"], layout.margin["right"]
+    avail = layout.height - top - bottom
+    fits = layout.grow or n * layout.row_px <= avail
+    rows = n if fits else max(1, int(avail // layout.row_px))
+    row_h = min(_ROW_MAX, max(float(layout.row_px), avail / rows))
+    footer = 14 if rows < n else 0
+    height = round(top + rows * row_h + bottom + footer)
+
+    # the label margin: as wide as the longest shown label, up to 42% of the canvas
+    labels = [str(p["x"]) for p in points[:rows]]
+    room = int((0.42 * layout.width - 12) / layout.char_px)
+    cats = _Categories.plan(labels, room, max(layout.max_chars, room))
+    shown = [cats.display(lbl)[0] for lbl in labels]
+    label_px = max(len(t) for t in shown) * layout.char_px if shown else 0
+    x0 = round(min(0.42 * layout.width, label_px + 12), 2)
+    x1 = layout.width - right
+
+    values = [p["y"][0] for p in points[:rows] if p["y"][0] is not None]
+    lo, hi = _y_domain(values or [0.0], anchor_zero=True)
+
+    def sx(v: float) -> float:
+        return round(x0 + (v - lo) / (hi - lo) * (x1 - x0), 2)
+
+    parts: list[str] = []
+    plot_top, plot_bottom = top, round(top + rows * row_h, 2)
+    for t in _nice_ticks(lo, hi, 6 if layout.grow else 5):
+        x = sx(t)
+        parts.append(
+            f'<line x1="{x}" y1="{plot_top}" x2="{x}" y2="{plot_bottom}" '
+            f'stroke="{_GRID}" stroke-width="1"/>'
+        )
+        parts.append(
+            f'<text x="{x}" y="{round(plot_bottom + 16, 2)}" text-anchor="middle" {_FONT}>'
+            f"{_fmt(t)}</text>"
+        )
+    zero = sx(0.0)
+    parts.append(
+        f'<line x1="{zero}" y1="{plot_top}" x2="{zero}" y2="{plot_bottom}" '
+        f'stroke="{_AXIS}" stroke-width="1"/>'
+    )
+    if cats.caption:
+        parts.append(_caption_text(x0, 10, cats.caption))
+    bar_h = max(2.0, min(_BAR_MAX, row_h * 0.72))
+    r = min(4.0, bar_h / 2)
+    color = SERIES_COLORS[0]
+    for i, p in enumerate(points[:rows]):
+        cy = top + row_h * (i + 0.5)
+        shown_lbl, full = cats.display(p["x"])
+        parts.append(_label_text(x0 - 8, cy + 3.5, "end", shown_lbl, full))
+        v = p["y"][0]
+        if v is None:
+            continue
+        d = _bar_path(zero, sx(v), cy - bar_h / 2, bar_h, r)
+        parts.append(
+            f'<path d="{d}" fill="{color}"><title>{escape(full)}: {_fmt(v)}</title></path>'
+        )
+    if footer:
+        parts.append(
+            f'<text x="{x0}" y="{height - 4}" {_FONT} font-size="10" fill="{_FAINT}" '
+            f'data-rows-hidden="{n - rows}">+{n - rows} more '
+            f"row{'s' if n - rows != 1 else ''} — enlarge to see them all</text>"
+        )
+    return (
+        f'<svg viewBox="0 0 {layout.width} {height}" role="img" '
+        'style="width:100%;height:auto;display:block" '
+        'xmlns="http://www.w3.org/2000/svg">' + "".join(parts) + "</svg>"
+    )
+
+
+def bar_orientation(spec: dict, points: list[dict]) -> str:
+    """Vertical or horizontal bars. An explicit `orientation` in the spec
+    wins; otherwise categories that read as an ordered scale (dates,
+    numbers) stay vertical, and many categories or long names go
+    horizontal, where the labels have room."""
+    wanted = spec.get("orientation") or "auto"
+    if wanted in ("vertical", "horizontal"):
+        return wanted
+    labels = [str(p["x"]) for p in points]
+    if all(_DATE_RE.match(lbl) or _num(lbl) is not None for lbl in labels):
+        return "vertical"
+    if len(labels) > 8 or max(len(lbl) for lbl in labels) > 12:
+        return "horizontal"
+    return "vertical"
 
 
 def render_svg(spec: dict, data: dict, detail: bool = False) -> str:
@@ -442,6 +625,8 @@ def render_svg(spec: dict, data: dict, detail: bool = False) -> str:
             f'<text x="{layout.width / 2}" y="45" text-anchor="middle" {_FONT}>'
             "no plottable rows in this artifact</text></svg>"
         )
+    if spec["kind"] == "bar" and bar_orientation(spec, points) == "horizontal":
+        return _hbar(points, layout)
     plot = _Plot(values, anchor_zero=(spec["kind"] == "bar"), layout=layout)
     plot.frame()
     if spec["kind"] == "bar":

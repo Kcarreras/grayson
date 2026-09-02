@@ -106,7 +106,9 @@ they are equivalent. Never query Snowflake except through grayson.
    (`grayson chart add <sid> --artifact q_0007 --kind line -x day -y null_rate
    --title "..." --note "what this shows"`). Charts appear live in the user's
    console and are traceable to the executed query — narrate the investigation
-   visually, especially for root-cause work. The response's `text` field is a
+   visually, especially for root-cause work. Keep bar charts to a ranked top-N in
+   SQL (`ORDER BY n DESC LIMIT 15`): many categories or long names render as
+   horizontal bars, but sixty bars is a table, not a picture. The response's `text` field is a
    terminal rendering of the same chart: paste it into your chat reply, inside a
    code block, so the user sees the shape right in the conversation.
 4. Human input when needed: `grayson intervention request <sid> --kind label_sample ...`,

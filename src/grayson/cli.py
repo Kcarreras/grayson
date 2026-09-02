@@ -1271,18 +1271,26 @@ def chart_add(
     title: str = typer.Option(..., "--title", help="What the chart shows."),
     note: str = typer.Option("", "--note", help="One-line read: what should the viewer see?"),
     worker: str = typer.Option(None, "--worker"),
+    orientation: str = typer.Option(
+        "auto",
+        "--orientation",
+        help="bar only: auto | vertical | horizontal. auto lays many categories or "
+        "long names out as horizontal bars; dates and numbers stay vertical.",
+    ),
 ) -> None:
     """Build a chart from a cached artifact — it appears live in the console.
 
     Aggregate/order the data with SQL first (query run or cache query), then
     chart the resulting artifact. Every chart is traceable to its query id.
+    Keep bar charts to a ranked top-N (ORDER BY ... LIMIT): many categories
+    render as horizontal bars, but sixty bars is a table, not a picture.
     The response includes `text`, a terminal rendering — paste it into your
     chat reply so the user sees the shape without leaving the conversation."""
     from grayson.charts import ChartError, add_chart, chart_data, render_text
 
     s = _session(session_id)
     try:
-        spec = add_chart(s, artifact, kind, x, list(y), title, note, worker)
+        spec = add_chart(s, artifact, kind, x, list(y), title, note, worker, orientation)
     except ChartError as e:
         fail(str(e))
         return
