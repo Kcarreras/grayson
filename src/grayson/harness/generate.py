@@ -46,6 +46,11 @@ they are equivalent. Never query Snowflake except through grayson.
   or reconfigure it yourself.
 - When a judgement needs a human (semantic correctness, ambiguous rules), file an
   intervention and wait for the answer instead of guessing.
+- **Resuming a session** you did not start in this context (a new chat, a compacted
+  window, a worker joining late): run `grayson session brief <sid>` first. It carries
+  the setup answers, every checkpoint's evidence, the user's verdicts on findings,
+  the user's intervention answers, proposals, recent queries, and the next action.
+  Re-derive nothing it records, and never re-ask a question it already answers.
 - **Finding nothing is a result.** If the checks clear and nothing is worth acting on,
   do not manufacture a finding to get past a gate: ask the user to close the session as
   a *clean* result (`session readiness` tells you when that is the available route).
@@ -108,7 +113,10 @@ they are equivalent. Never query Snowflake except through grayson.
    console and are traceable to the executed query — narrate the investigation
    visually, especially for root-cause work. Keep bar charts to a ranked top-N in
    SQL (`ORDER BY n DESC LIMIT 15`): many categories or long names render as
-   horizontal bars, but sixty bars is a table, not a picture. The response's `text` field is a
+   horizontal bars, but sixty bars is a table, not a picture. For a distribution,
+   select the raw numeric column (SAMPLE if the table is large, no GROUP BY) and
+   chart it as `--kind histogram -x amount` with no `-y`: grayson bins it locally,
+   `--bins N` overrides the default. The response's `text` field is a
    terminal rendering of the same chart: paste it into your chat reply, inside a
    code block, so the user sees the shape right in the conversation.
 4. Human input when needed: `grayson intervention request <sid> --kind label_sample ...`,

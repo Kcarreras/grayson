@@ -118,7 +118,13 @@ seeded with planted, workflow-matched bugs and a scoring answer key:
 grayson sandbox init my-demo && cd my-demo
 grayson harness init claude-code
 # then ask your agent to run a workflow against the sandbox tables
+grayson sandbox score --all       # afterwards: findings vs the planted truth, per session
 ```
+
+`sandbox score` applies the answer key's rubric — identified, explained,
+quantified, per planted problem — to a session's findings and lines sessions
+up with their cost, so two harnesses, models, or protocol files can be
+compared on the same problems.
 
 ## Deployment modes
 

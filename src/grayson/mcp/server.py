@@ -56,14 +56,18 @@ Profile before hand-rolling: profile_table covers a table's descriptive battery
 (nulls, cardinality, ranges, key candidates, frequencies) in three or four guarded
 queries whose ids are evidence — do not write forty single-column queries yourself.
 Narrate the investigation visually: chart_add builds
-bar/line/scatter charts from cached artifacts that render live in the user's console,
-each traceable to its executed query. Keep bar charts to a ranked top-N (ORDER BY ...
+bar/line/scatter/histogram charts from cached artifacts that render live in the user's
+console, each traceable to its executed query (a histogram bins one numeric column's raw
+values itself — select the column, no GROUP BY). Keep bar charts to a ranked top-N (ORDER BY ...
 LIMIT 15 or so): many categories render as horizontal bars, but sixty bars is a table.
 If a target table has no recorded knowledge, settle grain/semantics with the user early
 (or run the table-onboarding workflow), and persist durable intervention answers with
 knowledge_add so future sessions start briefed. An open question in the library that the
 user can simply answer needs no session at all: relay their answer with knowledge_answer,
 which records it and retires the question (they confirm it in the console).
+Resuming a session you did not start in this context (a new chat, a compacted window,
+a second worker)? Call session_brief first: it carries the setup answers, every gate's
+state, the user's intervention answers, and the next action — re-derive nothing it records.
 Access warehouse data ONLY through these tools — never open warehouse or .grayson
 database/state files directly (including local or sandbox files); direct reads bypass
 the audit trail and produce nothing citable as evidence.
@@ -290,6 +294,23 @@ def build_server(workspace: Workspace) -> Any:
     def session_status(session_id: str) -> dict:
         try:
             return _session(session_id).summary()
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Everything the session already knows, in one read — call this first "
+        "when resuming a session in a fresh context (a new chat, a compacted window, a "
+        "worker joining late): setup answers, checkpoints with evidence, findings with "
+        "the user's verdicts, the user's intervention answers, proposals, recent queries, "
+        "charts, and the next action. Never re-ask what it records; `text` is the "
+        "readable form."
+    )
+    def session_brief(session_id: str) -> dict:
+        from grayson.core.brief import build_brief, render_brief
+
+        try:
+            brief = build_brief(_session(session_id), workspace.workflows_dir)
+            return {**brief, "text": render_brief(brief)}
         except (FileNotFoundError, ValueError) as e:
             return _err(e)
 
@@ -842,11 +863,13 @@ def build_server(workspace: Workspace) -> Any:
         return {"views_in_scope": resolved, "scope": sorted(s.scope_tables)}
 
     @mcp.tool(
-        description="Build a chart (bar|line|scatter) from a cached artifact; it renders "
-        "live in the user's console, traceable to the executed query. Aggregate/order "
+        description="Build a chart (bar|line|scatter|histogram) from a cached artifact; it "
+        "renders live in the user's console, traceable to the executed query. Aggregate/order "
         "with SQL first, then chart the artifact. Up to 3 y columns (line/scatter); "
-        "bar takes one. Bars lay themselves out: many categories or long names render "
-        "horizontally (orientation=auto; vertical|horizontal forces it), and dates or "
+        "bar takes one; histogram takes none — it bins the raw values of the numeric x "
+        "column locally (select the column, optionally SAMPLE, no GROUP BY; `bins` "
+        "overrides the default count). Bars lay themselves out: many categories or long "
+        "names render horizontally (orientation=auto; vertical|horizontal forces it), and dates or "
         "numbers stay vertical — but keep bars to a ranked top-N in SQL, since sixty "
         "bars is a table. Use charts to narrate the investigation visually. The response's "
         "`text` field is a terminal rendering — paste it into your chat reply (in a code "
@@ -857,17 +880,18 @@ def build_server(workspace: Workspace) -> Any:
         qid: str,
         kind: str,
         x: str,
-        y: list[str],
-        title: str,
+        y: list[str] | None = None,
+        title: str = "",
         note: str = "",
         worker: str | None = None,
         orientation: str = "auto",
+        bins: int | None = None,
     ) -> dict:
         from grayson.charts import ChartError, add_chart, chart_data, render_text
 
         try:
             s = _session(session_id)
-            spec = add_chart(s, qid, kind, x, y, title, note, worker, orientation)
+            spec = add_chart(s, qid, kind, x, list(y or []), title, note, worker, orientation, bins)
             return {**spec, "text": render_text(spec, chart_data(s, spec))}
         except (ChartError, FileNotFoundError, ValueError) as e:
             return _err(e)

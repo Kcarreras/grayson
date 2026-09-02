@@ -294,10 +294,13 @@ Every executed query's results are stored automatically:
 ## 8a. Analysis charts
 
 Agents make their analytical process *visible* as it happens. `grayson chart add`
-(MCP: `chart_add`) builds a chart — `bar`, `line`, or `scatter` — from a cached
-artifact: the spec (artifact id, column mapping, title, one-line read) is validated
-against the artifact's real shape (columns exist, measures are numeric) and stored in
-the session. The console renders charts server-side as dependency-free SVG on its
+(MCP: `chart_add`) builds a chart — `bar`, `line`, `scatter`, or `histogram` — from
+a cached artifact: the spec (artifact id, column mapping, title, one-line read) is
+validated against the artifact's real shape (columns exist, measures are numeric) and
+stored in the session. A histogram is the one kind that computes rather than maps:
+it bins the raw values of a numeric column locally (Sturges' default or a requested
+`bins`, edges rounded to 1/2/2.5/5 × 10ⁿ widths) and reports the values binned, so
+the picture still draws nothing the cited query did not return. The console renders charts server-side as dependency-free SVG on its
 live-refreshing session page, so the user watches the investigation's visual
 narrative build in near real time — and because the artifact is an executed query,
 every picture is traceable evidence (chart card shows the q_XXXX chip; a "plotted

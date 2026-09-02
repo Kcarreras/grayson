@@ -35,21 +35,27 @@ def _fq(name: str) -> str:
 
 def seed_sandbox(db_path: Path) -> dict:
     """(Re)create the sandbox warehouse. Returns the exact ground truth."""
-    rng = random.Random(42)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if db_path.exists():
         db_path.unlink()
     con = sqlite3.connect(db_path)
     try:
-        truth = {
-            "customers": _seed_customers(con, rng),
-            "orders_enriched": _seed_orders(con, rng),
-            "payments": _seed_payments(con, rng),
-        }
-        _write_meta(con)
-        con.commit()
+        return seed_connection(con)
     finally:
         con.close()
+
+
+def seed_connection(con: sqlite3.Connection) -> dict:
+    """Seed an open connection (a file, or :memory: to recompute the truth
+    without touching any warehouse — how `sandbox score` gets its key)."""
+    rng = random.Random(42)
+    truth = {
+        "customers": _seed_customers(con, rng),
+        "orders_enriched": _seed_orders(con, rng),
+        "payments": _seed_payments(con, rng),
+    }
+    _write_meta(con)
+    con.commit()
     return truth
 
 
@@ -261,8 +267,12 @@ Start with: `grayson session start --workflow migration-parity \\
 
 ## Scoring a run
 
-For each session, compare the agent's findings (`grayson finding list <sid>`) against
-the numbers above. Suggested rubric per problem: identified (1 pt), root cause correct
-(1 pt), quantification within ±2% (1 pt). The evidence trail (`grayson query log <sid>`)
-shows how it got there.
+`grayson sandbox score <sid>` applies the rubric per planted problem — identified
+(1 pt), explained: root cause or characterisation as stated above (1 pt),
+quantified within ±2% (1 pt) — to the session's findings, deterministically, and
+says what each missed point was looking for. `grayson sandbox score --all` lines
+every session up side by side with its cost (queries, budget, interventions), which
+is how two harnesses, models, or protocol files are compared on the same problems.
+It is a user command: its output is this key. The evidence trail
+(`grayson query log <sid>`) shows how a run got where it got.
 """

@@ -11,10 +11,11 @@ what the cited query returned; there is no untracked data path into a picture.
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from grayson.cache.store import QID_RE
@@ -23,7 +24,8 @@ from grayson.util import read_json, utcnow, write_json
 if TYPE_CHECKING:
     from grayson.core.session import Session
 
-ChartKind = Literal["bar", "line", "scatter"]
+ChartKind = Literal["bar", "line", "scatter", "histogram"]
+KINDS = ("bar", "line", "scatter", "histogram")
 #: bar charts only — `auto` renders many categories or long names as horizontal
 #: bars (one row per category, labels on the y axis where they have room) and
 #: ordered scales (dates, numbers) as vertical ones; the others force it
@@ -35,8 +37,14 @@ CHART_ID_RE = re.compile(r"^c_[0-9]{3,}$")
 #: past that, agents make another chart (facet) instead of a rainbow
 MAX_SERIES = 3
 
-#: row caps per kind, so a chart of a million-row artifact stays a chart
-MAX_POINTS = {"bar": 60, "line": 300, "scatter": 1000}
+#: row caps per kind, so a chart of a million-row artifact stays a chart.
+#: A histogram's points are its bins; the rows it bins are capped separately.
+MAX_POINTS = {"bar": 60, "line": 300, "scatter": 1000, "histogram": 40}
+#: rows a histogram reads from its artifact — binning is O(n) and local, so
+#: the cap is a courtesy to the console's refresh, not a plotting limit
+HISTOGRAM_ROW_CAP = 50_000
+MAX_BINS = MAX_POINTS["histogram"]
+MIN_BINS = 2
 
 
 class ChartError(ValueError):
@@ -48,12 +56,30 @@ class ChartSpec(BaseModel):
     qid: str
     kind: ChartKind
     x: str
-    y: list[str] = Field(min_length=1, max_length=MAX_SERIES)
+    #: measures; empty for a histogram, which bins `x` itself and counts rows
+    y: list[str] = Field(default_factory=list, max_length=MAX_SERIES)
     title: str
     note: str = ""
     orientation: Orientation = "auto"
+    #: histogram only: the bin count the author asked for (None = chosen from
+    #: the row count); the effective count, after the edges are made round,
+    #: is reported by chart_data
+    bins: int | None = Field(default=None, ge=MIN_BINS, le=MAX_BINS)
     worker: str | None = None
     created_at: str = Field(default_factory=utcnow)
+
+    @model_validator(mode="after")
+    def _y_matches_kind(self) -> ChartSpec:
+        if self.kind == "histogram":
+            if self.y:
+                raise ValueError(
+                    "a histogram bins its x column and counts rows — it takes no y column"
+                )
+        elif not self.y:
+            raise ValueError("y is required: name at least one measure column")
+        if self.bins is not None and self.kind != "histogram":
+            raise ValueError("bins applies to histograms only")
+        return self
 
     @field_validator("qid")
     @classmethod
@@ -111,10 +137,23 @@ def add_chart(
     note: str = "",
     worker: str | None = None,
     orientation: str = "auto",
+    bins: int | None = None,
 ) -> dict:
     """Validate a chart against the cached artifact and persist it."""
-    if kind not in ("bar", "line", "scatter"):
-        raise ChartError(f"kind must be bar, line, or scatter, got {kind!r}")
+    if kind not in KINDS:
+        raise ChartError(f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
+    if kind == "histogram":
+        if y:
+            raise ChartError(
+                "a histogram takes no y column — it bins the numeric x column and counts "
+                "rows. To plot a measure you already aggregated, use bar"
+            )
+        if bins is not None and not (MIN_BINS <= bins <= MAX_BINS):
+            raise ChartError(f"bins must be between {MIN_BINS} and {MAX_BINS}, got {bins}")
+    elif bins is not None:
+        raise ChartError("bins applies to histograms only")
+    if kind != "histogram" and not y:
+        raise ChartError(f"{kind} charts need at least one y column (a measure)")
     if kind == "bar" and len(y) > 1:
         raise ChartError(
             "bar charts take one y column — make one chart per measure "
@@ -148,6 +187,11 @@ def add_chart(
             )
     if kind == "scatter" and not any(_num(row.get(x_col)) is not None for row in sample):
         raise ChartError("scatter needs a numeric x column — use bar or line for categories")
+    if kind == "histogram" and not any(_num(row.get(x_col)) is not None for row in sample):
+        raise ChartError(
+            f"histogram needs a numeric x column and {x_col!r} has no numeric values in the "
+            "artifact's first rows — bar charts show the counts of categories"
+        )
 
     try:
         spec = ChartSpec(
@@ -159,6 +203,7 @@ def add_chart(
             title=title,
             note=note,
             orientation=orientation,
+            bins=bins,
             worker=worker,
         )
     except PydanticValidationError as e:
@@ -213,7 +258,13 @@ def get_chart(session: Session, chart_id: str) -> dict | None:
 
 
 def chart_data(session: Session, spec: dict) -> dict:
-    """The rows a chart plots: capped, null-y rows dropped, truncation noted."""
+    """The rows a chart plots: capped, null-y rows dropped, truncation noted.
+
+    A histogram's points are its bins, computed here from the artifact's raw
+    values; `cap` and `truncated` then describe the rows that were binned.
+    """
+    if spec["kind"] == "histogram":
+        return _histogram_data(session, spec)
     cap = MAX_POINTS[spec["kind"]]
     columns, rows = session.cache.rows(spec["qid"], limit=cap + 1)
     truncated = len(rows) > cap
@@ -236,4 +287,106 @@ def chart_data(session: Session, spec: dict) -> dict:
         "truncated": truncated,
         "cap": cap,
         "skipped": skipped,
+    }
+
+
+# -- histograms -------------------------------------------------------------
+
+
+def default_bins(n: int) -> int:
+    """Sturges' rule, clamped: ceil(log2 n) + 1 bins for n values. Coarse for
+    heavy tails and multimodal data, which is exactly when an author passes
+    `bins` — the default only has to be sensible."""
+    if n <= 1:
+        return 1
+    return max(5, min(30, math.ceil(math.log2(n)) + 1))
+
+
+def _nice_width(raw: float) -> float:
+    """Round a bin width up to 1, 2, 2.5, or 5 times a power of ten, so the
+    edges land on numbers a reader can hold in their head."""
+    if raw <= 0:
+        return 1.0
+    mag = 10 ** math.floor(math.log10(raw))
+    for mult in (1, 2, 2.5, 5, 10):
+        if mag * mult >= raw - mag * 1e-9:
+            return mag * mult
+    return mag * 10
+
+
+def bin_edges(lo: float, hi: float, bins: int) -> list[float]:
+    """Bin edges of a round width covering [lo, hi]. The count comes out near
+    `bins`, not exactly on it: round edges are worth more than a round count.
+    A degenerate range (every value equal) gets one bin around the value."""
+    if bins < 1:
+        bins = 1
+    if hi <= lo:
+        width = _nice_width(abs(lo) * 0.1 or 1.0)
+        start = math.floor(lo / width) * width
+        return [round(start, 10), round(start + width, 10)]
+    width = _nice_width((hi - lo) / bins)
+    start = math.floor(lo / width) * width
+    edges = [start]
+    # the top edge is exclusive except for the last bin, which takes hi itself
+    while edges[-1] < hi or len(edges) < 2:
+        edges.append(edges[-1] + width)
+        if len(edges) > MAX_BINS + 1:  # rounding produced more bins than asked: coarsen
+            return bin_edges(lo, hi, max(1, bins // 2))
+    return [round(e, 10) for e in edges]
+
+
+def _bin_label(lo: float, hi: float) -> str:
+    from grayson.charts.render import _fmt
+
+    return f"{_fmt(lo)}–{_fmt(hi)}"
+
+
+def _histogram_data(session: Session, spec: dict) -> dict:
+    cap = HISTOGRAM_ROW_CAP
+    columns, rows = session.cache.rows(spec["qid"], limit=cap + 1)
+    truncated = len(rows) > cap
+    rows = rows[:cap]
+    x_col = spec["x"]
+    idx = columns.index(x_col) if x_col in columns else None
+    values: list[float] = []
+    skipped = 0
+    for row in rows:
+        v = _num(row[idx]) if idx is not None else None
+        if v is None:
+            skipped += 1
+        else:
+            values.append(v)
+    base = {
+        "x": x_col,
+        "y": ["count"],
+        "truncated": truncated,
+        "cap": cap,
+        "skipped": skipped,
+        "values": len(values),
+    }
+    if not values:
+        return {**base, "points": [], "bins": 0, "width": None, "edges": []}
+    lo, hi = min(values), max(values)
+    edges = bin_edges(lo, hi, spec.get("bins") or default_bins(len(values)))
+    width = edges[1] - edges[0]
+    counts = [0] * (len(edges) - 1)
+    last = len(counts) - 1
+    for v in values:
+        i = int((v - edges[0]) / width)
+        counts[min(max(i, 0), last)] += 1  # the top edge is inclusive
+    points = [
+        {"x": _bin_label(edges[i], edges[i + 1]), "lo": edges[i], "hi": edges[i + 1], "y": [c]}
+        for i, c in enumerate(counts)
+    ]
+    mean = sum(values) / len(values)
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    median = ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+    return {
+        **base,
+        "points": points,
+        "bins": len(counts),
+        "width": width,
+        "edges": edges,
+        "stats": {"min": lo, "max": hi, "mean": mean, "median": median},
     }

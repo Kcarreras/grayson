@@ -416,6 +416,51 @@ def _bar(plot: _Plot, points: list[dict]) -> None:
             plot.x_label(cx, p["x"])
 
 
+def _histogram(plot: _Plot, points: list[dict], edges: list[float]) -> None:
+    """Contiguous bars over numeric bins, labelled at the edges rather than
+    the bins: a histogram's x axis is a scale, and a reader wants to know
+    where a bar starts and ends, not its midpoint."""
+    n = len(points)
+    lo, hi = edges[0], edges[-1]
+    span = (hi - lo) or 1.0
+
+    def sx(v: float) -> float:
+        return round(plot.x0 + (v - lo) / span * (plot.x1 - plot.x0), 2)
+
+    base = plot.sy(0.0) if plot.lo <= 0 <= plot.hi else plot.y0
+    color = SERIES_COLORS[0]
+    for p in points:
+        count = p["y"][0]
+        if count is None:
+            continue
+        x_start, x_end = sx(p["lo"]), sx(p["hi"])
+        top = plot.sy(count)
+        h = max(0.0, base - top)
+        plot.parts.append(
+            f'<rect x="{x_start}" y="{round(top, 2)}" width="{round(x_end - x_start, 2)}" '
+            f'height="{round(h, 2)}" fill="{color}" stroke="{_SURFACE}" stroke-width="1">'
+            f"<title>{escape(str(p['x']))}: {_fmt(count)}</title></rect>"
+        )
+    # edge labels: every k-th edge, k chosen so the drawn labels cannot collide;
+    # the last edge is always wanted, unless it would sit on the previous label
+    labels = [_fmt(e) for e in edges]
+    slot = (max(len(lbl) for lbl in labels) + 1) * plot.layout.char_px
+    fit = max(1, int((plot.x1 - plot.x0) / slot))
+    k = max(1, math.ceil(len(labels) / fit))
+    last_drawn: float | None = None
+    for i, e in enumerate(edges):
+        if i % k and i != n:
+            continue
+        px = sx(e)
+        if last_drawn is not None and px - last_drawn < slot:
+            continue
+        plot.parts.append(
+            f'<text x="{px}" y="{plot.y0 + 16}" text-anchor="middle" {_FONT}>'
+            f"{escape(labels[i])}</text>"
+        )
+        last_drawn = px
+
+
 def _line(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
     n = len(points)
     xs_num = [_num(p["x"]) for p in points]
@@ -627,10 +672,13 @@ def render_svg(spec: dict, data: dict, detail: bool = False) -> str:
         )
     if spec["kind"] == "bar" and bar_orientation(spec, points) == "horizontal":
         return _hbar(points, layout)
-    plot = _Plot(values, anchor_zero=(spec["kind"] == "bar"), layout=layout)
+    plot = _Plot(values, anchor_zero=(spec["kind"] in ("bar", "histogram")), layout=layout)
     plot.frame()
     if spec["kind"] == "bar":
         _bar(plot, points)
+    elif spec["kind"] == "histogram":
+        edges = data.get("edges") or [p["lo"] for p in points] + [points[-1]["hi"]]
+        _histogram(plot, points, edges)
     elif spec["kind"] == "line":
         _line(plot, points, y_names)
     else:
