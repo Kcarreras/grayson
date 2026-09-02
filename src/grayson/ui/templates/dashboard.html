@@ -64,6 +64,7 @@
          that did nothing rather than one that checked and found nothing #}
       <td>{% if s.outcome == "clean" %}<span class="badge ok">clean</span>
           {% elif s.outcome == "findings" %}<span class="badge plain">findings</span>
+          {% elif s.outcome == "abandoned" %}<span class="badge todo" title="{{ s.outcome_note }}">abandoned</span>
           {% else %}<span class="faint small">—</span>{% endif %}</td>
       <td class="num">{{ row.findings }}</td>
       <td class="muted mono small">{{ s.created_at }}</td>

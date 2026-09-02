@@ -102,11 +102,35 @@ executed ("we looked and it was fine" requires having looked).
 grayson session close <sid> --clean --note "all four checks came back sound"
 ```
 
+**A session that is broken, was started by mistake, or stopped mattering**
+is **abandoned**: the third ending, and the honest label for "no result". It
+skips the gates on purpose, so it never reads as clean or as findings; the
+reason is recorded, open interventions are cancelled so nothing sits in
+"awaiting your input", and nothing publishes to the library. The console
+offers it beside *Close this session*; the closed list shows it as
+`abandoned`.
+
+```bash
+grayson session abandon <sid> --reason "wrong target table; restarted as 2026…"
+```
+
+**Deleting** a session removes it from the workspace altogether — audit
+trail, cache, charts. Records the session already published to the library
+(accepted findings, verified fixes, its report) are a separate matter: they
+stay unless you remove them too, which is the author's or a library admin's
+call ([LIBRARY.md](LIBRARY.md#removing-records)). The session page's *Delete
+this session* fold offers both together; from a terminal:
+
+```bash
+grayson session delete <sid> --yes             # the local session only
+grayson session delete <sid> --yes --library   # and its published records
+```
+
 Every human boundary — accept/reject a finding, approve a fix, answer an
-intervention, confirm a fact, waive a check, force a gate, close a session —
-is a **user** action requiring an interactive terminal. An agent shelling
-out is refused, and the audit trail attributes each action to whoever
-actually took it.
+intervention, confirm a fact, waive a check, force a gate, close, abandon, or
+delete a session, remove published records — is a **user** action requiring
+an interactive terminal. An agent shelling out is refused, and the audit
+trail attributes each action to whoever actually took it.
 
 ## Profiling
 

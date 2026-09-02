@@ -18,6 +18,12 @@ from grayson.workspace import Workspace
 
 LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks", "records", "reports")
 
+#: shared library settings, versioned with the library itself (docs/LIBRARY.md
+#: "Admins"). Today it holds one thing: who may remove any published record.
+LIBRARY_SETTINGS_FILENAME = "library.toml"
+
+_ADMIN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+
 #: how recently a `git fetch` must have run for repo_status to reuse it
 #: instead of paying another network round-trip
 _FETCH_TTL_SECONDS = 60.0
@@ -25,10 +31,17 @@ _FETCH_TTL_SECONDS = 60.0
 _REMOTE_RE = re.compile(r"^[\w.-]+@[\w.-]+:")  # scp-style git remote (git@host:org/repo)
 
 
-def init_library(path: Path) -> Path:
-    """Scaffold a fresh team library repo (empty asset dirs + README)."""
+def init_library(path: Path, admins: list[str] | None = None) -> Path:
+    """Scaffold a fresh team library repo (empty asset dirs + README).
+
+    `admins` seeds library.toml on a brand-new library only; an existing
+    settings file is never rewritten here (linking a teammate's clone must
+    not reset who the team's admins are)."""
     path = path.resolve()
     path.mkdir(parents=True, exist_ok=True)
+    settings = path / LIBRARY_SETTINGS_FILENAME
+    if not settings.exists():
+        write_library_settings(path, {"admins": list(admins or [])})
     (path / "knowledge").mkdir(exist_ok=True)
     (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
     (path / "workflows").mkdir(exist_ok=True)
@@ -59,6 +72,135 @@ def init_library(path: Path) -> Path:
             encoding="utf-8",
         )
     return path
+
+
+def library_root(workspace: Workspace) -> Path:
+    """Where library assets live: the linked clone, or the workspace in solo mode."""
+    return workspace.config.library_path or workspace.root
+
+
+def read_library_settings(root: Path) -> dict:
+    """The library's shared settings; {} when the file is absent. A file that
+    does not parse raises ValueError — callers decide whether that is a
+    finding (doctor) or fail-closed (no admins)."""
+    path = root / LIBRARY_SETTINGS_FILENAME
+    if not path.is_file():
+        return {}
+    import tomllib
+
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError) as e:
+        raise ValueError(f"{path} is not valid TOML: {e}") from e
+    section = data.get("library", {})
+    return section if isinstance(section, dict) else {}
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def write_library_settings(root: Path, settings: dict) -> Path:
+    """Rewrite library.toml's [library] table. Keys this grayson does not know
+    survive (a newer one may have written them); only simple values are
+    representable, which is all the file is for."""
+    from grayson.util import atomic_write_text
+
+    try:
+        current = read_library_settings(root)
+    except ValueError:
+        current = {}
+    merged = {**current, **settings}
+    lines = [
+        "# grayson team library settings — shared through this repo, so a change",
+        "# here is a commit the team can see (and, with a CODEOWNERS entry, review).",
+        "[library]",
+        "# user ids (as set with `grayson user set`) who may remove any session's",
+        "# published records; everyone else removes only what they published.",
+    ]
+    for key, value in merged.items():
+        lines.append(f"{key} = {_toml_value(value)}")
+    path = root / LIBRARY_SETTINGS_FILENAME
+    atomic_write_text(path, "\n".join(lines) + "\n")
+    return path
+
+
+def library_admins(root: Path) -> list[str]:
+    """User ids allowed to remove any published record. Fail-closed: a missing
+    or unreadable settings file means no admins, never everyone."""
+    try:
+        raw = read_library_settings(root).get("admins", [])
+    except ValueError:
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [str(a) for a in raw if isinstance(a, str) and _ADMIN_ID_RE.match(a)]
+
+
+def set_library_admins(workspace: Workspace, add: str = "", remove: str = "") -> dict:
+    """Change the admins list: one id in or out, committed to the library with
+    the actor's trailer when the library is a git repo.
+
+    Guard rail, not access control: the caller must already be an admin —
+    unless the list is empty, which is the bootstrap case (a library made
+    before admins existed, or linked without naming one). Identity here is
+    declared (`grayson user set`), so the real lock is the git host's review
+    rules on library.toml; this refuses the accidental and the casual path and
+    keeps history honest about who acted."""
+    from grayson.identity import get_user_id
+
+    root = library_root(workspace)
+    admins = library_admins(root)
+    me = get_user_id()
+    if not me:
+        raise PermissionError("set your user id first (`grayson user set <id>`)")
+    if admins and me not in admins:
+        raise PermissionError(
+            f"only a library admin changes the admins list (current: {', '.join(admins)}); "
+            "you are not one — ask one of them, or change library.toml through a "
+            "reviewed commit"
+        )
+    change = ""
+    if add:
+        if not _ADMIN_ID_RE.match(add):
+            raise ValueError("admin id must be 1-32 characters: letters, digits, '-' or '_'")
+        if add not in admins:
+            admins.append(add)
+            change = f"add {add}"
+    if remove:
+        if remove not in admins:
+            raise ValueError(f"{remove!r} is not an admin (current: {', '.join(admins) or 'none'})")
+        admins.remove(remove)
+        change = f"remove {remove}"
+    if not change:
+        return {"admins": admins, "changed": False}
+    write_library_settings(root, {"admins": admins})
+    sync = commit_library_paths(
+        workspace, [LIBRARY_SETTINGS_FILENAME], f"grayson library admins: {change}"
+    )
+    return {"admins": admins, "changed": True, "library_sync": sync}
+
+
+def settings_last_change(root: Path) -> dict | None:
+    """The last commit that touched library.toml — who changed the admins,
+    and when — so an unexpected change shows up instead of sitting quietly."""
+    if not (root / ".git").exists():
+        return None
+    log = _git(root, "log", "-1", "--format=%H%n%an%n%aI%n%B", "--", LIBRARY_SETTINGS_FILENAME)
+    if log.returncode != 0 or not log.stdout.strip():
+        return None
+    commit, author, date, *body = log.stdout.rstrip("\n").split("\n")
+    trailer = next(
+        (ln.split(":", 1)[1].strip() for ln in body if ln.startswith("Grayson-User:")), None
+    )
+    return {"commit": commit[:12], "author": author, "date": date, "user_id": trailer}
 
 
 def _git(repo: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -169,11 +311,17 @@ def push_library(
     carries a Grayson-User trailer — and Grayson-Via when the write came
     through an agent surface — so shared-library history stays attributable
     even from shared machines or generic git identities."""
-    from grayson.identity import get_user_id
-
     lib = workspace.config.library_path
     if lib is None or not (lib / ".git").exists():
         return {"ok": False, "detail": "no linked git library to push"}
+    _git(lib, "add", "-A")
+    commit = _git(lib, "commit", "-m", _with_trailers(message, via))
+    return _push(lib, committed=commit.returncode == 0)
+
+
+def _with_trailers(message: str, via: str | None = None) -> str:
+    from grayson.identity import get_user_id
+
     trailers = []
     user_id = get_user_id()
     if user_id:
@@ -182,9 +330,41 @@ def push_library(
         trailers.append(f"Grayson-Via: {via}")
     if trailers:
         message = message + "\n\n" + "\n".join(trailers)
-    _git(lib, "add", "-A")
-    commit = _git(lib, "commit", "-m", message)
+    return message
+
+
+def commit_library_paths(
+    workspace: Workspace, paths: list[str], message: str, via: str | None = None
+) -> dict:
+    """Commit exactly these paths as one library commit, then push if the
+    workspace auto-pushes (otherwise `grayson library push` carries it).
+
+    For a human action that deserves its own line in history — removing a
+    session's records, changing the admins — rather than riding along with
+    whatever else is uncommitted, as `push_library`'s sweep would have it.
+    A library that is not a git repo just keeps the files as changed."""
+    lib = workspace.config.library_path
+    if lib is None or not (lib / ".git").exists():
+        return {"ok": True, "committed": False, "detail": "library is not a git repo"}
+    _git(lib, "add", "-A", "--", *paths)
+    commit = _git(lib, "commit", "-m", _with_trailers(message, via), "--", *paths)
     committed = commit.returncode == 0
+    if not committed:
+        return {
+            "ok": False,
+            "committed": False,
+            "detail": (commit.stdout + commit.stderr).strip()[-300:],
+        }
+    if not workspace.config.library_auto_push:
+        return {
+            "ok": True,
+            "committed": True,
+            "detail": "committed; `grayson library push` sends it",
+        }
+    return _push(lib, committed=True)
+
+
+def _push(lib: Path, committed: bool) -> dict:
     # -u origin HEAD: works on the first push of a fresh clone and thereafter
     push = _git(lib, "push", "-u", "origin", "HEAD", timeout=120)
     result = {
@@ -288,12 +468,16 @@ def repo_status(lib: Path) -> dict:
     }
 
 
+def _admins_report(root: Path) -> dict:
+    return {"admins": library_admins(root), "admins_changed": settings_last_change(root)}
+
+
 def library_status(workspace: Workspace) -> dict:
     """Report whether the linked library clone is behind its remote / dirty."""
     lib = workspace.config.library_path
     if lib is None:
         return {"linked": False, "detail": "no [library] path configured (solo mode)"}
-    return {"linked": True, **repo_status(lib)}
+    return {"linked": True, **repo_status(lib), **_admins_report(lib)}
 
 
 def library_pull_path(lib: Path) -> dict:
@@ -373,14 +557,33 @@ def library_doctor(workspace: Workspace) -> dict:
     knowledge = KnowledgeStore(workspace.knowledge_dir).lint()
     workflows = lint_workflows(workspace.workflows_dir)
     records = _lint_records(workspace.records_dir)
+    settings = _lint_settings(lib)
     return {
         "library": str(lib),
-        "ok": knowledge["ok"] and workflows["ok"] and records["ok"],
+        "ok": knowledge["ok"] and workflows["ok"] and records["ok"] and settings["ok"],
         "knowledge": knowledge,
         "workflows": workflows,
         "records": records,
+        "settings": settings,
         "repo": repo_status(lib),
     }
+
+
+def _lint_settings(root: Path) -> dict:
+    """library.toml: parses, admins is a list of well-formed ids, and who last
+    changed it — a silent edit to the admins is exactly what this pass is for."""
+    errors: list[str] = []
+    try:
+        raw = read_library_settings(root).get("admins", [])
+    except ValueError as e:
+        return {"ok": False, "errors": [str(e)], "admins": [], "admins_changed": None}
+    if not isinstance(raw, list):
+        errors.append("admins must be a list of user ids")
+    else:
+        bad = [a for a in raw if not (isinstance(a, str) and _ADMIN_ID_RE.match(a))]
+        if bad:
+            errors.append(f"admins entries are not user ids: {bad}")
+    return {"ok": not errors, "errors": errors, **_admins_report(root)}
 
 
 def migrate_library(workspace: Workspace) -> dict:

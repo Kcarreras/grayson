@@ -104,6 +104,15 @@
     {% else %}
     <dt>Sync state</dt><dd><span class="badge bad">path missing</span></dd>
     {% endif %}
+    <dt>Admins</dt>
+    <dd>{% if admins %}<span class="mono">{{ admins | join(", ") }}</span>{% else %}
+      <span class="faint">none set</span>{% endif %}
+      <span class="faint small">— may remove any published record; everyone else removes
+      only their own. Set with <code>grayson library admins add &lt;id&gt;</code>
+      (an admin's action, at a terminal); the list lives in the library's
+      <code>library.toml</code>.{% if admins_changed %} Last changed
+      {{ admins_changed.date[:10] }} by {{ admins_changed.user_id or admins_changed.author }}
+      (<span class="mono">{{ admins_changed.commit }}</span>).{% endif %}</span></dd>
   </dl>
   <div class="row" style="margin-top: 8px; gap: 8px;">
     <form class="inline" method="post" action="/settings/library/pull?t={{ token }}">

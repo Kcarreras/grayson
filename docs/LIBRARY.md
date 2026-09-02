@@ -118,6 +118,58 @@ on the team diagnose and fix something like this" — collaborators' records
 merge into every search, badge `team` in the console, and open from the
 published copy when the session isn't local.
 
+## Removing records
+
+A session's published output — its findings, verified fixes, and report —
+can be removed from the library as a unit, by **its author or a library
+admin**: a teammate's records are theirs. The record page in the console
+offers it (*Remove from the library*), as does the session page's delete
+fold for a local session, and the CLI:
+
+```bash
+grayson records delete <sid> --reason "session restarted; superseded by 2026…"
+```
+
+The removal lands as one library commit carrying the reason and the actor's
+`Grayson-User:` trailer, so `git log` says who removed what and why, and
+`git revert` brings it back. With `--auto-push` it goes up at once;
+otherwise `grayson library push` carries it. Records published before a user
+id was set carry no author, so only an admin removes them through grayson
+(or anyone, through git). In solo mode there is no team to protect, and the
+records are simply yours.
+
+### Admins
+
+`library.toml` at the library root names the admins — user ids as set with
+`grayson user set` — and travels with the repo:
+
+```toml
+[library]
+admins = ["kcg"]
+```
+
+It is never prepopulated. `grayson library init` asks for the first admin
+when a human is at the terminal (scripted runs write an empty list, which
+means *no admins*), and `library link` or `grayson setup` offer the role to
+whoever links a library that has none. After that, `grayson library admins
+add|remove <id>` changes it: an admin's action, at an interactive terminal,
+landing as its own commit — or a reviewed edit to the file. There is no MCP
+tool for any of this, and the console shows the list read-only.
+
+**Be clear about what this is.** Identity in grayson is declared, not
+authenticated — `GRAYSON_USER_ID` overrides whatever was set, and a library
+is a git clone anyone with write access can edit, `library.toml` included.
+The author and admin checks are guard rails against the accidental and the
+casual path, in the same class as the interactive-terminal check on user-only
+actions: they keep grayson's own surfaces honest and the history attributable.
+The lock, if you want one, is the git host: a `CODEOWNERS` line for
+`library.toml` with *require review from code owners* means even an admin
+changes the list through a reviewed pull request, and branch protection on
+`records/` does the same for removals. `grayson library status` and
+`library doctor` report the admins and the last commit that touched
+`library.toml`, so a change nobody expected shows up rather than sitting
+quietly.
+
 ## Reports: profiles in, whole investigations out
 
 Report facts render deterministically from the session record and are not
@@ -141,6 +193,6 @@ grayson mcp serve --knowledge-only --library git@github.com:your-org/qa-library.
 ```
 
 Serves `knowledge_*`, `workflow_*`, `views_list`, `checks_*`, `records_*`,
-and `library_info` over stdio. The same surface runs containerized for a
+and `library_info` (freshness and the admins list) over stdio. The same surface runs containerized for a
 whole team — see the knowledge-appliance recipe in
 [DEPLOYMENT.md](DEPLOYMENT.md).

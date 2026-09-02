@@ -111,7 +111,10 @@ def test_table_onboarding_workflow_registered(workspace):
     assert "grain_established" in recorded["depends_on"]
 
 
-def test_session_delete_requires_confirmation(workspace, fake_snow_env, sid):
+def test_session_delete_requires_confirmation(workspace, fake_snow_env, sid, monkeypatch):
+    import grayson.cli as cli
+
+    monkeypatch.setattr(cli, "_stdin_is_tty", lambda: True)  # a user action: human at a prompt
     blocked = runner.invoke(app, ["session", "delete", sid])
     assert blocked.exit_code == 1
     assert "permanently deletes" in blocked.output

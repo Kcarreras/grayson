@@ -211,3 +211,19 @@ def test_checks_via_mcp(server, workspace):
     started = _call(server, "session_start", {"workflow": "bug-hunter", "tables": ["DB.S.T1"]})
     assert started["external_checks"]["failing"][0]["check_id"] == "t1_dupes"
     assert "t1_dupes" in started.get("hint", "")
+
+
+def test_no_agent_surface_for_ending_or_deleting(server):
+    """Closing, abandoning, deleting a session, removing its published records,
+    and changing the library admins are the user's — no MCP twin, on purpose."""
+    names = _list_tools(server)
+    forbidden = {
+        "session_close",
+        "session_abandon",
+        "session_delete",
+        "records_delete",
+        "library_admins_add",
+        "library_admins_remove",
+    }
+    assert not forbidden & names
+    assert not any("abandon" in n or n.endswith("_delete") for n in names)

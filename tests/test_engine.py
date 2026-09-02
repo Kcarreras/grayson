@@ -421,3 +421,33 @@ def test_describe_counts_as_evidence_touching_scope(session):
     cp = engine.complete_checkpoint(session, "replicate_anomaly", [out["qid"]], "profiled")
     assert cp["status"] == "complete"
     assert not cp.get("evidence_off_scope")
+
+
+def test_abandon_is_the_third_ending(workspace, session):
+    from grayson.records import library_records
+
+    _run(session)
+    iid = session.add_intervention("choose", "which grain?", "pick one", {"options": ["a", "b"]})
+    # a user action: an agent cannot tidy its own session away, and a reason is required
+    with pytest.raises(EnforcementError, match="user action"):
+        engine.abandon_session(session, "agent", "bored")
+    with pytest.raises(EnforcementError, match="needs a reason"):
+        engine.abandon_session(session, "user", "   ")
+    assert session.stage != "closed" and session.intervention(iid)["status"] == "open"
+    ready = engine.abandon_session(session, "user", "wrong target table")
+    assert session.stage == "closed" and session.outcome == "abandoned"
+    assert session.get_meta("outcome_note") == "wrong target table"
+    assert ready["next_action"] == "session is closed"
+    # nothing is left awaiting the user, and nothing was published
+    assert session.intervention(iid)["status"] == "cancelled"
+    assert not library_records(workspace.records_dir)
+    assert not (workspace.records_dir / session.id).exists()
+    event = next(e for e in session.events(20) if e["type"] == "session_abandoned")
+    assert event["actor"] == "user"
+    assert event["payload"]["interventions_cancelled"] == [iid]
+    assert "replicate_anomaly" in event["payload"]["open_checks"]  # what was skipped, on record
+    with pytest.raises(EnforcementError, match="already closed"):
+        engine.abandon_session(session, "user", "again")
+    # summary and readiness carry the label everywhere the outcome is read
+    assert session.summary()["outcome"] == "abandoned"
+    assert engine.readiness(session)["outcome"] == "abandoned"

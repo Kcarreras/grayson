@@ -132,6 +132,7 @@ shape of the layer: it stops the direct path, not a determined one.
   account setup that the guard already blocks; scope-limiting reduces blast radius. Use a
   read-only role for the strongest guarantee.
 - The interactive-terminal check on user-only actions (`--force`, `session close`,
+  `session abandon`, `session delete`, `records delete`, `library admins`,
   `checkpoint waive`, `finding accept`, `proposal approve`/`reject`,
   `intervention respond`, `knowledge confirm`) is friction, not containment: an agent that can allocate a pty
   can defeat it. It removes the accidental and the casual path, keeps the audit trail
@@ -139,6 +140,12 @@ shape of the layer: it stops the direct path, not a determined one.
   console remains the surface where a human unambiguously is the human.
 - The guard's correctness depends on sqlglot parsing SQL the way Snowflake executes it.
   sqlglot is version-pinned; dialect updates are reviewed before bumping.
+- Removing published records from the team library is gated on the records' author or a
+  library admin (`library.toml`), judged from the *declared* user id — a guard rail against
+  accidental and casual deletion that keeps history attributable, not access control. The
+  library is a git clone; anyone who can write to it can edit any file. The containing
+  control is the git host's review rules (a `CODEOWNERS` entry for `library.toml`,
+  branch protection on `records/`), and `git revert` is the recovery.
 
 ## Bypass and containment (where the guard's authority ends)
 

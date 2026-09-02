@@ -55,6 +55,9 @@ database/state files directly (including local or sandbox files); direct reads b
 the audit trail and produce nothing citable as evidence.
 Setup/admin operations (workspace init, sandbox seeding, library config) belong to the
 user: if infrastructure looks missing or broken, pause and ask instead of fixing it.
+Ending a session is the user's too: closing, abandoning a broken or irrelevant one, and
+deleting it or its published records have no tools here on purpose — say what is wrong
+and ask.
 An empty knowledge library, cache, or view registry is normal in a fresh workspace.
 """
 

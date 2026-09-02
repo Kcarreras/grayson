@@ -200,4 +200,30 @@
   {% endif %}
 </div>
 {% endif %}
+
+{% if removal.count %}
+<details class="fold" style="margin-top: 20px;">
+  <summary>Remove from the library</summary>
+  <div class="fold-body">
+    <div class="muted small" style="margin: 8px 0 10px;">
+      Session <span class="mono">{{ session_id }}</span> has <b>{{ removal.count }}</b> published
+      record{{ "s" if removal.count != 1 }} in the team library{% if removal.authors %}
+      (by {{ removal.authors | join(", ") }}){% endif %}. They are removed together, as one
+      library commit that names who did it and why; <code>git revert</code> restores them.
+      {% if not from_library %}The session itself stays in this workspace — delete it from
+      its own page.{% endif %}
+      {% if not removal.allowed %}<div class="attn-text" style="margin-top: 6px;">
+        Not yours to remove: {{ removal.reason }}.</div>{% endif %}
+    </div>
+    {% if removal.allowed %}
+    <form class="row" method="post" action="/records/{{ session_id }}/delete?t={{ token }}"
+          onsubmit="return confirm('Remove all published records of {{ session_id }} from the library?');">
+      <input type="text" name="reason" placeholder="why (recorded on the library commit)"
+             style="width: auto; flex: 1 1 280px;">
+      <button class="btn danger sm" type="submit">Remove records (as {{ removal.as }})</button>
+    </form>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
 {% endblock %}

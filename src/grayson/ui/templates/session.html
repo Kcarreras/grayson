@@ -54,6 +54,8 @@
     {% if s.outcome == "clean" %}<span class="badge ok">closed clean</span>
     <span class="muted small">Checks cleared and nothing was found worth acting on —
       confirmed by you, and recorded as a result in its own right.</span>
+    {% elif s.outcome == "abandoned" %}<span class="badge todo">abandoned</span>
+    <span class="muted small">Closed without a result, by you. Nothing was published.</span>
     {% else %}<span class="badge plain">closed on findings</span>
     <span class="muted small">Closed with accepted findings.</span>{% endif %}
   </div>
@@ -421,6 +423,25 @@
 </details>
 
 <details class="fold">
+  <summary>Abandon this session</summary>
+  <div class="fold-body">
+    <div class="muted small" style="margin: 8px 0 10px;">
+      For a session that is broken, was started by mistake, or stopped mattering. Yours,
+      not the agent's. It skips the gates on purpose: the outcome is recorded as
+      <i>abandoned</i> with your reason, open questions are cancelled, and nothing is
+      published to the library. Records it already published stay until removed
+      (see <i>Delete this session</i>).
+    </div>
+    <form class="row" method="post" action="/session/{{ s.id }}/abandon?t={{ token }}"
+          onsubmit="return confirm('Abandon session {{ s.id }}? It closes with no result and publishes nothing.');">
+      <input type="text" name="reason" placeholder="why this session ends without a result" required
+             style="width: auto; flex: 1 1 280px;">
+      <button class="btn danger sm" type="submit">Abandon session</button>
+    </form>
+  </div>
+</details>
+
+<details class="fold">
   <summary>Set stage manually</summary>
   <div class="fold-body">
     <div class="muted small" style="margin: 8px 0 10px;">
@@ -440,6 +461,33 @@
   </div>
 </details>
 {% endif %}
+
+<details class="fold">
+  <summary>Delete this session</summary>
+  <div class="fold-body">
+    <div class="muted small" style="margin: 8px 0 10px;">
+      Removes the session from this workspace — audit trail, query cache, charts, everything.
+      Yours, not the agent's, and not undoable.
+      {% if published.count %}
+      This session published <b>{{ published.count }}</b> record{{ "s" if published.count != 1 }}
+      to the team library{% if published.authors %} (by {{ published.authors | join(", ") }}){% endif %};
+      {% if published.allowed %}they can go too — as {{ published.as }}, in one library commit
+      that names you and your reason.{% else %}they stay: {{ published.reason }}.{% endif %}
+      {% endif %}
+    </div>
+    <form class="row" method="post" action="/session/{{ s.id }}/delete?t={{ token }}"
+          onsubmit="return confirm('Delete session {{ s.id }} from this workspace? This cannot be undone.');">
+      {% if published.count %}
+      <label class="small" style="white-space: nowrap;">
+        <input type="checkbox" name="library" value="true" {{ "disabled" if not published.allowed }}>
+        also remove its published records from the library</label>
+      <input type="text" name="reason" placeholder="why (recorded on the library commit)"
+             style="width: auto; flex: 1 1 240px;" {{ "disabled" if not published.allowed }}>
+      {% endif %}
+      <button class="btn danger sm" type="submit">Delete session</button>
+    </form>
+  </div>
+</details>
 <dialog id="chart-lightbox" class="lightbox" aria-label="Chart, enlarged">
   <div class="row split" style="margin-bottom: 8px;">
     <b id="lb-title"></b>

@@ -519,3 +519,28 @@ def test_workflow_preview_cli(workspace):
     assert any("no required_checks" in e["problem"] for e in out["lint"])
     err = invoke_err("workflow", "preview", "no-such-workflow")
     assert "no-such-workflow" in err["error"]
+
+
+def test_session_abandon_is_a_user_action(workspace, fake_snow_env, sid):
+    err = invoke_err("session", "abandon", sid, "--reason", "wrong table")["error"]
+    assert "abandoning a session" in err and "interactive terminal" in err
+    assert invoke("session", "status", sid)["stage"] != "closed"
+
+
+def test_session_abandon_at_a_terminal(workspace, fake_snow_env, sid, at_a_terminal):
+    assert "needs a reason" in invoke_err("session", "abandon", sid, "--reason", "  ")["error"]
+    out = invoke("session", "abandon", sid, "--reason", "wrong target table")
+    assert out["stage"] == "closed" and out["outcome"] == "abandoned"
+    assert out["readiness"]["next_action"] == "session is closed"
+    again = invoke_err("session", "abandon", sid, "--reason", "again")["error"]
+    assert again == "session is already closed"
+    status = invoke("session", "status", sid)
+    assert status["outcome"] == "abandoned" and status["outcome_note"] == "wrong target table"
+    # nothing published: an abandoned session leaves no report in the library
+    assert not (workspace.records_dir / sid).exists()
+
+
+def test_session_delete_is_a_user_action(workspace, fake_snow_env, sid):
+    err = invoke_err("session", "delete", sid, "--yes")["error"]
+    assert "deleting a session" in err and "interactive terminal" in err
+    assert invoke("session", "status", sid)["id"] == sid  # still there

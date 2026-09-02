@@ -175,6 +175,10 @@ setup → analysis → synthesis → review → fixes → verification → close
    nothing found worth acting on). A clean close is a user action — a human vouching
    for a negative result — and exists so that a run which finds nothing has a way to
    finish that is not "invent a finding". A forced close records no outcome at all.
+   The third outcome, `abandoned`, is a user closing a broken, mistaken, or irrelevant
+   session without a result: the gates are skipped on purpose, the reason is recorded,
+   open interventions are cancelled, and nothing publishes. Deleting a session (a user
+   action; console or `session delete`) removes it from the workspace outright.
 
 Any stage can loop back (verification failure → fixes/analysis). All transitions are
 recorded in the event log with actor (user / agent worker id) and timestamp.
@@ -463,6 +467,13 @@ and shared profiles in the library clone; session state and cached data stay in 
 personal workspace. Solo mode (no `[library]`) keeps everything in the workspace, and
 `grayson library extract` can later split the assets out into a new library repo when a
 team forms.
+
+**Removal and admins**: a session's published records leave the library as a unit, on
+the author's or a library admin's say — one commit with the reason and the user trailer.
+Admins are user ids listed in `library.toml` at the library root, set by a human when the
+library is created (never prepopulated) and changed by an admin at a terminal or through
+a reviewed edit. Identity is declared, so this is a guard rail; the git host's review
+rules are the control (docs/LIBRARY.md "Admins").
 
 **Freshness**: at session setup grayson checks the library clone against its remote and
 warns if it is behind ("library is 12 commits behind origin — pull before starting?")

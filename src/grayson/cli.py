@@ -331,6 +331,7 @@ def setup() -> None:
         try:
             done["library"] = link_library(ws, source, auto_push=auto_push)
             ws.reload_config()
+            _offer_admin_bootstrap(ws, done["library"])
         except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
             say(f"  library link failed: {e} — retry later with `grayson library link`")
 
@@ -883,23 +884,80 @@ def session_events(session_id: str, limit: int = typer.Option(50, "--limit")) ->
 def session_delete(
     session_id: str,
     yes: bool = typer.Option(False, "--yes", help="Confirm permanent deletion."),
+    library: bool = typer.Option(
+        False,
+        "--library",
+        help="Also remove the session's published records from the team library "
+        "(the records' author or a library admin only).",
+    ),
+    reason: str = typer.Option("", "--reason", help="Why (recorded on the library commit)."),
 ) -> None:
-    """Permanently delete a session — audit trail and cached data included."""
+    """Permanently delete a session — audit trail and cached data included.
+
+    A user action: it needs an interactive terminal, like every other way of
+    ending a session. Records the session already published to the library
+    stay unless --library removes them too (author or admin)."""
+    from grayson.records import delete_session_records, session_records
+
     s = _session(session_id)
+    ws = _workspace()
+    require_interactive("deleting a session")
     if not yes:
         fail(
             f"this permanently deletes session '{s.id}' (audit trail and cached data) — "
             "re-run with --yes to confirm"
         )
         return
+    out: dict = {"deleted": s.id}
+    published = session_records(ws.records_dir, s.id)
+    if library and published:
+        try:
+            out["library"] = delete_session_records(ws, s.id, reason)
+        except PermissionError as e:
+            fail(f"nothing deleted — {e}")
+            return
+    elif published:
+        out["note"] = (
+            f"{len(published)} published record(s) of this session remain in the library; "
+            f"`grayson records delete {s.id}` removes them (author or admin)"
+        )
     s.delete()
-    emit({"deleted": s.id})
+    emit(out)
 
 
 @session_app.command("scrub")
 def session_scrub(session_id: str) -> None:
     """Delete cached warehouse data for a session (audit trail is kept)."""
     emit({"id": session_id, "artifacts_deleted": _session(session_id).scrub_data()})
+
+
+@session_app.command("abandon")
+def session_abandon(
+    session_id: str,
+    reason: str = typer.Option(
+        ..., "--reason", help="Why this session ends without a result (recorded)."
+    ),
+) -> None:
+    """Close a session without a result — broken, started by mistake, or no
+    longer relevant. Skips the gates on purpose, so the outcome is
+    'abandoned' rather than clean or findings, open interventions are
+    cancelled, and nothing publishes to the library. A user action: agents
+    that are stuck ask; they do not tidy their own sessions away."""
+    s = _session(session_id)
+    if s.stage == "closed":
+        fail("session is already closed")
+        return
+    require_interactive(
+        "abandoning a session",
+        f"Abandon session {s.id}? It closes with no result, its open interventions are "
+        "cancelled, and nothing is published.",
+    )
+    try:
+        result = engine.abandon_session(s, "user", reason, _workspace().workflows_dir)
+    except EnforcementError as e:
+        fail(str(e))
+        return
+    emit({"id": s.id, "stage": s.stage, "outcome": s.outcome, "readiness": result})
 
 
 @session_app.command("close")
@@ -2262,21 +2320,65 @@ def views_register(
 # -- library -------------------------------------------------------------
 
 
+def _first_admin_prompt(current: str | None) -> list[str]:
+    """Ask who administers a new library — only when a human is at the prompt;
+    a scripted run gets an empty list (no admins, never a guessed one)."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return []
+    typer.echo(
+        "Library admins may remove any published record; everyone else removes only "
+        "their own. Set in library.toml, shared through the repo."
+    )
+    answer = typer.prompt(
+        "First admin user id (blank for none)", default=current or "", show_default=bool(current)
+    ).strip()
+    return [answer] if answer else []
+
+
+def _offer_admin_bootstrap(ws: Workspace, out: dict) -> None:
+    """After linking: a library with no admins offers the linking human the
+    role, so the list is set by a person at creation rather than left empty
+    by default. Never from a script."""
+    from grayson.identity import get_user_id
+    from grayson.library import library_admins, library_root, set_library_admins
+
+    me = get_user_id()
+    if not me or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    if library_admins(library_root(ws)):
+        return
+    typer.echo(
+        "\nThis library has no admins yet (admins may remove any published record; "
+        "everyone else removes only their own)."
+    )
+    if typer.confirm(f"Make you ({me}) a library admin?", default=True):
+        try:
+            out["admins"] = set_library_admins(ws, add=me)
+        except (PermissionError, ValueError) as e:
+            typer.echo(f"  skipped: {e}")
+
+
 @library_app.command("init")
 def library_init(
     path: Path = typer.Argument(..., help="Directory for the new library repo."),
+    admin: list[str] = typer.Option(
+        None, "--admin", help="User id of a library admin (repeatable); asked for when omitted."
+    ),
 ) -> None:
     """Scaffold a fresh team library repo (knowledge/, views/, workflows/)."""
+    from grayson.identity import get_user_id
     from grayson.library import init_library
 
+    admins = list(admin) if admin else _first_admin_prompt(get_user_id())
     try:
-        created = init_library(path)
+        created = init_library(path, admins)
     except OSError as e:
         fail(f"cannot create a library at '{path.resolve()}': {e}. cd to a writable directory")
         return
     emit(
         {
             "library": str(created),
+            "admins": admins,
             "next": "git init & push this dir, then set [library] path in your grayson.toml",
         }
     )
@@ -2298,10 +2400,15 @@ def library_link_cmd(
     the one-command path for a teammate joining an existing knowledge store."""
     from grayson.library import link_library
 
+    ws = _workspace()
     try:
-        emit(link_library(_workspace(), source, dest, auto_push))
+        out = link_library(ws, source, dest, auto_push)
     except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
         fail(str(e))
+        return
+    ws.reload_config()
+    _offer_admin_bootstrap(ws, out)
+    emit(out)
 
 
 @library_app.command("push")
@@ -2359,6 +2466,55 @@ def library_migrate_cmd() -> None:
     try:
         emit(migrate_library(_workspace()))
     except (RuntimeError, OSError) as e:
+        fail(str(e))
+
+
+admins_app = typer.Typer(
+    help="Who may remove any published record (library.toml, shared through the repo).",
+    no_args_is_help=True,
+)
+library_app.add_typer(admins_app, name="admins")
+
+
+@admins_app.command("list")
+def library_admins_list() -> None:
+    """The library's admins, and the last commit that changed them."""
+    from grayson.identity import get_user_id
+    from grayson.library import library_admins, library_root, settings_last_change
+
+    root = library_root(_workspace())
+    emit(
+        {
+            "admins": library_admins(root),
+            "changed": settings_last_change(root),
+            "you": get_user_id(),
+            "file": str(root / "library.toml"),
+        }
+    )
+
+
+@admins_app.command("add")
+def library_admins_add(user_id: str = typer.Argument(..., help="User id to make an admin.")):
+    """Add an admin. An admin's action (or anyone's, while the list is empty);
+    interactive terminal only, committed with your user trailer."""
+    from grayson.library import set_library_admins
+
+    require_interactive("changing the library admins", f"Make '{user_id}' a library admin?")
+    try:
+        emit(set_library_admins(_workspace(), add=user_id))
+    except (PermissionError, ValueError) as e:
+        fail(str(e))
+
+
+@admins_app.command("remove")
+def library_admins_remove(user_id: str = typer.Argument(..., help="User id to remove.")):
+    """Remove an admin. An admin's action; interactive terminal only."""
+    from grayson.library import set_library_admins
+
+    require_interactive("changing the library admins", f"Remove '{user_id}' from the admins?")
+    try:
+        emit(set_library_admins(_workspace(), remove=user_id))
+    except (PermissionError, ValueError) as e:
         fail(str(e))
 
 
@@ -2488,6 +2644,50 @@ def records_show_cmd(
         fail(f"no {kind} '{record_id}' in session '{session_id}'")
         return
     emit(item)
+
+
+@records_app.command("delete")
+def records_delete_cmd(
+    session_id: str = typer.Argument(..., help="The session whose published records go."),
+    reason: str = typer.Option("", "--reason", help="Why (recorded on the library commit)."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt."),
+) -> None:
+    """Remove a session's published records (findings, fixes, report) from the
+    team library. The records' author's action, or a library admin's — a
+    teammate's records are theirs. Lands as one commit with the reason and
+    your user trailer, so `git log` says who removed what and `git revert`
+    restores it. The local session, if any, stays (see `session delete`)."""
+    from grayson.identity import get_user_id
+    from grayson.library import library_admins, library_root
+    from grayson.records import delete_session_records, deletion_verdict
+
+    ws = _workspace()
+    try:
+        ws.session_dir(session_id)  # shape only — the session need not be local
+    except ValueError as e:
+        fail(str(e))
+        return
+    verdict = deletion_verdict(
+        ws.records_dir,
+        session_id,
+        get_user_id(),
+        library_admins(library_root(ws)),
+        solo=ws.config.library_path is None,
+    )
+    if not verdict["allowed"]:
+        fail(verdict["reason"])
+        return
+    require_interactive(
+        "removing published records",
+        ""
+        if yes
+        else f"Remove {verdict['count']} published record(s) of {session_id} from the "
+        f"library (as {verdict['as']})?",
+    )
+    try:
+        emit(delete_session_records(ws, session_id, reason))
+    except PermissionError as e:
+        fail(str(e))
 
 
 # -- harness -------------------------------------------------------------

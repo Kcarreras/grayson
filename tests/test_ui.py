@@ -637,3 +637,153 @@ def test_chart_labels_detail_and_inline_svg(client, session):
     assert 'data-full="ANALYTICS.WEB.PAGE_EVENTS"' in page2 and "…WEB.PAGE_EVENTS" in page2
     assert "Some axis labels are shortened" in page2
     assert "Some axis labels are shortened" not in detail  # nothing shortened there
+
+
+# -- endings and removal from the console -------------------------------------
+
+
+def _bug_hunter_with_accepted_finding(workspace):
+    """A bug-hunter session with one accepted finding — published to the
+    library at acceptance, as the configured user."""
+    s = Session.create(
+        workspace,
+        workflow="bug-hunter",
+        targets=["DB.S.T1"],
+        guard=GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0),
+        guard_profile="moderate",
+        title="dupes",
+    )
+    engine.seed_from_workflow(s)
+    qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
+    f = engine.record_finding(
+        s,
+        {
+            "title": "Dup rows",
+            "severity": "high",
+            "confidence": "high",
+            "affected_objects": ["DB.S.T1"],
+            "reproduction": "re-run the cited query",
+            "summary": "Duplicate rows appear in the output table.",
+            "evidence": [qid],
+            "extra": {
+                "resolution": "root_caused",
+                "root_cause": "join fan-out",
+                "blast_radius": "1000 rows",
+                "alternatives_tested": "two ruled out",
+            },
+        },
+    )
+    s.accept_finding(f["fid"])
+    return s, f["fid"]
+
+
+def _link_plain_library(workspace, tmp_path, admins=None):
+    """A linked library directory that is not a git repo: the author/admin
+    rules apply, and removals just change files."""
+    from grayson.library import init_library, set_library_config
+
+    lib = init_library(tmp_path / "team-lib", admins or [])
+    set_library_config(workspace.root, lib, False)
+    workspace.reload_config()
+    return lib
+
+
+def test_abandon_from_the_console(client, session, workspace):
+    iid = session.add_intervention("choose", "grain?", "pick", {"options": ["a", "b"]})
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Abandon this session" in page and "Delete this session" in page
+    refused = client.post(f"/session/{session.id}/abandon?t={TOKEN}", data={"reason": " "})
+    assert refused.status_code == 400 and "needs a reason" in refused.text
+    done = client.post(
+        f"/session/{session.id}/abandon?t={TOKEN}",
+        data={"reason": "wrong table"},
+        follow_redirects=False,
+    )
+    assert done.status_code == 303
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "abandoned" in page and "Closed without a result" in page
+    assert "Abandon this session" not in page and "Delete this session" in page  # still deletable
+    assert session.intervention(iid)["status"] == "cancelled"
+    dash = client.get(f"/?t={TOKEN}").text
+    assert 'title="wrong table">abandoned' in dash
+    assert not (workspace.records_dir / session.id).exists()  # nothing published
+
+
+def test_delete_from_the_console(client, session, workspace):
+    r = client.post(f"/session/{session.id}/delete?t={TOKEN}", data={}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/?")
+    assert client.get(f"/session/{session.id}?t={TOKEN}").status_code == 404
+    assert session.id not in workspace.list_session_ids()
+
+
+def test_delete_with_published_records_is_the_authors_call(client, workspace, tmp_path):
+    from grayson.identity import set_user_id
+
+    _link_plain_library(workspace, tmp_path)
+    set_user_id("kcg")
+    s, fid = _bug_hunter_with_accepted_finding(workspace)
+    folder = workspace.records_dir / s.id
+    assert (folder / f"{fid}.json").is_file()
+    page = client.get(f"/session/{s.id}?t={TOKEN}").text
+    assert "published <b>1</b> record" in page and "as author (kcg)" in page
+    assert 'name="library" value="true" >' in page  # the box is live
+    # a teammate sees why the records stay, and cannot take them
+    set_user_id("bob")
+    page = client.get(f"/session/{s.id}?t={TOKEN}").text
+    assert "they stay: published by kcg, not you (bob)" in page
+    assert 'name="library" value="true" disabled' in page
+    refused = client.post(
+        f"/session/{s.id}/delete?t={TOKEN}", data={"library": "true", "reason": "tidy"}
+    )
+    assert refused.status_code == 400 and "nothing deleted" in refused.text
+    assert folder.is_dir() and s.id in workspace.list_session_ids()
+    # the author takes both in one go
+    set_user_id("kcg")
+    done = client.post(
+        f"/session/{s.id}/delete?t={TOKEN}",
+        data={"library": "true", "reason": "restarted"},
+        follow_redirects=False,
+    )
+    assert done.status_code == 303
+    assert not folder.exists() and s.id not in workspace.list_session_ids()
+
+
+def test_record_page_offers_removal_to_author_or_admin(client, workspace, tmp_path):
+    from grayson.identity import set_user_id
+
+    _link_plain_library(workspace, tmp_path, admins=["boss"])
+    set_user_id("kcg")
+    s, fid = _bug_hunter_with_accepted_finding(workspace)
+    url = f"/records/{s.id}/finding/{fid}?t={TOKEN}"
+    page = client.get(url).text
+    assert "Remove from the library" in page and "Remove records (as author (kcg))" in page
+    assert "The session itself stays in this workspace" in page
+    set_user_id("bob")
+    page = client.get(url).text
+    assert "Not yours to remove: published by kcg, not you (bob)" in page
+    assert "Remove records (as" not in page
+    refused = client.post(f"/records/{s.id}/delete?t={TOKEN}", data={"reason": "x"})
+    assert refused.status_code == 400 and "published by kcg, not you (bob)" in refused.text
+    assert (workspace.records_dir / s.id).is_dir()
+    set_user_id("boss")
+    page = client.get(url).text
+    assert "Remove records (as library admin)" in page
+    done = client.post(
+        f"/records/{s.id}/delete?t={TOKEN}", data={"reason": "cleanup"}, follow_redirects=False
+    )
+    assert done.status_code == 303 and done.headers["location"].startswith("/records")
+    assert not (workspace.records_dir / s.id).exists()
+    assert s.id in workspace.list_session_ids()  # the session itself stays
+    assert client.post(f"/records/bad:id/delete?t={TOKEN}", data={}).status_code == 404
+
+
+def test_settings_page_shows_admins_read_only(client, workspace, tmp_path):
+    assert "library admins add" not in client.get(f"/settings?t={TOKEN}").text  # solo: no team
+    _link_plain_library(workspace, tmp_path)
+    page = client.get(f"/settings?t={TOKEN}").text
+    assert "none set" in page and "library admins add" in page
+    from grayson.library import write_library_settings
+
+    write_library_settings(tmp_path / "team-lib", {"admins": ["kcg", "bob"]})
+    page = client.get(f"/settings?t={TOKEN}").text
+    assert "kcg, bob" in page
