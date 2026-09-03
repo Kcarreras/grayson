@@ -104,8 +104,9 @@ def test_detail_core_shows_canonical(client):
 
 def test_detail_shows_charts_inputs_and_schema(client):
     page = _get(client, "/workflows/bug-hunter").text
-    assert "needs chart" in page  # scope_blast_radius requires one
-    assert "line|bar" in page or "line, bar" in page or "line" in page
+    # scope_blast_radius requires one: stated as the requirement, kinds named
+    assert "chart: line|bar" in page
+    assert "needs chart" not in page  # a requirement, not a missing chart
     assert "read by" in page  # setup inputs show which checkpoints use them
     assert 'data-list="checks"' in page  # checkpoints are a filterable list
     assert 'data-tag="chart"' in page

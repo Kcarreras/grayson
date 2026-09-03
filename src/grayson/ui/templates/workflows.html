@@ -92,7 +92,7 @@
       <span class="badge plain" title="Evidence-gated checkpoints">{{ tpl.required_checks | length }} gate{{ "s" if tpl.required_checks | length != 1 }}</span>
       {% if tpl.suggested_checks %}<span class="badge plain" title="Suggested checks: breadth, no gate">+{{ tpl.suggested_checks | length }} suggested</span>{% endif %}
       <span class="badge plain" title="Questions the human answers at setup">{{ tpl.setup_inputs | length }} input{{ "s" if tpl.setup_inputs | length != 1 }}</span>
-      {% if tpl.chart_requirements() %}<span class="badge act" title="Checkpoints that refuse to close without a chart">{{ tpl.chart_requirements() }} need{{ "s" if tpl.chart_requirements() == 1 }} a chart</span>{% endif %}
+      {% if tpl.chart_requirements() %}<span class="badge plain" title="Checkpoints the workflow requires to close with a chart">{{ tpl.chart_requirements() }} require{{ "s" if tpl.chart_requirements() == 1 }} a chart</span>{% endif %}
       <span class="badge plain mono" title="Findings schema">{{ tpl.findings_schema }}{% if tpl.findings_fields %} +{{ tpl.findings_fields | length }}{% endif %}</span>
     </div>
     {% if tpl.tags %}<div class="wftags">{% for t in tpl.tags %}<span class="chip">#{{ t }}</span>{% endfor %}</div>{% endif %}

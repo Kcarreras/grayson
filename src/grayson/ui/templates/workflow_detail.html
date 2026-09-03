@@ -176,7 +176,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
   <a class="tile" href="#inputs"><span class="num">{{ tpl.setup_inputs | length }}</span><span class="lbl">setup inputs</span></a>
   <a class="tile" href="#checkpoints"><span class="num">{{ tpl.required_checks | length }}</span><span class="lbl">gating checks</span></a>
   <a class="tile" href="#checkpoints"><span class="num">{{ tpl.suggested_checks | length }}</span><span class="lbl">suggested</span></a>
-  <a class="tile" href="#checkpoints"><span class="num {{ 'attn' if tpl.chart_requirements() }}">{{ tpl.chart_requirements() }}</span><span class="lbl">need a chart</span></a>
+  <a class="tile" href="#checkpoints"><span class="num">{{ tpl.chart_requirements() }}</span><span class="lbl">require a chart</span></a>
   <a class="tile" href="#schema"><span class="num">{{ schema.required_extra | length }}</span><span class="lbl">extra finding fields</span></a>
   <a class="tile" href="#usage"><span class="num {{ 'ok' if usage.open }}">{{ usage.count }}</span><span class="lbl">session{{ "s" if usage.count != 1 }}{% if usage.open %} · {{ usage.open }} open{% endif %}</span></a>
 </div>
@@ -194,7 +194,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
       <div class="nh"><span class="wfdot" style="background: var(--brand-accent); box-shadow: 0 0 0 3px var(--act-soft);"></span>Analysis</div>
       <div class="nd">{{ tpl.required_checks | length }} checkpoint{{ "s" if tpl.required_checks | length != 1 }}{% if tpl.suggested_checks %}
         · {{ tpl.suggested_checks | length }} suggested{% endif %}, closed by citing
-        executed queries{% if tpl.chart_requirements() %} — {{ tpl.chart_requirements() }} only with a chart{% endif %}.
+        executed queries{% if tpl.chart_requirements() %}; {{ tpl.chart_requirements() }} also require a chart{% endif %}.
         Guard: <b>{{ tpl.suggested_guard_profile }}</b>{% if tpl.suggested_strict_scope is not none %}
         · strict scope <b>{{ "on" if tpl.suggested_strict_scope else "off" }}</b>{% endif %}.</div>
     </div>
@@ -235,7 +235,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
     ], [
       ("required", "gates"),
       ("suggested", "suggested"),
-      ("chart", "needs a chart"),
+      ("chart", "requires a chart"),
       ("ordered", "has prerequisites"),
     ], "Filter checkpoints…") }}
     {% endif %}
@@ -248,7 +248,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
       <summary><span class="cpn">{{ loop.index if which == "required" else "+" }}</span> {{ c.title }}
         <span class="marks">
           {% if which == "suggested" %}<span class="badge plain" title="Breadth without a gate: done where it applies">suggested</span>{% endif %}
-          {% if c.charts %}<span class="badge act" title="Closes only with a chart built from a cited query">needs chart{% if c.charts | length > 1 %} ×{{ c.charts | length }}{% endif %}</span>{% endif %}
+          {% if c.charts %}<span class="badge plain" title="The workflow requires this checkpoint to close with a chart built from a cited query: {% for r in c.charts %}{{ r.label() }}{% if not loop.last %}; {% endif %}{% endfor %}">chart: {% for r in c.charts %}{{ r.kinds | join("|") if r.kinds else "any" }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
           {% if c.depends_on %}<span class="badge plain" title="Closes only after: {{ c.depends_on | join(', ') }}">after {{ c.depends_on | join(", ") }}</span>{% endif %}
           <span class="mono faint small">{{ c.key }}</span>
         </span></summary>
