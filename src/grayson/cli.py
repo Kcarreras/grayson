@@ -2573,7 +2573,14 @@ def knowledge_set(
     file: Path = typer.Option(None, "--file", "-f", help="JSON file with profile fields."),
 ) -> None:
     """Set structured base-descriptor fields: grain, columns, relationships,
-    freshness, owners, open_questions (merged per-field)."""
+    freshness, owners, open_questions (merged per-field).
+
+    A relationship is {"to": "DB.SCHEMA.TABLE", "on": "THIS_COL = THAT_COL"
+    (just "COL" when both sides share the name; comma-separate a composite key),
+    "cardinality": one-to-one|one-to-many|many-to-one|many-to-many with THIS
+    table first, "note": optional}. The output's `warnings` list what had to be
+    guessed or could not be read; the schema map draws exactly what was recorded.
+    """
     if file and json_str:
         fail("pass --file or --json, not both")
     if file:

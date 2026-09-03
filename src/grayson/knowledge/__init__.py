@@ -1,4 +1,10 @@
 from grayson.knowledge.define import record_definition
+from grayson.knowledge.relationships import (
+    CARDINALITIES,
+    normalize_relationship,
+    normalize_relationships,
+    relationship_issues,
+)
 from grayson.knowledge.store import (
     DEFINITION_KINDS,
     DEFINITION_PROVENANCE_KEYS,
@@ -17,6 +23,7 @@ from grayson.knowledge.store import (
 )
 
 __all__ = [
+    "CARDINALITIES",
     "DEFINITION_KINDS",
     "DEFINITION_PROVENANCE_KEYS",
     "KNOWLEDGE_FORMAT",
@@ -30,6 +37,9 @@ __all__ = [
     "completeness",
     "describe_drift",
     "drift_report",
+    "normalize_relationship",
+    "normalize_relationships",
     "record_definition",
+    "relationship_issues",
     "text_hash",
 ]

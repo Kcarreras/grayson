@@ -54,7 +54,10 @@ required_checks:
     description: >
       Identify candidate join keys to sibling tables and validate them with
       match-rate evidence (orphans, fan-out). Record confirmed relationships
-      and ruled-out candidates alike. Ask the user up front for upstream and
+      and ruled-out candidates alike — a confirmed one as
+      {to, on: "THIS_COL = THAT_COL", cardinality} on the descriptor (this
+      table's column and side first), a ruled-out one as a fact. Ask the user
+      up front for upstream and
       downstream tables worth reading (the related_tables input) — this
       workflow suggests strict scope, under which only the target and the
       tables they name have readable rows. Neighbours' columns and DDL are

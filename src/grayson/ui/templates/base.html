@@ -29,6 +29,9 @@ try {
   --bad: #ff7a85; --bad-soft: rgba(255,122,133,.10);        /* failed / rejected */
   --todo: #b3a5f2; --todo-soft: rgba(179,165,242,.12);      /* open / not yet done */
   --brand-gray: #7d8590; --brand-accent: #3ed6e0;           /* wordmark */
+  /* relationship canvas: lines and boxes need more contrast against the
+     panel than the 1px UI borders do, or the map dissolves in dark mode */
+  --rg-edge: #5c6880; --rg-edge-ink: #c9d1de; --rg-node: #1e2637; --rg-node-border: #3d4964;
   --radius: 10px; --radius-sm: 7px;
   /* type scale — see the type system below; nothing sets a size outside it */
   --t-xs: 11px; --t-sm: 12.5px; --t-ui: 13px; --t-md: 14px; --t-title: 14.5px;
@@ -53,6 +56,7 @@ try {
     --bad: #c73545; --bad-soft: rgba(199,53,69,.08);
     --todo: #6553c9; --todo-soft: rgba(101,83,201,.09);
     --brand-gray: #8b939b; --brand-accent: #0aa5b5;
+    --rg-edge: #8f99ab; --rg-edge-ink: #2b3342; --rg-node: #f7f9fc; --rg-node-border: #b9c2d1;
   }
 }
 :root[data-theme="light"] {
@@ -68,6 +72,7 @@ try {
   --bad: #c73545; --bad-soft: rgba(199,53,69,.08);
   --todo: #6553c9; --todo-soft: rgba(101,83,201,.09);
   --brand-gray: #8b939b; --brand-accent: #0aa5b5;
+  --rg-edge: #8f99ab; --rg-edge-ink: #2b3342; --rg-node: #f7f9fc; --rg-node-border: #b9c2d1;
 }
 * { box-sizing: border-box; }
 html { scrollbar-gutter: stable; }
@@ -587,8 +592,20 @@ pre.example { margin: 0; }
   line-height: 1.5; color: var(--ink-2); pointer-events: none;
   box-shadow: 0 6px 24px rgba(0,0,0,.35); }
 .relgraph-tip b { font-family: var(--mono); font-size: var(--t-mono); color: var(--ink); }
-.relgraph-legend { padding: 8px 12px; border-top: 1px solid var(--border-soft); }
+.relgraph-legend { padding: 8px 12px; border-top: 1px solid var(--border-soft);
+  display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.relgraph-legend .lg { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.relgraph-legend svg { width: 34px; height: 12px; overflow: visible; flex: none; }
+.relgraph-legend svg line, .relgraph-legend svg path { stroke: var(--rg-edge); stroke-width: 1.6;
+  fill: none; }
+.relgraph-legend svg rect { fill: none; stroke: var(--rg-node-border); stroke-width: 1.2; }
+.relgraph-legend svg .dash { stroke-dasharray: 3 2; }
+.relgraph-tip .tip-mono { font-family: var(--mono); font-size: var(--t-mono); color: var(--ink-2); }
+.relgraph-tip .tip-warn { color: var(--attn); }
+.relgraph-tip .tip-side { color: var(--muted); }
 .attn-text { color: var(--attn); }
+td.joinkey .pair { display: block; white-space: nowrap; }
+td.joinkey .freetext { font-style: italic; color: var(--muted); }
 
 /* ---- misc ------------------------------------------------------------ */
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
