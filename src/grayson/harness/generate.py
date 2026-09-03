@@ -120,8 +120,12 @@ they are equivalent. Never query Snowflake except through grayson.
    terminal rendering of the same chart: paste it into your chat reply, inside a
    code block, so the user sees the shape right in the conversation.
 4. Human input when needed: `grayson intervention request <sid> --kind label_sample ...`,
-   then `grayson intervention await <sid> <iid> --timeout 600`. The user answers in the
-   web console (`grayson ui serve`). To read a table outside your scope, the ask is
+   then `grayson intervention await <sid> <iid> --timeout 600` (MCP: `intervention_await`,
+   which blocks up to 300s per call). The user answers in the web console
+   (`grayson ui serve`). Nothing wakes an idle agent: the await call *is* how you
+   listen, so while it returns `waiting: true` call it again — do not end your turn to
+   "wait for the user", guess, or answer the question yourself. To read a table outside
+   your scope, the ask is
    `--kind scope_request --json '{"tables": ["DB.S.T"], "reason": "..."}'`; the answer's
    `granted` list is already in scope when it comes back. When an answer settles a
    durable fact about a table (its grain, a semantic rule, an expectation), persist it

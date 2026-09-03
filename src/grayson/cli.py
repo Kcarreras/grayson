@@ -1815,23 +1815,15 @@ def intervention_await(
     timeout: int = typer.Option(0, "--timeout", help="Max seconds to wait (0 = poll once)."),
     interval: float = typer.Option(2.0, "--interval"),
 ) -> None:
-    """Block until the user answers the intervention (or timeout). Agents call this."""
-    import time
+    """Block until the user answers the intervention (or timeout). Agents call this.
 
-    s = _session(session_id)
-    deadline = time.monotonic() + timeout
-    while True:
-        item = s.intervention(iid)
-        if item is None:
-            fail(f"no intervention '{iid}'")
-            return
-        if item["status"] != "open":
-            emit(item)
-            return
-        if timeout <= 0 or time.monotonic() >= deadline:
-            emit({"iid": iid, "status": "open", "waiting": True})
-            return
-        time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+    A `waiting: true` result means the timeout passed with the question still
+    open: run it again (the MCP twin, `intervention_await`, behaves the same).
+    """
+    try:
+        emit(_session(session_id).await_intervention(iid, timeout, interval))
+    except KeyError as e:
+        fail(str(e.args[0]))
 
 
 @intervention_app.command("respond")

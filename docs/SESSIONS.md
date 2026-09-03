@@ -69,6 +69,19 @@ the workflow's schema; the human accepts or rejects each, approves proposed
 fixes, and the agent proves an applied fix with a before/after comparison of
 re-run queries.
 
+**Waiting for an answer.** No harness wakes an idle agent: once it ends its
+turn, only your next chat message restarts it. So "listening" for an
+intervention answer is a tool call that has not returned yet —
+`grayson intervention await <sid> <iid> --timeout 600` on the CLI, or the
+`intervention_await` MCP tool, which blocks up to 300 seconds per call (MCP
+clients time out long tool calls) and returns `waiting: true` when the
+question is still open, at which point the protocol tells the agent to call
+it again. If an agent stops with "waiting for your answer" and needs a nudge
+after you respond in the console, it ended its turn instead of awaiting;
+check it is reading the current protocol file (`grayson harness init` rewrites
+it). Cursor also caps tool calls per turn and asks you to continue past that,
+which a long wait can hit — a Cursor limit, not a grayson one.
+
 **Setup inputs** are the questions a human answers before analysis starts —
 the agent collects them in chat and records them with `--input key="answer"`
 (MCP: `inputs`), so the session documents why it was started. A human driving

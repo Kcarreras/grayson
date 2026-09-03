@@ -57,6 +57,7 @@ def test_tools_registered(server):
         "finding_list",
         "intervention_request",
         "intervention_check",
+        "intervention_await",
         "intervention_list",
         "proposal_add",
         "proposal_list",
@@ -227,3 +228,37 @@ def test_no_agent_surface_for_ending_or_deleting(server):
     }
     assert not forbidden & names
     assert not any("abandon" in n or n.endswith("_delete") for n in names)
+
+
+def test_intervention_await_via_mcp(server, workspace):
+    """The MCP twin of `intervention await`: the blocking wait an agent in any harness
+    uses to listen for a human answer, instead of ending its turn."""
+    from grayson.core.session import Session
+
+    started = _call(server, "session_start", {"workflow": "table-health", "tables": ["DB.S.T1"]})
+    sid = started["session"]["id"]
+    filed = _call(
+        server,
+        "intervention_request",
+        {
+            "session_id": sid,
+            "kind": "free_response",
+            "title": "Clarify ID 7",
+            "payload": {"question": "what is ID 7?"},
+        },
+    )
+    iid = filed["iid"]
+
+    # timeout passes with the question still open: told to call again, never answered
+    pending = _call(server, "intervention_await", {"session_id": sid, "iid": iid, "timeout": 0})
+    assert pending["status"] == "open" and pending["waiting"] is True
+    assert "await again" in pending["hint"]
+
+    # the human answers (console/CLI path); the same call now returns the answer
+    Session(workspace, sid).respond_intervention(iid, {"text": "a legacy test row"})
+    answered = _call(server, "intervention_await", {"session_id": sid, "iid": iid, "timeout": 5})
+    assert answered["status"] == "answered"
+    assert answered["response"] == {"text": "a legacy test row"}
+
+    missing = _call(server, "intervention_await", {"session_id": sid, "iid": "i_999", "timeout": 0})
+    assert "no intervention" in missing["error"]

@@ -125,3 +125,26 @@ def test_cancel_intervention(session):
     iid = session.add_intervention("free_response", "t", "", req)
     session.cancel_intervention(iid)
     assert session.intervention(iid)["status"] == "cancelled"
+
+
+def test_await_intervention_blocks_until_answered(session):
+    """One wait loop for CLI and MCP: sleeps between polls, returns the moment the
+    status leaves `open`, and on timeout says `waiting` rather than guessing."""
+    req = build_request("free_response", {"question": "q"})
+    iid = session.add_intervention("free_response", "t", "", req)
+
+    assert session.await_intervention(iid, timeout=0)["waiting"] is True
+
+    slept: list[float] = []
+
+    def fake_sleep(secs: float) -> None:
+        slept.append(secs)
+        if len(slept) == 2:  # the user answers while the agent is waiting
+            session.respond_intervention(iid, {"text": "yes"})
+
+    item = session.await_intervention(iid, timeout=60, interval=0.5, sleep=fake_sleep)
+    assert item["status"] == "answered" and item["response"] == {"text": "yes"}
+    assert len(slept) == 2 and all(s <= 0.5 for s in slept)
+
+    with pytest.raises(KeyError):
+        session.await_intervention("i_999", timeout=0)
