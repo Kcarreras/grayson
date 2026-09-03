@@ -8,8 +8,8 @@
   background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
   padding: 11px 13px; }
 .wfnode .nh { display: flex; align-items: center; gap: 7px; font-weight: 650;
-  font-size: 13px; }
-.wfnode .nd { color: var(--muted); font-size: 12px; }
+  font-size: var(--t-md); color: var(--ink); }
+.wfnode .nd { color: var(--muted); font-size: var(--t-sm); }
 .wfdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .wflink { position: relative; display: flex; flex-direction: column; align-items: center;
   justify-content: center; width: 58px; flex: none; }
@@ -22,36 +22,10 @@
 .wfcols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: 14px; align-items: start; }
 @media (max-width: 860px) { .wfcols { grid-template-columns: 1fr; } .wfrail { flex-wrap: wrap; } }
-/* element forms: one grid per element, labels above fields, hints beneath */
-.elform { display: grid; gap: 8px; margin-top: 8px; }
-.elform label { display: flex; flex-direction: column; gap: 3px; font-size: 12px;
-  color: var(--muted); font-weight: 600; }
-.elform label > input[type=text], .elform label > textarea, .elform label > select { width: 100%; }
-.elform .two { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
-.elform .hint { font-size: 11.5px; color: var(--faint); font-weight: 400; }
-.elform .check { flex-direction: row; align-items: center; gap: 6px; font-weight: 500; }
-.elform .check input { width: auto; }
-.elform .submit { display: flex; gap: 8px; align-items: center; }
-.eltools { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 10px;
-  padding-top: 8px; border-top: 1px solid var(--border-soft); }
-.eltools form { display: inline; }
-.eltools .btn { padding: 2px 8px; font-size: 11.5px; }
-details.editfold > summary { cursor: pointer; color: var(--act); font-size: 12.5px;
-  list-style: none; user-select: none; font-weight: 600; }
-details.editfold > summary::-webkit-details-marker { display: none; }
-details.editfold[open] > summary { color: var(--muted); }
-.fieldtable { width: 100%; }
-.fieldtable td { font-size: 12.5px; }
-.fieldtable .k { font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
-.fieldtable .marks { display: flex; gap: 4px; flex-wrap: wrap; }
 .cpfold > summary .cpn { color: var(--faint); font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px; min-width: 16px; }
+  font-size: var(--t-mono); min-width: 16px; }
 .cpfold > summary .marks { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto;
   font-weight: 500; }
-pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; line-height: 1.5;
-  overflow-x: auto; margin: 0; }
-.danger-zone { border-color: var(--bad); }
 </style>
 {% endblock %}
 
@@ -281,7 +255,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
     <div class="card empty">No checkpoints — sessions on this workflow have no evidence gates.</div>
     {% endif %}
     {% if editable %}
-    <details class="card editfold" data-fold="add-check"><summary>+ Add a checkpoint</summary>
+    <details class="card editfold" data-fold="add-check"><summary>Add a checkpoint</summary>
       <div class="row mt-2" style="gap: 12px; align-items: flex-start;">
         <div style="flex: 1 1 320px;"><div class="overline">Required {{ help("required_checks") }}</div>{{ check_form(none, "required") }}</div>
         <div style="flex: 1 1 320px;"><div class="overline">Suggested {{ help("suggested_checks") }}</div>{{ check_form(none, "suggested") }}</div>
@@ -347,11 +321,11 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
       {% endif %}
 
       {% if editable %}
-      <details class="editfold" style="margin-top: 12px;" data-fold="add-field"><summary>+ Add a field this workflow requires</summary>
+      <details class="editfold" style="margin-top: 12px;" data-fold="add-field"><summary>Add a field this workflow requires</summary>
         {{ field_form(none) }}
       </details>
       {% if can_promote %}
-      <details class="editfold" style="margin-top: 8px;" data-fold="promote"><summary>↑ Promote this workflow's fields to a shared schema {{ help("schema_promote") }}</summary>
+      <details class="editfold" style="margin-top: 8px;" data-fold="promote"><summary>Promote this workflow's fields to a shared schema {{ help("schema_promote") }}</summary>
         <form class="elform" method="post" action="/workflows/{{ tpl.name }}/promote?t={{ token }}">
           <div class="two">
             <label>schema name <input type="text" name="schema_name" value="{{ promote_name }}" pattern="[a-z][a-z0-9_]*" required></label>
@@ -371,7 +345,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
           <tbody>
           {% for b in schema.base_fields %}
           <tr><td class="k">{{ b.key }}{% if b.required %} <span class="attn-text">*</span>{% endif %}</td>
-            <td>{{ b.description }}<div class="faint" style="font-size: 11.5px;">{{ b.rule }}</div></td></tr>
+            <td>{{ b.description }}<div class="faint small">{{ b.rule }}</div></td></tr>
           {% endfor %}
           </tbody>
         </table>
@@ -439,7 +413,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
       </div>
       {% else %}<div class="muted small">None — sessions start straight into analysis.</div>{% endfor %}
       {% if editable %}
-      <details class="editfold" data-fold="add-input" style="margin-top: 6px;"><summary>+ Add a setup input</summary>{{ input_form(none) }}</details>
+      <details class="editfold" data-fold="add-input" style="margin-top: 6px;"><summary>Add a setup input</summary>{{ input_form(none) }}</details>
       {% endif %}
     </div>
 

@@ -3,14 +3,14 @@
 {% block head %}
 <style>
 pre.diff { background: var(--panel2); border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; line-height: 1.55;
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: var(--t-sm); line-height: 1.55;
   overflow-x: auto; margin: 0; }
 pre.diff .add { color: var(--ok); }
 pre.diff .del { color: var(--bad); }
 pre.diff .hunk { color: var(--act); }
 pre.diff .meta { color: var(--faint); }
 pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; line-height: 1.55;
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: var(--t-sm); line-height: 1.55;
   overflow-x: auto; margin: 0; white-space: pre-wrap; }
 .revcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px;
   align-items: start; }
@@ -73,7 +73,7 @@ pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
     <div class="card empty">No line differs.</div>
     {% endif %}
     {% for path, body in extra_files %}
-    <h2 class="mt-3">New file <span class="mono" style="font-weight: 500; text-transform: none; letter-spacing: 0;">{{ path }}</span></h2>
+    <h2 class="mt-3">New file <span class="h-count mono">{{ path }}</span></h2>
     <pre class="preview">{{ body }}</pre>
     {% endfor %}
   </div>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import severity, finding_state, outcome, list_tools %}
+{% from "_macros.html" import severity, finding_state, outcome, proposal_status, list_tools %}
 {% block title %}grayson — records{% endblock %}
 {% block content %}
 <h1>Records {{ help("records") }}</h1>
@@ -60,7 +60,7 @@
         <span class="badge plain">proposal</span>
         {% if r.verdict == "pass" %}<span class="badge ok">verified</span>
         {% elif r.verdict == "fail" %}<span class="badge bad">verification failed</span>
-        {% elif r.status %}<span class="badge plain">{{ r.status }}</span>{% endif %}
+        {% elif r.status %}{{ proposal_status(r.status) }}{% endif %}
       {% endif %}
       {% if r.source == "library" %}<span class="badge act">team</span>{% endif %}
       <span class="faint small mono">{{ (r.ts or "")[:10] }}</span>

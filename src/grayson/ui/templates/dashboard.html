@@ -25,7 +25,7 @@
 {% set s = row.summary %}
 <div class="card {{ 'attn' if row.open_interventions or row.pending_proposals }}">
   <div class="row split">
-    <a href="/session/{{ s.id }}?t={{ token }}"><b>{{ s.title or s.id }}</b></a>
+    <a href="/session/{{ s.id }}?t={{ token }}"><span class="otitle">{{ s.title or s.id }}</span></a>
     <span class="badge plain">{{ s.workflow }}</span>
   </div>
   <div class="faint mono small" style="margin: 2px 0 10px;">{{ s.id }}</div>
@@ -40,7 +40,7 @@
     {% if row.findings %}<span class="badge plain">{{ row.findings }} finding{{ "s" if row.findings != 1 }}</span>{% endif %}
   </div>
   {# long fully-qualified names wrap inside the card instead of overflowing it #}
-  <div class="muted small" style="margin-top: 10px; overflow-wrap: anywhere;">
+  <div class="muted small mono" style="margin-top: 10px; overflow-wrap: anywhere;">
     {{ s.targets | join(", ") or "no target tables" }}</div>
   {{ stage_bar(s.stage, stages) }}
 </div>
@@ -58,8 +58,8 @@
     <tr>
       <td><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a>
         <div class="faint mono small">{{ s.id }}</div></td>
-      <td>{{ s.workflow }}</td>
-      <td class="muted small">{{ s.targets | join(", ") }}</td>
+      <td class="mono">{{ s.workflow }}</td>
+      <td class="muted mono">{{ s.targets | join(", ") }}</td>
       {# a clean run has no findings; without the outcome it reads as a session
          that did nothing rather than one that checked and found nothing #}
       <td>{% if s.outcome %}{{ outcome(s.outcome, s.outcome_note) }}

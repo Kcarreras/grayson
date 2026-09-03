@@ -18,7 +18,7 @@
   <div class="item"><b>Warehouse time</b> {{ q.duration_ms }} ms</div>
   {% endif %}
   {% if q.worker %}<div class="item"><b>Worker</b> <span class="mono">{{ q.worker }}</span></div>{% endif %}
-  {% if q_tables %}<div class="item"><b>Tables</b> {{ q_tables | join(", ") }}</div>{% endif %}
+  {% if q_tables %}<div class="item"><b>Tables</b> <span class="mono">{{ q_tables | join(", ") }}</span></div>{% endif %}
 </div>
 
 {% if q.status == "rejected" %}

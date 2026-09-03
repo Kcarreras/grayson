@@ -31,7 +31,7 @@
    remembered. graph.js refits the canvas when the fold opens. #}
 <details class="section" id="schema-map" data-fold="schema-map" open>
 <summary><h2>Schema map
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ graph.nodes | length }} tables · {{ graph.edges | length }} relationships</span></h2></summary>
+  <span class="h-count">{{ graph.nodes | length }} tables · {{ graph.edges | length }} relationships</span></h2></summary>
 {{ relgraph(graph, token, "relgraph-library", 520) }}
 </details>
 {% endif %}
@@ -39,7 +39,7 @@
 {% set open_q = tables | selectattr("completeness") | selectattr("completeness.open_questions") | list | length %}
 <details class="section" id="tables" data-fold="tables" open>
 <summary><h2>Tables
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ tables | length }}{% if open_q %} · {{ open_q }} with open questions{% endif %}</span></h2></summary>
+  <span class="h-count">{{ tables | length }}{% if open_q %} · {{ open_q }} with open questions{% endif %}</span></h2></summary>
 {% if not tables %}
 <div class="card empty">
   {% if q %}Nothing matches “{{ q }}”.{% else %}No tables described yet. Agents add them as
