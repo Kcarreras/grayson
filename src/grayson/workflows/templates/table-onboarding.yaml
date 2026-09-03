@@ -77,8 +77,10 @@ required_checks:
     title: Locate the definition and the owner
     description: >
       Find where this table is actually defined — the dbt model, the DDL, the
-      ingest job — and who owns it, and record them as definitions (path and
-      kind; a dbt manifest the user ingests fills these in bulk) and owners.
+      ingest job — and who owns it, and record them with `knowledge define`
+      (pointed at the file in the work repo, so the repo, commit, and hash
+      are recorded with the path and kind; a dbt manifest the user ingests
+      fills these in bulk) and owners.
       For a view, or when no definition repo exists, `knowledge sync --ddl`
       captures the DDL beside the doc as a dated snapshot. A descriptor
       without them cannot reach base_complete, and the

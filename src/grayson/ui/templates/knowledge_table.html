@@ -29,17 +29,22 @@
       <span class="muted small">via {{ doc.structure.source }}{% if doc.structure.evidence %} ({{ doc.structure.evidence | join(", ") }}){% endif %}</span></div>{% endif %}
 </div>
 
-{% if doc.definitions %}
 <h2>Defined in {{ help("definitions") }}</h2>
+{% if doc.definitions %}
 <div class="card scroll">
 <table>
-<tr><th>Where</th><th>Kind</th><th>Captured</th><th>Hash</th></tr>
+<tr><th>Where</th><th>What</th><th>Recorded</th><th>Hash</th></tr>
 {% for d in doc.definitions %}
 <tr>
-  <td class="mono">{{ d.path or d.snapshot }}{% if d.repo %}<div class="faint small">{{ d.repo }}</div>{% endif %}
+  <td class="mono">{{ d.path or d.snapshot }}
+    {% if d.repo or d.ref or d.branch %}<div class="faint small">{{ d.repo or "" }}{% if d.ref %}@{{ d.ref }}{% endif %}{% if d.branch %} ({{ d.branch }}){% endif %}
+      {% if d.dirty %}<span class="badge attn" title="The hash describes uncommitted text, not the commit at ref">dirty</span>{% endif %}</div>
+    {% elif d.path %}<div class="faint small"><span class="badge attn" title="No repo recorded: this path resolves only where it was typed">no repo</span></div>{% endif %}
     {% if d.description %}<div class="muted small">{{ d.description }}</div>{% endif %}</td>
-  <td class="muted small">{{ (d.kind or "unknown") | replace("_", " ") }}{% if d.materialized %} · {{ d.materialized }}{% endif %}</td>
-  <td class="muted small mono">{{ d.captured_at or "" }}</td>
+  <td class="muted small">{{ (d.kind or "unknown") | replace("_", " ") }}{% if d.materialized %} · {{ d.materialized }}{% endif %}
+    {% if d.snapshot %}<div class="faint small">copy: <span class="mono">{{ d.snapshot }}</span></div>{% endif %}</td>
+  <td class="muted small">{% if d.author or d.recorded_by %}{{ d.author or d.recorded_by }}{% if d.author and d.recorded_by %} <span class="faint">({{ d.recorded_by }})</span>{% endif %}{% else %}<span class="faint">unattributed</span>{% endif %}
+    <div class="faint small mono">{{ d.captured_at or "undated" }}</div></td>
   <td class="faint small mono">{{ d.hash or "" }}</td>
 </tr>
 {% endfor %}
@@ -51,7 +56,32 @@
   <pre class="card scroll small" style="margin-top: 6px; white-space: pre; overflow-x: auto;">{{ snapshots[d.snapshot] }}</pre>
 </details>
 {% endfor %}
+{% else %}
+<div class="card empty">Nobody has recorded where this table is defined.</div>
 {% endif %}
+
+<details class="fold" style="margin: 8px 0;">
+  <summary class="muted small">Record a definition</summary>
+  <form class="row" method="post" action="/knowledge/{{ doc.table }}/definition?t={{ token }}"
+        style="gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center;">
+    <input name="path" placeholder="path — models/orders.sql (a local file is resolved: repo, commit, hash)"
+           style="width: auto; flex: 2 1 300px;" required>
+    <select name="kind" aria-label="Kind" style="width: auto;">
+      <option value="">kind — infer</option>
+      {% for k in ["dbt_model", "dbt_seed", "dbt_snapshot", "view", "ddl", "job", "other"] %}
+      <option value="{{ k }}">{{ k | replace("_", " ") }}</option>
+      {% endfor %}
+    </select>
+    <input name="repo" placeholder="repo — github.com/org/dbt (if git can't tell)"
+           style="width: auto; flex: 1 1 200px;">
+    <input name="description" placeholder="what this definition is (one line)"
+           style="width: auto; flex: 2 1 240px;">
+    <label class="muted small" style="display: inline-flex; gap: 4px; align-items: center;">
+      <input type="checkbox" name="capture" value="1" style="width: auto;"> capture a copy beside the doc
+    </label>
+    <button class="btn secondary sm" type="submit">Record</button>
+  </form>
+</details>
 
 <details class="fold" style="margin: 12px 0;" {{ "open" if not comp.base_complete }}>
   <summary class="muted small">Describe this table</summary>

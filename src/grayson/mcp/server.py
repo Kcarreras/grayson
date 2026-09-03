@@ -885,14 +885,55 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="Set structured base-descriptor fields for a table: grain, columns "
-        "(name/type/description), relationships, freshness, owners, open_questions, "
-        "definition_files. Merged per-field; returns the doc plus completeness."
+        "(name/type/description), relationships, freshness, owners, open_questions. "
+        "Merged per-field; returns the doc plus completeness. For where the table is "
+        "defined, prefer knowledge_define: it resolves a local file to its repo, "
+        "commit, and hash instead of recording a bare path."
     )
     def knowledge_set(table: str, profile: dict) -> dict:
         try:
             doc = KnowledgeStore(workspace.knowledge_dir).set_profile(table, profile)
             out = {**doc, "completeness": completeness(doc)}
             return _library_sync(out, f"grayson knowledge: profile {table.upper()}")
+        except ValueError as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Record where a table is defined so every reader of the library can "
+        "find it: pass the defining file's path (a local file is resolved — the repo "
+        "that owns it, the commit, branch, hash, and repo-relative path are observed and "
+        "recorded; a path that does not exist here is recorded as a pointer). Optional "
+        "kind (dbt_model|dbt_seed|dbt_snapshot|view|ddl|job|other, inferred from a dbt "
+        "layout when omitted), repo and ref (override what git reports), a one-line "
+        "description, and capture=true to copy the file beside the doc for readers with "
+        "no checkout. The entry is stamped with the actor and user id. Returns the entry, "
+        "the doc's definitions, and `warnings` — what is still missing for the pointer "
+        "to resolve elsewhere (no repo, unknown kind, dirty working copy)."
+    )
+    def knowledge_define(
+        table: str,
+        path: str,
+        kind: str | None = None,
+        repo: str | None = None,
+        ref: str | None = None,
+        description: str | None = None,
+        capture: bool = False,
+    ) -> dict:
+        from grayson.knowledge.define import record_definition
+
+        try:
+            out = record_definition(
+                KnowledgeStore(workspace.knowledge_dir),
+                table,
+                path,
+                workspace.root,
+                kind=kind,
+                repo=repo,
+                ref=ref,
+                description=description,
+                capture=capture,
+            )
+            return _library_sync(out, f"grayson knowledge: definition for {table.upper()}")
         except ValueError as e:
             return _err(e)
 

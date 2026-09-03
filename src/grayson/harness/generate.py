@@ -141,9 +141,14 @@ they are equivalent. Never query Snowflake except through grayson.
    for future sessions:
    `grayson knowledge add <table> --fact "..." --evidence <iid>` — the user confirms it
    from the console later.
-   Where a table is defined is knowledge too: record the dbt model, view, or job as a
-   definition (`grayson knowledge set <table> --json '{"definitions": [{"path": "models/x.sql",
-   "kind": "dbt_model"}]}'`); for a view, or when no definition repo exists,
+   Where a table is defined is knowledge too: record the dbt model, view, or job with
+   `grayson knowledge define <table> --path models/x.sql [--kind dbt_model] [-d "..."]`.
+   Point it at the file in the work repo: the repo, commit, hash, and repo-relative
+   path are observed and recorded, with who recorded it and when, so a teammate in
+   another checkout can follow the pointer — a bare path only means something on this
+   machine. Heed its `warnings` (no repo, unknown kind): pass `--repo`/`--kind`, or
+   `--capture` to copy the file beside the doc for readers with no checkout. For a
+   view, or when no definition repo exists,
    `grayson knowledge sync <table> --session <sid> --ddl` captures GET_DDL beside the doc as
    a dated snapshot. The user's dbt manifest fills these in bulk
    (`grayson knowledge ingest --manifest target/manifest.json`, a user command).
