@@ -1,5 +1,7 @@
+from grayson.knowledge.define import record_definition
 from grayson.knowledge.store import (
     DEFINITION_KINDS,
+    DEFINITION_PROVENANCE_KEYS,
     KNOWLEDGE_FORMAT,
     PROFILE_KEYS,
     SNAPSHOT_INLINE_CHARS,
@@ -16,6 +18,7 @@ from grayson.knowledge.store import (
 
 __all__ = [
     "DEFINITION_KINDS",
+    "DEFINITION_PROVENANCE_KEYS",
     "KNOWLEDGE_FORMAT",
     "PROFILE_KEYS",
     "SNAPSHOT_INLINE_CHARS",
@@ -27,5 +30,6 @@ __all__ = [
     "completeness",
     "describe_drift",
     "drift_report",
+    "record_definition",
     "text_hash",
 ]

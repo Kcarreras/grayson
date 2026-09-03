@@ -109,12 +109,40 @@ column that appeared since the last investigation is a lead, not noise.
 Targets nobody has described are a `knowledge_gap`, not drift.
 
 **Definitions.** The doc's `definitions` list says where the table is
-defined: a `path` into the repo that owns it, a `kind` (`dbt_model`, `view`,
-`ddl`, `job`, ...), optionally a `repo`, and a `hash` of the text it was
-recorded from, so a later pass can say "changed since". Agents record them
-with `knowledge set` (the format-1 `definition_files` list of bare paths is
-still written and read; it is the same record). A dbt project fills them in
-bulk from the manifest that already feeds `checks ingest`:
+defined, completely enough that every reader of the library — a teammate in
+another checkout, an agent with no checkout, whoever inherits the table —
+can find it. Each entry answers three questions:
+
+- **who**: `recorded_by` (the actor kind, `agent` or `user`), `author` (the
+  configured user id), `captured_at` — the same provenance a fact carries,
+  stamped on every write whichever surface made it;
+- **what**: `kind` (`dbt_model`, `dbt_seed`, `dbt_snapshot`, `view`, `ddl`,
+  `job`, `other`), a one-line `description`, and a `hash` of the text it was
+  recorded from, so a later pass can say "changed since";
+- **where**: `repo` (one spelling per repo, `github.com/org/dbt`, whichever
+  transport the clone used), `ref` (the commit it was read at), `branch`, and
+  `path` *relative to that repo* — never to someone's home directory.
+
+`knowledge define` records one entry from a local file and observes the
+"what" and "where" instead of asking for them: the repo's remote and HEAD,
+the file's hash, the repo-relative path, and `dirty: true` when the working
+copy differs from `ref`. A path that does not exist on this machine is
+recorded as a pointer, and the command's `warnings` say what is still short
+of complete (no repo, unknown kind). `library doctor` flags a bare path with
+no repo and no captured copy, since no collaborator can follow it.
+
+```bash
+grayson knowledge define DB.SCHEMA.TABLE --path models/marts/orders.sql        # MCP: knowledge_define
+grayson knowledge define DB.SCHEMA.TABLE --path jobs/load.py --kind job --capture   # copy it beside the doc
+grayson knowledge define DB.SCHEMA.TABLE --path models/x.sql --repo github.com/org/dbt --ref v3   # a pointer
+```
+
+The console's table page records one too, with user provenance. `knowledge
+set-files` replaces the whole path list the same way (the format-1
+`definition_files` list of bare paths is still written and read; it is the
+same record), and `knowledge set` accepts `definitions` entries verbatim,
+stamped with who and when. A dbt project fills them in bulk from the manifest
+that already feeds `checks ingest`:
 
 ```bash
 grayson knowledge ingest --manifest target/manifest.json [--repo org/dbt] [--all]
@@ -126,8 +154,9 @@ compiled SQL beside the doc as `TABLE.dbt.sql`; and fills column descriptions
 from the model's `schema.yml` where the doc has none — a description already
 written in grayson stands. Re-running reports which definitions changed.
 
-**Snapshots** (`TABLE.dbt.sql`, `TABLE.ddl.sql`) are dated copies beside the
-doc, headed with when and from what they were captured. They exist for one
+**Snapshots** (`TABLE.dbt.sql`, `TABLE.ddl.sql`, and `TABLE.<file>.source.<ext>`
+for a file captured by `knowledge define --capture`) are dated copies beside
+the doc, headed with when and from what they were captured. They exist for one
 reader: the collaborator served the library read-only, with no warehouse and
 no dbt checkout, whose agent can otherwise dereference nothing. `knowledge
 show` and the console carry them; `library doctor` flags a referenced snapshot

@@ -183,9 +183,10 @@ GLOSSARY: dict[str, str] = {
     ),
     "definitions": (
         "Where the table is actually defined — the dbt model, the view's SELECT, "
-        "the DDL. An entry is a pointer into the repo that owns it plus a hash and "
-        "date; a captured copy beside the doc is a dated snapshot, never the "
-        "authority."
+        "the DDL. An entry says who recorded it and when, what it is (kind, hash "
+        "of its text), and where it lives (repo, commit, repo-relative path), so "
+        "a collaborator in another checkout can find it; a captured copy beside "
+        "the doc is a dated snapshot, never the authority."
     ),
     "fact_status": (
         "Provenance of a fact: proposed (agent asserted), data_inferred (derived "

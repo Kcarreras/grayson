@@ -484,10 +484,15 @@ mattered facts with **provenance**:
   owns names/types/nullability, humans own descriptions, and `structure` records when
   and on what evidence it was observed. Session start DESCRIBEs each target the library
   describes and reports `knowledge_drift` (added/dropped/retyped columns). Where a
-  table is defined is a `definitions` entry — path, kind, repo, hash — filled by hand
-  or in bulk from a dbt manifest (`knowledge ingest --manifest`); a dated copy of the
-  compiled SQL or GET_DDL may sit beside the doc as `TABLE.dbt.sql` / `TABLE.ddl.sql`
-  for readers with no warehouse. The format-1 `definition_files` list is still written.
+  table is defined is a `definitions` entry that answers who (`recorded_by`, `author`,
+  `captured_at`), what (`kind`, `description`, `hash`) and where (`repo`, `ref`, `branch`,
+  repo-relative `path`) — observed from a local file by `knowledge define` (MCP
+  `knowledge_define`, or the console), or in bulk from a dbt manifest
+  (`knowledge ingest --manifest`); a dated copy of the compiled SQL, GET_DDL, or the
+  captured file may sit beside the doc as `TABLE.dbt.sql` / `TABLE.ddl.sql` /
+  `TABLE.<file>.source.<ext>` for readers with no warehouse and no checkout. A bare
+  path with neither repo nor copy is a doctor warning. The format-1 `definition_files`
+  list is still written.
 - A passing fix verification records a `data_inferred` fact on the tables it touched,
   citing both queries, so the fix is in the next session's briefing, not only in
   `records search`.

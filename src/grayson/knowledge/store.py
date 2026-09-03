@@ -77,9 +77,28 @@ _KNOWN_FRONT_KEYS = {
 #: `hash` fingerprints the text it was captured from so a later pass can say
 #: "changed since", and `captured_at` dates the observation.
 DEFINITION_KINDS = {"dbt_model", "dbt_seed", "dbt_snapshot", "view", "ddl", "job", "other"}
+#: every definition entry, whichever surface wrote it, carries the same
+#: provenance as a fact: `recorded_by` is the actor KIND (agent|user), `author`
+#: the configured user id whose workspace produced it, `captured_at` when. A
+#: pointer a teammate cannot attribute or date is not knowledge, it is a rumour.
+DEFINITION_PROVENANCE_KEYS = ("recorded_by", "author", "captured_at")
+#: string-valued entry fields (normalized to str on read and write)
+_DEFINITION_STR_KEYS = (
+    "path",
+    "snapshot",
+    "kind",
+    "repo",
+    "ref",
+    "branch",
+    "hash",
+    "description",
+    *DEFINITION_PROVENANCE_KEYS,
+)
 #: sidecar snapshots live beside the doc as <TABLE>.<kind>.sql — a sidecar is
 #: a dated copy of derived state, never the doc itself, so it can be large and
-#: regenerated without touching the merge-friendly facts
+#: regenerated without touching the merge-friendly facts. A captured local
+#: file (`knowledge define --capture`) is named after the file instead:
+#: <TABLE>.<file stem>.source<ext>, one per defining file.
 SNAPSHOT_SUFFIXES = {"dbt": ".dbt.sql", "ddl": ".ddl.sql"}
 #: how much of a snapshot rides along in `knowledge show` (the file holds it all)
 SNAPSHOT_INLINE_CHARS = 20_000
@@ -331,8 +350,9 @@ class KnowledgeStore:
                 return f
         raise KeyError(f"no fact '{fact_id}' for {fqn}")
 
-    def set_profile(self, fqn: str, updates: dict[str, Any]) -> dict:
-        """Merge structured base-descriptor fields (grain, columns, ...) into the doc."""
+    def set_profile(self, fqn: str, updates: dict[str, Any], by: str = "agent") -> dict:
+        """Merge structured base-descriptor fields (grain, columns, ...) into the doc.
+        `by` is the actor kind stamped on any definition entries in `updates`."""
         allowed = {*PROFILE_KEYS, "definition_files", "definitions", "notes"}
         bad = set(updates) - allowed
         if bad:
@@ -345,6 +365,7 @@ class KnowledgeStore:
             )
             for d in incoming:
                 _validate_definition(d)
+                _stamp_definition(d, by)
             current = self.read(fqn)["definitions"]
             kept = [d for d in current if not d.get("path")]
             updates = {
@@ -374,21 +395,24 @@ class KnowledgeStore:
         self._write(fqn, doc)
         return self.read(fqn)
 
-    def set_definition_files(self, fqn: str, files: list[str]) -> dict:
+    def set_definition_files(self, fqn: str, files: list[str], by: str = "agent") -> dict:
         """The format-1 way to say where a table is defined: bare paths. They
-        become structured entries (kind unknown); snapshots already captured
-        stay."""
-        return self.set_profile(fqn, {"definition_files": list(dict.fromkeys(files))})
+        become structured entries (kind unknown, provenance stamped); snapshots
+        already captured stay. `knowledge define` records one entry fully."""
+        return self.set_profile(fqn, {"definition_files": list(dict.fromkeys(files))}, by=by)
 
-    def upsert_definition(self, fqn: str, entry: dict) -> dict:
+    def upsert_definition(self, fqn: str, entry: dict, by: str = "agent") -> dict:
         """Add or refresh one definition entry, matched by path (or, for a
         path-less snapshot, by kind). Other entries are untouched — this is
         how an ingester records what it found without discarding what a human
-        pointed at."""
+        pointed at. The entry leaves here attributed and dated (`recorded_by`
+        = `by`, `author` = the configured user id, `captured_at`) unless the
+        caller already said who and when."""
         entry = _norm_definitions([entry], None)
         if not entry:
             raise ValueError("a definition needs at least a 'path' or a 'snapshot'")
         _validate_definition(entry[0])
+        _stamp_definition(entry[0], by)
         doc = self.read(fqn)
         doc["definitions"] = _merge_definitions(doc["definitions"], entry)
         self._write(fqn, doc)
@@ -402,14 +426,32 @@ class KnowledgeStore:
             raise ValueError(f"unknown snapshot kind {kind!r} (kinds: {sorted(SNAPSHOT_SUFFIXES)})")
         return self.table_path(fqn).with_suffix(suffix)
 
-    def write_snapshot(self, fqn: str, kind: str, text: str, header: str = "") -> dict:
+    def source_snapshot_name(self, fqn: str, source_path: str) -> str:
+        """The sidecar name for a captured copy of a defining file:
+        <TABLE>.<file stem>.source<ext> — distinct per file, beside the doc."""
+        _db, _schema, table = self._parts(fqn)
+        src = Path(source_path)
+        stem = re.sub(r"[^A-Za-z0-9_-]+", "_", src.stem).strip("_") or "file"
+        ext = src.suffix if re.fullmatch(r"\.[A-Za-z0-9]{1,8}", src.suffix or "") else ".txt"
+        return f"{table}.{stem}.source{ext}"
+
+    def write_snapshot(
+        self, fqn: str, kind: str, text: str, header: str = "", name: str | None = None
+    ) -> dict:
         """Write a captured definition beside the doc and return the entry fields
         that describe it (snapshot name, hash of the text, capture time). The
         header — who captured it, from what — goes in as SQL comment lines so
-        the file reads standalone."""
+        the file reads standalone. `name` overrides the <TABLE>.<kind>.sql
+        convention for a captured local file (see source_snapshot_name); it
+        must still be a plain file name beside the doc."""
         from grayson.util import atomic_write_text
 
-        path = self.snapshot_path(fqn, kind)
+        if name is not None:
+            if not name or "/" in name or "\\" in name or name.startswith("."):
+                raise ValueError(f"snapshot name must be a plain file name, got {name!r}")
+            path = self.table_path(fqn).parent / name
+        else:
+            path = self.snapshot_path(fqn, kind)
         path.parent.mkdir(parents=True, exist_ok=True)
         body = text.strip() + "\n"
         lines = [f"-- {line}" for line in header.strip().splitlines() if line.strip()]
@@ -573,6 +615,16 @@ class KnowledgeStore:
                     }
                 )
             for d in doc["definitions"]:
+                if d.get("path") and not d.get("repo") and not d.get("snapshot"):
+                    warnings.append(
+                        {
+                            "table": fqn,
+                            "problem": f"definition '{d['path']}' is a bare path: no repo "
+                            "and no captured copy, so a collaborator cannot resolve it "
+                            "(`knowledge define --path` records the repo and ref of a "
+                            "local file, --capture copies it beside the doc)",
+                        }
+                    )
                 snap = d.get("snapshot")
                 if snap and self.read_snapshot(fqn, str(snap)) is None:
                     warnings.append(
@@ -827,6 +879,20 @@ def _validate_definition(entry: dict) -> None:
         )
 
 
+def _stamp_definition(entry: dict, by: str) -> None:
+    """Fill the who and when of a definition entry in place — only where the
+    caller left them blank, so an ingester's own dating and a hand-written
+    attribution both stand."""
+    from grayson.identity import get_user_id
+
+    entry.setdefault("recorded_by", by or "agent")
+    if not entry.get("author"):
+        author = get_user_id()
+        if author:
+            entry["author"] = author
+    entry.setdefault("captured_at", utcnow())
+
+
 def _norm_definitions(value: object, legacy_files: object) -> list[dict]:
     """Canonicalize definition entries: dicts with a path or snapshot pass
     through (string-valued fields as strings), a bare string is shorthand for
@@ -845,8 +911,8 @@ def _norm_definitions(value: object, legacy_files: object) -> list[dict]:
     for item in value if isinstance(value, list) else []:
         if isinstance(item, dict):
             entry = {k: v for k, v in item.items() if v not in (None, "", [])}
-            for k in ("path", "snapshot", "kind", "repo", "ref", "hash", "captured_at"):
-                if k in entry:
+            for k in _DEFINITION_STR_KEYS:
+                if k in entry and not isinstance(entry[k], str):
                     entry[k] = str(entry[k])
             if entry.get("path") or entry.get("snapshot"):
                 _add(entry)

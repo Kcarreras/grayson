@@ -55,10 +55,31 @@ def session(workspace):
 def test_definition_files_read_and_write_as_structured_entries(ks, workspace):
     ks.set_definition_files(T, ["models/t1.sql"])
     doc = ks.read(T)
-    assert doc["definitions"] == [{"path": "models/t1.sql"}]
+    entry = doc["definitions"][0]
+    # a bare path still leaves the store attributed and dated: who and when
+    # are stamped on every write, whichever surface made it
+    assert entry["path"] == "models/t1.sql" and entry["recorded_by"] == "agent"
+    assert entry["captured_at"] and "author" not in entry  # no user id configured
     assert doc["definition_files"] == ["models/t1.sql"]
     text = (workspace.knowledge_dir / "DB" / "S" / "T1.md").read_text()
     assert "definitions:" in text and "definition_files:" in text  # both names written
+
+
+def test_definition_provenance_names_the_user_and_keeps_an_ingesters_own_dating(ks, monkeypatch):
+    monkeypatch.setenv("GRAYSON_USER_ID", "kc")
+    ks.set_profile(T, {"definitions": [{"path": "models/t1.sql", "kind": "dbt_model"}]})
+    entry = ks.read(T)["definitions"][0]
+    assert entry["author"] == "kc" and entry["recorded_by"] == "agent"
+    # the console (a human, unambiguously) records the actor kind as user
+    ks.upsert_definition(T, {"path": "jobs/load_t1.py", "kind": "job"}, by="user")
+    job = next(d for d in ks.read(T)["definitions"] if d["path"] == "jobs/load_t1.py")
+    assert job["recorded_by"] == "user" and job["author"] == "kc"
+    # an ingester's own capture time and author stand; only blanks are filled
+    ks.upsert_definition(
+        T, {"path": "models/t1.sql", "captured_at": "2020-01-01T00:00:00Z", "author": "ci"}
+    )
+    again = next(d for d in ks.read(T)["definitions"] if d["path"] == "models/t1.sql")
+    assert again["captured_at"] == "2020-01-01T00:00:00Z" and again["author"] == "ci"
 
 
 def test_legacy_doc_with_only_definition_files_reads_the_same(ks, workspace):
@@ -105,6 +126,202 @@ def test_snapshot_confined_to_doc_directory_and_linted(ks, workspace):
     assert "missing beside the doc" in ks.lint()["warnings"][0]["problem"]
     with pytest.raises(ValueError, match="unknown snapshot kind"):
         ks.snapshot_path(T, "csv")
+
+
+# -- define: who, what, where — a pointer every reader can resolve -------------------
+
+
+def _git_repo(path, remote="git@github.com:acme/dbt.git"):
+    """A work repo with one committed model and a remote, as a teammate's
+    checkout would have."""
+    import subprocess
+
+    path.mkdir(parents=True)
+    run = lambda *a: subprocess.run(  # noqa: E731
+        ["git", "-C", str(path), *a], check=True, capture_output=True, text=True
+    )
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    run("remote", "add", "origin", remote)
+    model = path / "models" / "marts" / "t1.sql"
+    model.parent.mkdir(parents=True)
+    model.write_text("select 1 as id\n")
+    run("add", ".")
+    run("commit", "-q", "-m", "model")
+    sha = run("rev-parse", "--short=12", "HEAD").stdout.strip()
+    return model, sha
+
+
+def test_normalize_remote_gives_one_spelling_per_repo():
+    from grayson.knowledge.define import normalize_remote
+
+    assert normalize_remote("https://github.com/acme/dbt.git") == "github.com/acme/dbt"
+    assert normalize_remote("git@github.com:acme/dbt.git") == "github.com/acme/dbt"
+    assert normalize_remote("ssh://git@github.com:22/acme/dbt") == "github.com/acme/dbt"
+    assert normalize_remote("/srv/git/dbt.git") == "/srv/git/dbt.git"  # a path remote, as is
+
+
+def test_define_resolves_a_local_file_to_its_repo_commit_and_hash(ks, workspace, monkeypatch):
+    from grayson.knowledge import text_hash
+    from grayson.knowledge.define import record_definition
+
+    monkeypatch.setenv("GRAYSON_USER_ID", "kc")
+    model, sha = _git_repo(workspace.root / "dbt")
+    out = record_definition(ks, T, str(model), workspace.root)
+    d = out["definition"]
+    # where: the repo that owns it, the commit, and the path *relative to that repo*
+    assert d["repo"] == "github.com/acme/dbt" and d["ref"] == sha and d["branch"] == "main"
+    assert d["path"] == "models/marts/t1.sql"
+    # what: kind inferred from the dbt layout, text fingerprinted
+    assert d["kind"] == "dbt_model" and d["hash"] == text_hash("select 1 as id\n")
+    assert "dirty" not in d
+    # who: actor and user id, dated
+    assert d["recorded_by"] == "agent" and d["author"] == "kc" and d["captured_at"]
+    assert out["resolved"] and out["warnings"] == []
+    assert ks.read(T)["definition_files"] == ["models/marts/t1.sql"]
+    assert ks.lint()["warnings"] == []  # a repo-anchored pointer resolves anywhere
+    # a dirty working copy is said so: the hash is not the text at ref
+    model.write_text("select 2 as id\n")
+    again = record_definition(ks, T, "dbt/models/marts/t1.sql", workspace.root, by="user")
+    assert again["definition"]["dirty"] is True and again["definition"]["recorded_by"] == "user"
+    assert any("uncommitted" in w for w in again["warnings"])
+    assert len(ks.read(T)["definitions"]) == 1  # same path: replaced, not duplicated
+    # explicit repo/ref/kind win over what git reports
+    forced = record_definition(
+        ks, T, str(model), workspace.root, kind="view", repo="https://gh.example/x/y.git", ref="v1"
+    )
+    assert forced["definition"]["repo"] == "gh.example/x/y" and forced["definition"]["ref"] == "v1"
+    assert forced["definition"]["kind"] == "view"
+
+
+def test_define_records_a_pointer_when_the_file_is_not_here(ks, workspace):
+    from grayson.knowledge.define import record_definition
+
+    out = record_definition(ks, T, "models/elsewhere.sql", workspace.root)
+    d = out["definition"]
+    assert not out["resolved"] and "hash" not in d and "repo" not in d
+    assert d["kind"] == "dbt_model" and d["recorded_by"] == "agent" and d["captured_at"]
+    assert any("not a file here" in w for w in out["warnings"])
+    assert any("no repo recorded" in w for w in out["warnings"])
+    # doctor names the pointer a collaborator cannot follow
+    problems = [w["problem"] for w in ks.lint()["warnings"]]
+    assert any("bare path" in p and "models/elsewhere.sql" in p for p in problems)
+    # naming the repo makes it a real pointer; an unknown kind is refused
+    fixed = record_definition(
+        ks, T, "models/elsewhere.sql", workspace.root, repo="git@github.com:acme/dbt.git"
+    )
+    assert fixed["definition"]["repo"] == "github.com/acme/dbt"
+    assert not any("no repo" in w for w in fixed["warnings"])
+    assert ks.lint()["warnings"] == []
+    with pytest.raises(ValueError, match="unknown definition kind"):
+        record_definition(ks, T, "x.sql", workspace.root, kind="spreadsheet")
+    with pytest.raises(ValueError, match="needs a path"):
+        record_definition(ks, T, "  ", workspace.root)
+
+
+def test_define_capture_copies_the_file_beside_the_doc(ks, workspace):
+    from grayson.knowledge.define import record_definition
+
+    job = workspace.root / "jobs" / "load_t1.py"  # no git: a plain local file
+    job.parent.mkdir()
+    job.write_text("print('load')\n")
+    out = record_definition(ks, T, "jobs/load_t1.py", workspace.root, capture=True)
+    d = out["definition"]
+    assert out["captured"] and d["snapshot"] == "T1.load_t1.source.py" and d["kind"] == "job"
+    assert d["path"] == "jobs/load_t1.py" and "repo" not in d
+    copy = ks.read_snapshot(T, "T1.load_t1.source.py")
+    assert copy.startswith("-- DB.S.T1") and "captured by grayson knowledge define" in copy
+    assert copy.endswith("print('load')\n")
+    assert ks.lint()["warnings"] == []  # a captured copy resolves for everyone
+    # a missing file cannot be captured, and says so instead of failing
+    missing = record_definition(ks, T, "jobs/gone.py", workspace.root, capture=True)
+    assert not missing["captured"] and any("not captured" in w for w in missing["warnings"])
+    assert ks.snapshot_path(T, "ddl").name == "T1.ddl.sql"
+    with pytest.raises(ValueError, match="plain file name"):
+        ks.write_snapshot(T, "source", "x", name="../T1.source.sql")
+
+
+def test_cli_define_and_set_files_record_full_provenance(workspace, monkeypatch):
+    from typer.testing import CliRunner
+
+    from grayson.cli import app
+
+    monkeypatch.setenv("GRAYSON_USER_ID", "kc")
+    model, sha = _git_repo(workspace.root / "dbt")
+    runner = CliRunner()
+    res = runner.invoke(
+        app,
+        ["knowledge", "define", T, "--path", str(model), "-d", "orders mart", "--by", "user"],
+    )
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.output)
+    d = out["definition"]
+    assert d["repo"] == "github.com/acme/dbt" and d["ref"] == sha
+    assert d["author"] == "kc" and d["recorded_by"] == "user"
+    assert d["description"] == "orders mart" and out["warnings"] == []
+    bad = runner.invoke(app, ["knowledge", "define", T, "--path", "x.sql", "--kind", "csv"])
+    assert bad.exit_code != 0 and "unknown definition kind" in (bad.stderr or bad.output)
+    # set-files replaces the path list, resolving what it can and stamping the rest
+    res = runner.invoke(
+        app, ["knowledge", "set-files", T, "-f", "dbt/models/marts/t1.sql", "-f", "other/x.sql"]
+    )
+    assert res.exit_code == 0, res.output
+    out = json.loads(res.output)
+    by_path = {d["path"]: d for d in out["definitions"]}
+    assert set(by_path) == {"models/marts/t1.sql", "other/x.sql"}
+    assert by_path["models/marts/t1.sql"]["ref"] == sha
+    assert by_path["other/x.sql"]["author"] == "kc" and "hash" not in by_path["other/x.sql"]
+    assert "other/x.sql" in out["warnings"] and "dbt/models/marts/t1.sql" not in out["warnings"]
+
+
+def test_mcp_define_tool(workspace, ks, monkeypatch):
+    from grayson.mcp.server import build_server
+
+    monkeypatch.setenv("GRAYSON_USER_ID", "kc")
+    model, sha = _git_repo(workspace.root / "dbt")
+    out = _mcp_call(
+        build_server(workspace),
+        "knowledge_define",
+        {"table": T, "path": str(model), "capture": True},
+    )
+    d = out["definition"]
+    assert d["repo"] == "github.com/acme/dbt" and d["ref"] == sha and d["author"] == "kc"
+    assert d["recorded_by"] == "agent" and d["snapshot"] == "T1.t1.source.sql"
+    assert out["warnings"] == []
+    shown = _mcp_call(build_server(workspace), "knowledge_show", {"table": T})
+    assert "select 1 as id" in shown["definition_snapshots"]["T1.t1.source.sql"]
+    err = _mcp_call(build_server(workspace), "knowledge_define", {"table": T, "path": ""})
+    assert "needs a path" in err["error"]
+
+
+def test_console_records_a_definition_with_user_provenance(workspace, ks, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from grayson.ui.server import build_app
+
+    monkeypatch.setenv("GRAYSON_USER_ID", "kc")
+    model, sha = _git_repo(workspace.root / "dbt")
+    client = TestClient(build_app(workspace, token="tok"), base_url="http://127.0.0.1")
+    page = client.get(f"/knowledge/{T}?t=tok").text
+    assert "Nobody has recorded where this table is defined" in page
+    assert "Record a definition" in page
+    res = client.post(
+        f"/knowledge/{T}/definition?t=tok",
+        data={"path": str(model), "kind": "", "repo": "", "description": "the mart"},
+        follow_redirects=False,
+    )
+    assert res.status_code in (302, 303), res.text
+    d = ks.read(T)["definitions"][0]
+    assert d["recorded_by"] == "user" and d["author"] == "kc" and d["ref"] == sha
+    page = client.get(f"/knowledge/{T}?t=tok").text
+    assert "github.com/acme/dbt" in page and f"@{sha}" in page and "(main)" in page
+    assert "kc" in page and "(user)" in page and "the mart" in page
+    # a bare pointer is flagged as unresolvable where it is shown
+    client.post(f"/knowledge/{T}/definition?t=tok", data={"path": "elsewhere/x.sql"})
+    assert "no repo" in client.get(f"/knowledge/{T}?t=tok").text
+    empty = client.post(f"/knowledge/{T}/definition?t=tok", data={"path": " "})
+    assert empty.status_code == 400
 
 
 # -- structure: the warehouse owns names and types --------------------------------

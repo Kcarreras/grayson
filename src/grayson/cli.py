@@ -2678,16 +2678,98 @@ def knowledge_confirm(table: str, fact_id: str, by: str = typer.Option("user", "
     emit(out)
 
 
-@knowledge_app.command("set-files")
-def knowledge_set_files(table: str, files: list[str] = typer.Option(..., "--file", "-f")) -> None:
-    """Point future agents at the work-repo files that define this table."""
+@knowledge_app.command("define")
+def knowledge_define(
+    table: str,
+    path: str = typer.Option(
+        ...,
+        "--path",
+        "-p",
+        help="The defining file: a path on this machine (resolved: repo, commit, hash "
+        "are observed) or a repo-relative path to record as a pointer.",
+    ),
+    kind: str = typer.Option(
+        None, "--kind", "-k", help="dbt_model|dbt_seed|dbt_snapshot|view|ddl|job|other."
+    ),
+    repo: str = typer.Option(
+        None, "--repo", help="The repo that owns the file (overrides what git reports)."
+    ),
+    ref: str = typer.Option(
+        None, "--ref", help="The commit or tag the file was read at (overrides HEAD)."
+    ),
+    description: str = typer.Option(
+        None, "--description", "-d", help="One line on what this definition is."
+    ),
+    capture: bool = typer.Option(
+        False,
+        "--capture",
+        help="Copy the file beside the doc as a dated snapshot, for readers with no checkout.",
+    ),
+    by: str = typer.Option("agent", "--by", help="Actor kind recorded: agent|user."),
+) -> None:
+    """Record where this table is defined — who says so, what it is, where it
+    lives — so every reader of the library can find it.
+
+    A local file is resolved: its repo (remote), commit, branch, hash, and
+    repo-relative path are recorded, with a note when the working copy is
+    dirty. The entry is stamped with the actor and your user id. Warnings
+    list what is still missing for the pointer to resolve elsewhere."""
+    from grayson.knowledge.define import record_definition
+
     ws = _workspace()
     try:
-        result = KnowledgeStore(ws.knowledge_dir).set_definition_files(table, list(files))
+        out = record_definition(
+            KnowledgeStore(ws.knowledge_dir),
+            table,
+            path,
+            ws.root,
+            kind=kind,
+            repo=repo,
+            ref=ref,
+            description=description,
+            capture=capture,
+            by=by,
+        )
     except ValueError as e:
         fail(str(e))
         return
-    out = dict(result)
+    _attach_library_sync(out, ws, f"grayson knowledge: definition for {table.upper()}")
+    emit(out)
+
+
+@knowledge_app.command("set-files")
+def knowledge_set_files(
+    table: str,
+    files: list[str] = typer.Option(..., "--file", "-f"),
+    by: str = typer.Option("agent", "--by", help="Actor kind recorded: agent|user."),
+) -> None:
+    """Point future agents at the work-repo files that define this table.
+
+    Replaces the path list. Each file that exists here is resolved (repo,
+    commit, hash) and every entry is stamped with who and when; `knowledge
+    define` records one file with a kind, description, or captured copy."""
+    from grayson.knowledge.define import record_definition
+
+    ws = _workspace()
+    store = KnowledgeStore(ws.knowledge_dir)
+    warnings: dict[str, list[str]] = {}
+    wanted = list(dict.fromkeys(f.strip() for f in files if f.strip()))
+    if not wanted:
+        fail("a definition needs a path")
+        return
+    try:
+        # clear the path-bearing entries first (set-files replaces the list),
+        # then record each one fully; snapshots without a path stay
+        store.set_definition_files(table, [], by=by)
+        for f in wanted:
+            recorded = record_definition(store, table, f, ws.root, by=by)
+            if recorded["warnings"]:
+                warnings[f] = recorded["warnings"]
+        result = store.read(table)
+    except ValueError as e:
+        fail(str(e))
+        return
+    out = {**result, "warnings": warnings}
     _attach_library_sync(out, ws, f"grayson knowledge: definition files for {table.upper()}")
     emit(out)
 

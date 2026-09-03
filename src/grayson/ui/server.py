@@ -367,6 +367,38 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
         return _knowledge_write(fqn, f"grayson knowledge: profile {fqn.upper()}", write)
 
+    @app.post("/knowledge/{fqn}/definition")
+    async def knowledge_add_definition(request: Request, fqn: str) -> Any:
+        """A human recording where a table is defined. A local path is resolved
+        against the workspace (repo, commit, hash); the entry carries user
+        provenance and the console shows what is still missing."""
+        _check(request)
+        from grayson.knowledge.define import record_definition
+
+        form = await request.form()
+        path = str(form.get("path", "")).strip()
+        if not path:
+            raise HTTPException(status_code=400, detail="a definition needs a path")
+        kind = str(form.get("kind", "")).strip() or None
+        repo = str(form.get("repo", "")).strip() or None
+        description = str(form.get("description", "")).strip() or None
+        capture = str(form.get("capture", "")).strip().lower() in ("1", "on", "true", "yes")
+
+        def write(store: KnowledgeStore) -> None:
+            record_definition(
+                store,
+                fqn,
+                path,
+                workspace.root,
+                kind=kind,
+                repo=repo,
+                description=description,
+                capture=capture,
+                by="user",
+            )
+
+        return _knowledge_write(fqn, f"grayson knowledge: definition for {fqn.upper()}", write)
+
     # -- checks -----------------------------------------------------------
 
     @app.get("/checks", response_class=HTMLResponse)
