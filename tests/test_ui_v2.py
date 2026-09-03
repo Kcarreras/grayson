@@ -362,3 +362,27 @@ def test_list_pages_carry_sort_and_filter_markup(client, workspace, rich_session
     assert 'data-list-tools="records"' in page and 'data-list="records"' in page
     assert 'data-tags="finding' in page and 'data-tags="proposal' in page
     assert 'data-s-kind="finding"' in page
+
+
+def test_knowledge_tiles_name_each_gap(client, workspace):
+    """ "3 gaps" on a tile says nothing a reader can act on: the tile names
+    them — no grain, no freshness, 1/2 columns described — without opening
+    the table."""
+    store = KnowledgeStore(workspace.knowledge_dir)
+    store.set_profile(
+        "DB.S.T1",
+        {
+            "freshness": "daily",
+            "columns": [{"name": "ID", "description": "the key"}, {"name": "VAL"}],
+        },
+    )
+    page = client.get(f"/knowledge?t={TOKEN}").text
+    tile = page.split("DB.S.T1", 1)[1].split("</details>", 1)[0]
+    for label in ("no grain", "1/2 columns described", "no relationships", "no definition"):
+        assert label in tile, label
+    assert "no freshness" not in tile and "gaps</span>" not in tile
+
+    from grayson.ui.format import gap_label
+
+    assert gap_label("column_descriptions (3/10)") == "3/10 columns described"
+    assert gap_label("something_new") == "something new"  # a future gap still reads
