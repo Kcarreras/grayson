@@ -8,14 +8,10 @@
 .scsum::-webkit-details-marker { display: none; }
 .scsum .c-caret { margin-top: 3px; }
 .scsum .sct { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.scsum .sct .desc { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.scsum .sct .desc { color: var(--muted); font-size: var(--t-sm); font-weight: 400; }
 .scsum .marks { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .scbody { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-.fieldrow { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px;
-  font-size: 12.5px; align-items: baseline; }
-.fieldrow .k { font-family: ui-monospace, Consolas, monospace; color: var(--ink-2); }
-.fieldrow .d { color: var(--muted); }
-.scmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 12px;
+.scmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: var(--t-sm);
   color: var(--muted); border-top: 1px solid var(--border-soft); padding-top: 8px; }
 .newform { display: grid; gap: 8px; grid-template-columns: minmax(200px, 1fr) minmax(180px, 1fr) max-content;
   align-items: center; }
@@ -40,7 +36,7 @@
 
 <details class="section" id="catalog" data-fold="catalog" open>
 <summary><h2>Catalog
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ rows | length + problems | length }}</span></h2></summary>
+  <span class="h-count">{{ rows | length + problems | length }}</span></h2></summary>
 {{ list_tools("schemas", [
   ("group", "asc", "Built in first, then A–Z"),
   ("name", "asc", "Name A–Z"),

@@ -26,7 +26,7 @@
 {% if summary.failing %}
 <details class="section" id="failing" data-fold="failing" open>
 <summary><h2>Failing now
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ summary.failing | length }}</span></h2></summary>
+  <span class="h-count">{{ summary.failing | length }}</span></h2></summary>
 {{ list_tools("failing", [
   ("name", "asc", "Name A–Z"),
   ("run", "desc", "Most recent run first"),
@@ -71,7 +71,7 @@
 
 <details class="section" id="all-checks" data-fold="all-checks" open>
 <summary><h2>All checks
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">latest run each · {{ summary.checks | length }}</span></h2></summary>
+  <span class="h-count">latest run each · {{ summary.checks | length }}</span></h2></summary>
 {% if summary.checks %}
 {{ list_tools("checks", [
   ("status", "asc", "Failing first"),
@@ -101,7 +101,7 @@
   data-s-name="{{ c.name }}" data-s-status="{{ rank.get(c.status, 3) }}"
   data-s-tables="{{ c.tables | join(', ') }}" data-s-source="{{ c.source or '' }}"
   data-s-age="{{ c.age_hours if c.age_hours is not none else 1e9 }}">
-  <td>{{ c.name }}<div class="faint mono small">{{ c.check_id }}</div></td>
+  <td><span class="ink">{{ c.name }}</span><div class="muted mono">{{ c.check_id }}</div></td>
   <td>{{ check_status(c) }}</td>
   <td class="small">{% for t in c.tables %}
     <a class="mono" href="/knowledge/{{ t }}?t={{ token }}">{{ t }}</a>{{ ", " if not loop.last }}{% endfor %}</td>

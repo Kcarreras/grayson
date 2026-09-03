@@ -38,7 +38,7 @@
 
 {% if kind == "finding" %}
 <div class="pagehead">
-  <div class="titlerow"><h1>{{ record.fid }} · {{ record.title }}</h1></div>
+  <div class="titlerow"><h1><span class="mono muted">{{ record.fid }}</span> · {{ record.title }}</h1></div>
   <span class="actions">
     {{ severity(record.severity) }}
     <span class="badge plain">confidence: {{ record.confidence }}</span>
@@ -99,7 +99,7 @@
 </div>
 <div class="card">
   <div class="kv">
-    <div class="item"><b>Targets</b> {{ (rs.targets or []) | join(", ") or "—" }}</div>
+    <div class="item"><b>Targets</b> <span class="mono">{{ (rs.targets or []) | join(", ") or "—" }}</span></div>
     <div class="item"><b>Queries executed</b> {{ ready.queries_executed or 0 }}</div>
     <div class="item"><b>Findings accepted</b> {{ ready.findings_accepted or 0 }}</div>
     {% if ready.waived_checks %}<div class="item"><b>Waived</b>
@@ -164,14 +164,14 @@
 {% else %}
 {% set payload = record.payload or {} %}
 <div class="pagehead">
-  <div class="titlerow"><h1>{{ record.pid }} · {{ record.title }}</h1></div>
+  <div class="titlerow"><h1><span class="mono muted">{{ record.pid }}</span> · {{ record.title }}</h1></div>
   <span class="actions">
     <span class="badge plain">{{ "file diff" if record.kind == "file_diff" else "DDL" }}</span>
     {{ proposal_status(record.status) }}
   </span>
 </div>
 <div class="card">
-  {% if record.finding_fid %}<div class="faint small">addresses finding
+  {% if record.finding_fid %}<div class="muted small">addresses finding
     <span class="chip">{{ record.finding_fid }}</span></div>{% endif %}
   {% if payload.rationale %}{{ agent_text(payload.rationale) }}{% endif %}
   {% if record.kind == "file_diff" %}

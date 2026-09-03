@@ -9,18 +9,14 @@
 .wfsum .c-caret { margin-top: 3px; }
 .wfsum .wft { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .wfsum .wft b { color: var(--ink); }
-.wfsum .wft .desc { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.wfsum .wft .desc { color: var(--muted); font-size: var(--t-sm); font-weight: 400; }
 .wfsum .marks { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end;
   flex: 0 1 auto; }
 .wfbody { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-.wfmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 12px;
+.wfmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: var(--t-sm);
   color: var(--muted); border-top: 1px solid var(--border-soft); padding-top: 8px; }
 .wftags { display: flex; gap: 4px; flex-wrap: wrap; }
 .schemagrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
-.fieldrow { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px;
-  font-size: 12.5px; align-items: baseline; }
-.fieldrow .k { font-family: ui-monospace, Consolas, monospace; color: var(--ink-2); }
-.fieldrow .d { color: var(--muted); }
 .newform { display: grid; gap: 8px; grid-template-columns: minmax(200px, 1fr) minmax(180px, 1fr) max-content;
   align-items: center; }
 @media (max-width: 720px) { .newform { grid-template-columns: 1fr; } }
@@ -44,7 +40,7 @@
 
 <details class="section" id="catalog" data-fold="catalog" open>
 <summary><h2>Catalog
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ rows | length + problems | length }}</span></h2></summary>
+  <span class="h-count">{{ rows | length + problems | length }}</span></h2></summary>
 {{ list_tools("workflows", [
   ("group", "asc", "Core first, then A–Z"),
   ("name", "asc", "Name A–Z"),
@@ -93,7 +89,7 @@
       {% if tpl.suggested_checks %}<span class="badge plain" title="Suggested checks: breadth, no gate">+{{ tpl.suggested_checks | length }} suggested</span>{% endif %}
       <span class="badge plain" title="Questions the human answers at setup">{{ tpl.setup_inputs | length }} input{{ "s" if tpl.setup_inputs | length != 1 }}</span>
       {% if tpl.chart_requirements() %}<span class="badge plain" title="Checkpoints the workflow requires to close with a chart">{{ tpl.chart_requirements() }} require{{ "s" if tpl.chart_requirements() == 1 }} a chart</span>{% endif %}
-      <span class="badge plain mono" title="Findings schema">{{ tpl.findings_schema }}{% if tpl.findings_fields %} +{{ tpl.findings_fields | length }}{% endif %}</span>
+      <a class="chip" href="/schemas/{{ tpl.findings_schema }}?t={{ token }}" title="Findings schema">{{ tpl.findings_schema }}{% if tpl.findings_fields %} +{{ tpl.findings_fields | length }}{% endif %}</a>
     </div>
     {% if tpl.tags %}<div class="wftags">{% for t in tpl.tags %}<span class="chip">#{{ t }}</span>{% endfor %}</div>{% endif %}
     <div class="wfmeta">
@@ -152,7 +148,7 @@
 
 <details class="section" id="schemas" data-fold="schemas">
 <summary><h2>Findings schemas {{ help("findings_schema") }}
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ schemas | length }}</span></h2></summary>
+  <span class="h-count">{{ schemas | length }}</span></h2></summary>
 <div class="row" style="margin-bottom: 10px;"><a class="btn secondary sm" href="/schemas?t={{ token }}">Open the schemas page →</a>
   <span class="muted small">to create, fork, and edit the team's own.</span></div>
 <div class="schemagrid">
