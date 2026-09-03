@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from grayson.charts.spec import KINDS as CHART_KINDS
+from grayson.findings.schemas import BASE_FIELD_KEYS
+
+_FIELD_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 
 #: every template model tolerates and round-trips unknown fields: a newer
 #: grayson's additions survive an older one's edit-and-save (the round-trip
@@ -83,12 +89,70 @@ class CheckDef(BaseModel):
     uses_inputs: list[str] = Field(default_factory=list)
 
 
+class FindingField(BaseModel):
+    """A field this workflow requires (or documents) in every finding's `extra`.
+
+    The built-in schemas are fixed with the release; a workflow extends the
+    one it names with its own fields, so a team's claims carry the structure
+    the team needs — an owning team, a verdict from a closed list, a ticket —
+    and the gate refuses a finding without them. `choices` closes the value
+    set; `required: false` documents a field for the agent without gating on
+    it. A key that matches a built-in extra of the base schema tightens that
+    field (its description and choices) rather than adding a second one.
+    """
+
+    model_config = _ROUND_TRIP
+
+    key: str
+    description: str = ""
+    required: bool = True
+    choices: list[str] = Field(default_factory=list)
+
+    @field_validator("key")
+    @classmethod
+    def _key_shape(cls, v: str) -> str:
+        if not _FIELD_KEY_RE.match(v):
+            raise ValueError(
+                f"findings field key '{v}' must be lowercase letters, digits or '_' "
+                "(starting with a letter), e.g. owner_team"
+            )
+        if v in BASE_FIELD_KEYS:
+            raise ValueError(
+                f"findings field '{v}' is a base field every finding already carries — "
+                "workflow fields live in `extra` and need their own key"
+            )
+        return v
+
+    @field_validator("choices")
+    @classmethod
+    def _choices(cls, v: list[str]) -> list[str]:
+        cleaned = [str(c).strip() for c in v if str(c).strip()]
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("findings field choices repeat a value")
+        return cleaned
+
+    def label(self) -> str:
+        """One line for previews and the console."""
+        quals = []
+        if self.choices:
+            quals.append(f"one of: {' | '.join(self.choices)}")
+        if not self.required:
+            quals.append("optional")
+        head = self.key + (f" ({'; '.join(quals)})" if quals else "")
+        desc = " ".join(self.description.split())
+        return f"{head}: {desc}" if desc else head
+
+
 class WorkflowTemplate(BaseModel):
     model_config = _ROUND_TRIP
 
     name: str
     title: str = ""
     description: str = ""
+    #: free labels for finding a workflow in a catalog that has grown past a
+    #: screen: a domain (orders, finance), a team, a cadence. The console
+    #: filters by them; nothing else reads them.
+    tags: list[str] = Field(default_factory=list)
     suggested_guard_profile: str = "moderate"
     #: workflows with a bounded shape (table-onboarding: one declared table,
     #: nothing open-ended) suggest strict scope; None leaves the workspace
@@ -104,11 +168,39 @@ class WorkflowTemplate(BaseModel):
     #: session start and in the console; nothing blocks on them.
     suggested_checks: list[CheckDef] = Field(default_factory=list)
     findings_schema: str = "standard_v1"
+    #: the workflow's own additions to that schema (see FindingField). The
+    #: effective schema a finding validates against is the built-in plus these.
+    findings_fields: list[FindingField] = Field(default_factory=list)
     #: provenance for library workflows: who authored the file (`grayson user`
     #: id) and, for forks, which workflow it started from. Empty on core
     #: templates and legacy library files.
     created_by: str = ""
     forked_from: str = ""
+
+    @field_validator("tags")
+    @classmethod
+    def _tags(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for tag in v:
+            tag = str(tag).strip().lower()
+            if not tag:
+                continue
+            if not _TAG_RE.match(tag):
+                raise ValueError(
+                    f"tag '{tag}' must be 1-32 lowercase letters, digits, '-', '_' or '.'"
+                )
+            if tag not in out:
+                out.append(tag)
+        return out
+
+    @field_validator("findings_fields")
+    @classmethod
+    def _unique_field_keys(cls, v: list[FindingField]) -> list[FindingField]:
+        keys = [f.key for f in v]
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        if dupes:
+            raise ValueError(f"duplicate findings field key(s): {', '.join(dupes)}")
+        return v
 
     def check(self, key: str) -> CheckDef | None:
         """A checkpoint by key — required or suggested."""
@@ -130,6 +222,18 @@ class WorkflowTemplate(BaseModel):
 
     def input_keys(self) -> list[str]:
         return [i.key for i in self.setup_inputs]
+
+    def chart_requirements(self) -> int:
+        """How many checkpoints (required or suggested) demand a chart."""
+        return sum(1 for c in self.required_checks + self.suggested_checks if c.charts)
+
+    def checks_using(self, input_key: str) -> list[str]:
+        """Keys of the checkpoints that declare they work from a setup input."""
+        return [
+            c.key
+            for c in self.required_checks + self.suggested_checks
+            if input_key in c.uses_inputs
+        ]
 
     def unknown_input_keys(self, provided: dict) -> list[str]:
         return sorted(set(provided) - set(self.input_keys()))

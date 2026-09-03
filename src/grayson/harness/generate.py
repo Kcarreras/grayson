@@ -154,7 +154,13 @@ they are equivalent. Never query Snowflake except through grayson.
    which in your findings. Required checks may declare `depends_on`: close them in
    that order, it is part of the method.
 5. Findings: record them against the workflow schema, each citing evidence:
-   `grayson finding add <sid> --json '{...}'`. Calibrate severity against
+   `grayson finding add <sid> --json '{...}'`. Read the schema before the first one:
+   `grayson workflow show <name>` (and `session start`'s reply) carry
+   `findings_schema_spec` — every base field with its rule, the `extra` fields this
+   workflow requires (the built-in schema's plus the workflow's own, some with a closed
+   list of allowed values), the discriminator and its branches, and an example payload
+   shaped to pass. Fill every required field; a closed list means one of those values,
+   not a paraphrase. Calibrate severity against
    `grayson finding rubric` — critical means wrong data is already being used for
    decisions, info means it is not a defect at all. Two rungs cost specificity and
    are enforced: `confidence: high` needs a `reproduction` (if nobody else can go
@@ -259,8 +265,21 @@ MCP mirror), which enforces validation and ownership server-side.
   inapplicable check. A suggested check can carry a requirement too — it
   applies only when the agent does that check.
 - **Findings schema.** `standard_v1` unless the workflow's claims need more
-  structure; name the known schemas from `grayson workflow show` on a core
-  template if the user wants options.
+  structure. `grayson workflow schemas` lists every built-in schema with its
+  fields unpacked; `grayson workflow show <name>` carries the effective
+  schema of any workflow as `findings_schema_spec`. Then ask: what must every
+  finding from THIS workflow say that the schema does not already demand — an
+  owning team, a verdict, a ticket, a quantified measure? Each becomes a
+  `findings_fields` entry (`key`, `description`, `required`, `choices`).
+  Where the answer is a verdict, close the value set with `choices` so it
+  cannot be hedged; use `required: false` to document a field without gating
+  on it. A field named like one the schema already requires tightens that
+  field (its description and choices) rather than duplicating it. The gate
+  then refuses a finding without the required fields, exactly as it does for
+  the built-in ones.
+- **Tags.** `tags: [orders, finance]` — free labels the console's catalog
+  filters by, so the workflow can be found once the library has grown. Ask
+  for a domain and, if the team uses them, an owner or cadence.
 
 ## 2. Draft -> 3. Lint -> 4. Preview -> 5. Store
 
@@ -270,6 +289,13 @@ grayson workflow lint                          # repeat until clean
 grayson workflow preview <name>                # paste `text` to the user
 grayson library push                           # after the user signs off
 ```
+
+The console's Workflows tab offers the same loop without YAML: the user
+edits a workflow one element at a time — its header, a setup input, a
+checkpoint (charts included), a findings field — and every change, there
+or in the YAML editor, stops at a review step (diff, preview, lint) before
+it is saved. If the user prefers to make the edits themselves, point them
+there; what they save is what `workflow preview` then shows you.
 
 Treat every lint WARNING as design feedback, not noise — each one encodes a
 rule from this interview (missing description, an input no check uses, a
@@ -283,6 +309,10 @@ they do.
 - A colleague's workflow edits only under their user id — fork under the
   user's own name instead (`created_by` is stamped automatically).
 - Renames are forks, never in-place edits.
+- Deleting a workflow is the user's action (`grayson workflow delete <name>`,
+  or the workflow page's danger zone): only its author can, never a core
+  template, and never while sessions are still open on it. Never delete one
+  yourself — say which workflow is obsolete and why, and let them decide.
 """
 
 HARNESSES = {"cursor", "claude-code", "codex", "copilot"}

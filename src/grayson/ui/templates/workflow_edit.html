@@ -1,18 +1,53 @@
 {% extends "base.html" %}
 {% block title %}grayson — edit {{ name }}{% endblock %}
+{% block head %}
+<style>
+.editcols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 14px;
+  align-items: start; }
+@media (max-width: 900px) { .editcols { grid-template-columns: 1fr; } }
+.ref dl { margin: 0; }
+.ref dt { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--ink-2);
+  margin-top: 8px; }
+.ref dd { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+</style>
+{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
   <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
   <span>edit</span></nav>
 
-<h1>Edit {{ name }} {{ help("workflow_yaml") }}</h1>
-
-<form method="post" action="/workflows/{{ name }}/edit?t={{ token }}" style="margin-top: 14px;">
-  <textarea name="yaml" rows="26" spellcheck="false"
-    style="font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.6;">{{ text }}</textarea>
-  <div class="row" style="margin-top: 10px;">
-    <button class="btn" type="submit">Save to library</button>
-    <a class="btn ghost" href="/workflows/{{ name }}?t={{ token }}">Cancel</a>
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow"><h1>Edit {{ name }} as YAML {{ help("workflow_yaml") }}</h1></div>
+    <div class="lede">The whole file at once. For one checkpoint, input or findings field at a time,
+      use the forms on <a href="/workflows/{{ name }}?t={{ token }}">the workflow page</a> — either
+      way you review the exact change before it is saved.</div>
   </div>
-</form>
+</div>
+
+<div class="editcols mt-3">
+  <form method="post" action="/workflows/{{ name }}/edit?t={{ token }}">
+    <textarea name="yaml" rows="30" spellcheck="false"
+      style="font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.6;">{{ text }}</textarea>
+    <div class="row" style="margin-top: 10px;">
+      <button class="btn" type="submit" name="action" value="review">Review changes…</button>
+      <a class="btn ghost" href="/workflows/{{ name }}?t={{ token }}">Cancel</a>
+      <span class="muted small">Validates, then shows the diff and preview for confirmation.</span>
+    </div>
+  </form>
+  <div class="card ref">
+    <div class="overline">Fields</div>
+    <dl>
+      <dt>tags</dt><dd>free labels the catalog filters by: <span class="mono">[orders, finance]</span></dd>
+      <dt>setup_inputs[].adds_scope</dt><dd>tables named in the answer join the session's readable scope</dd>
+      <dt>required_checks[] / suggested_checks[]</dt><dd><span class="mono">key, title, description, depends_on, uses_inputs, charts</span></dd>
+      <dt>charts[]</dt><dd><span class="mono">kinds: [bar, line]</span> (bar, line, scatter, histogram, correlation; empty = any) and a <span class="mono">description</span> of what the picture should show</dd>
+      <dt>findings_schema</dt><dd>one of the built-in schemas — the catalog page lists their fields</dd>
+      <dt>findings_fields[]</dt><dd><span class="mono">key, description, required, choices</span> — this workflow's own additions under <span class="mono">extra</span></dd>
+      <dt>suggested_guard_profile / suggested_strict_scope</dt><dd>session defaults this workflow suggests; settings and flags outrank them</dd>
+    </dl>
+    <div class="faint small" style="margin-top: 10px;">Renames are forks, not edits. Fields grayson
+      does not know are kept on save.</div>
+  </div>
+</div>
 {% endblock %}

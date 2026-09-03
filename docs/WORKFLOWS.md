@@ -125,6 +125,43 @@ Each workflow validates claims against a closed schema — six ship:
 sample size and frame while an unreachable-category defect has no sample at
 all.
 
+The contract is published, not discovered one rejection at a time.
+`grayson workflow schemas` unpacks every built-in schema; `grayson workflow
+show <name>` (and the reply to `session start`; MCP: `workflow_show`,
+`session_start`) carries a workflow's effective schema as
+`findings_schema_spec`: the base fields with the rule each is held to, the
+`extra` fields required, the discriminator and its branches, the enforced
+calibration rules, and an example payload shaped to pass. The console shows
+the same on every workflow page, and the catalog lists the schemas side by
+side with the workflows that use them.
+
+### A workflow's own fields
+
+The built-in schemas are fixed with the release. A workflow extends the one
+it names with `findings_fields` — the structure its team's findings need
+that the schema does not demand:
+
+```yaml
+findings_schema: standard_v1
+findings_fields:
+  - key: owner_team
+    description: Which team owns the fix.
+    choices: [data-platform, finance-eng]
+  - key: ticket
+    description: The tracker id, once one exists.
+    required: false
+```
+
+`required` (default true) makes the gate refuse a finding without the field;
+`choices` closes the value set, so a verdict cannot be hedged into prose. A
+field named like one the schema already requires — `resolution` under
+`bug_hunter_v1`, say — tightens that field (its description and choices)
+instead of adding a second. Keys are the workflow's own: a base field every
+finding carries (`title`, `severity`, `evidence`, …) is refused. The
+effective schema is the built-in plus these, in that order, and it is what
+the engine validates against, what `findings_schema_spec` describes, and
+what the preview shows at sign-off.
+
 Severity has a published scale (`grayson finding rubric`) so findings don't
 all drift to "high". grayson never judges whether a severity is right — that
 is what accept/reject is for — but the top rungs cost the specificity a real
@@ -151,7 +188,8 @@ Show the preview, not raw YAML.
 
 `grayson harness init` installs a **workflow-author skill** for the agent: an
 interview (purpose, fork-or-fresh, inputs wired to checks, the "meaningless
-without" test for required checks, breadth as suggested, schema) followed by
+without" test for required checks, breadth as suggested, required charts,
+schema and the workflow's own findings fields, tags) followed by
 the draft → lint → preview → sign-off → push loop. One canonical SKILL.md,
 written to each harness's skills directory (`.claude/skills/`,
 `.cursor/skills/` for Cursor ≥2.1, `.github/skills/` for VS Code Copilot;
@@ -163,6 +201,16 @@ Editing is ownership-aware, enforced server-side: workflows you created edit
 in place; a collaborator's workflow — or a core template — forks under your
 id instead. A legacy file with no author is editable by anyone; the first
 save stamps the editor's id. Renames are forks, never in-place edits.
+Deleting follows the same rule (`grayson workflow delete <name>`, or the
+workflow page's danger zone): only the author, never a core template, and
+never while a session is still open on it — open sessions resolve their
+checkpoints and schema from the file on every call. The library's git
+history keeps the file; `library push` propagates the removal. A file that
+no longer parses has no author to protect and can be removed by anyone,
+which is how a broken library file gets cleaned up.
+
+`tags: [orders, finance]` on a workflow are free labels; the console's
+catalog filters by them, and nothing else reads them.
 
 ## Lint
 
@@ -171,12 +219,14 @@ grayson workflow lint    # non-zero exit on errors; CI-friendly
 ```
 
 Errors: YAML that does not parse or validate (a required chart of an unknown
-kind is one — a session could never satisfy it), core-name shadowing,
+kind is one — a session could never satisfy it; so is a findings field
+named like a base field, or two with the same key), core-name shadowing,
 duplicate workflow names or checkpoint keys, unknown findings schemas.
 Warnings: missing descriptions (agents pick workflows by description), no
 checkpoints, file/name mismatches, `depends_on` naming an undefined check,
 `uses_inputs` naming a missing input, a required input no checkpoint reads,
-a required chart that does not say what it should show.
+a required chart that does not say what it should show, a findings field
+with no description.
 
 A file that fails to load is reported everywhere workflows are listed — CLI,
 MCP (`workflow_list.library_problems`), red-badged in the console — never
@@ -190,11 +240,37 @@ the core templates in the test suite.
   <img src="img/workflows_light.png" alt="The Workflows tab: a gallery of core and team workflows with a create-or-fork card">
 </picture>
 
-The console's Workflows tab is the browsable catalog: core and team workflows
-(lint failures red, in place) and a create-or-fork card. Each workflow's page
-draws the session flow — evidence gates and human-approval points marked —
-with checkpoints, setup inputs, and schema fields unpacked, plus usage and
-provenance. `/workflows/{name}/yaml` exports any definition.
+The console's Workflows tab is the browsable catalog, built to stay usable
+as the library grows: one filterable list (text search over name,
+description, schema and tags; sort by name, usage, recency or size; filter
+chips for core, team, mine, forks, chart requirements, own findings fields,
+open sessions, lint failures, and every user tag in use), with lint failures
+shown red in place — removable from there — a create-or-fork section, and
+the built-in findings schemas unpacked beside the workflows that use them.
+
+Each workflow's page opens with a count strip (inputs, gates, suggested
+checks, chart requirements, extra finding fields, sessions) and the session
+flow drawn with its evidence gates and human-approval points. Checkpoints
+are a filterable list of their own, each fold carrying its gating order,
+the inputs it works from and the charts it requires; setup inputs say which
+checkpoints read them (a required input nobody reads is flagged); the
+findings schema is unpacked in full — base fields and their rules, the
+`extra` fields required with their source, discriminator branches, enforced
+calibration, and an example payload. Library workflows show lint's notes.
+`/workflows/{name}/yaml` shows the definition in the console, with a copy
+button and a download (`?raw=1`).
+
+**Editing** is element by element, on the workflow's own page, for its
+author: the header (title, description, tags, guard and scope defaults,
+schema), each setup input, each checkpoint — title, intent, prerequisites,
+inputs, required charts as `kinds: what it should show` lines — and each
+findings field, plus add, reorder, move between required and suggested, and
+remove. The whole file is also editable as YAML. Either way, every change
+stops at a **review step** first: the exact diff a save would write, the
+template as `workflow preview` renders it, and lint's warnings; nothing is
+written until it is confirmed, and confirming writes exactly what was
+reviewed. A save rewrites the file in grayson's canonical layout, so a
+hand-edited file's comments are normalised on its first save.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/workflow_detail_dark.png">

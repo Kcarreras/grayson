@@ -586,3 +586,35 @@ def test_session_delete_is_a_user_action(workspace, fake_snow_env, sid):
     err = invoke_err("session", "delete", sid, "--yes")["error"]
     assert "deleting a session" in err and "interactive terminal" in err
     assert invoke("session", "status", sid)["id"] == sid  # still there
+
+
+def test_workflow_show_unpacks_the_findings_schema(workspace):
+    show = invoke("workflow", "show", "bug-hunter")
+    spec = show["findings_schema_spec"]
+    assert spec["name"] == "bug_hunter_v1"
+    assert [e["key"] for e in spec["required_extra"]] == [
+        "resolution",
+        "blast_radius",
+        "alternatives_tested",
+    ]
+    assert spec["discriminator"] == "resolution"
+    assert "extra" in spec["example"]
+    schemas = invoke("workflow", "schemas")
+    assert set(schemas) >= {"standard_v1", "bug_hunter_v1", "parity_v1"}
+    assert schemas["standard_v1"]["required_extra"] == []
+
+
+def test_workflow_delete(workspace):
+    invoke("user", "set", "kcg")
+    invoke("workflow", "new", "mine")
+    out = invoke("workflow", "delete", "mine", "--yes")
+    assert out["deleted"].endswith("mine.yaml")
+    assert not (workspace.workflows_dir / "mine.yaml").exists()
+    result = runner.invoke(app, ["workflow", "delete", "bug-hunter", "--yes"])
+    assert result.exit_code == 1 and "cannot be deleted" in result.output + (result.stderr or "")
+    (workspace.workflows_dir / "theirs.yaml").write_text(
+        "name: theirs\ntitle: T\ncreated_by: mkoval2\n", encoding="utf-8"
+    )
+    result = runner.invoke(app, ["workflow", "delete", "theirs", "--yes"])
+    assert result.exit_code == 1 and "only its author" in result.output + (result.stderr or "")
+    assert (workspace.workflows_dir / "theirs.yaml").exists()

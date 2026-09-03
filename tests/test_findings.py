@@ -287,3 +287,68 @@ def test_rule_defect_needs_no_sampling_design():
 def test_unknown_rule_finding_kind_rejected():
     with pytest.raises(ValueError, match="finding_kind must be one of"):
         validate_finding(base(extra={"finding_kind": "vibes"}), "rule_qa_v1")
+
+
+# -- a workflow's own fields on top of a schema -------------------------------
+
+
+def _fields(*specs):
+    return [dict(spec) for spec in specs]
+
+
+def test_workflow_fields_are_required():
+    fields = _fields({"key": "owner_team", "description": "who fixes it"})
+    with pytest.raises(ValueError, match="owner_team \\(who fixes it\\)"):
+        validate_finding(base(), "standard_v1", fields)
+    f = validate_finding(base(extra={"owner_team": "data"}), "standard_v1", fields)
+    assert f.extra["owner_team"] == "data"
+
+
+def test_workflow_field_choices_are_closed():
+    fields = _fields({"key": "verdict", "choices": ["ship", "hold"]})
+    with pytest.raises(ValueError, match="verdict must be one of"):
+        validate_finding(base(extra={"verdict": "maybe"}), "standard_v1", fields)
+    assert validate_finding(base(extra={"verdict": "hold"}), "standard_v1", fields)
+
+
+def test_optional_workflow_field_is_documented_not_gated():
+    fields = _fields({"key": "ticket", "required": False, "choices": ["a", "b"]})
+    assert validate_finding(base(), "standard_v1", fields)
+    with pytest.raises(ValueError, match="ticket must be one of"):
+        validate_finding(base(extra={"ticket": "zzz"}), "standard_v1", fields)
+
+
+def test_workflow_field_tightens_a_schema_field():
+    from grayson.findings.schemas import effective_extra
+
+    fields = _fields({"key": "resolution", "choices": ["root_caused", "inconclusive"]})
+    [res, *_] = effective_extra("bug_hunter_v1", fields)
+    assert res["key"] == "resolution" and res["source"] == "schema+workflow"
+    assert res["required"] is True and res["choices"] == ["root_caused", "inconclusive"]
+    assert len(effective_extra("bug_hunter_v1", fields)) == len(effective_extra("bug_hunter_v1"))
+    with pytest.raises(ValueError, match="resolution must be one of"):
+        validate_finding(base(extra={"resolution": "fixed"}), "bug_hunter_v1", fields)
+
+
+def test_describe_schema_unpacks_the_contract():
+    from grayson.findings.schemas import BASE_FIELDS, describe_schema
+
+    d = describe_schema("bug_hunter_v1", _fields({"key": "owner_team", "choices": ["data"]}))
+    assert d["known"] is True
+    assert [f["key"] for f in d["base_fields"]] == [f["key"] for f in BASE_FIELDS]
+    assert [e["key"] for e in d["required_extra"]] == [
+        "resolution",
+        "blast_radius",
+        "alternatives_tested",
+        "owner_team",
+    ]
+    assert d["discriminator"] == "resolution"
+    assert set(d["conditional_extra"]) == {"root_caused", "inconclusive"}
+    assert d["example"]["extra"]["resolution"] == "root_caused"
+    assert d["example"]["extra"]["owner_team"] == "data"  # the first choice
+    assert "root_cause" in d["example"]["extra"]
+    assert len(d["enforced"]) == 2
+    # the example is shaped to pass
+    example = dict(d["example"], extra=dict(d["example"]["extra"]))
+    validate_finding(example, "bug_hunter_v1", _fields({"key": "owner_team", "choices": ["data"]}))
+    assert describe_schema("nope_v9")["known"] is False

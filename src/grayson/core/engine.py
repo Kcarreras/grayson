@@ -227,7 +227,7 @@ def record_finding(
 ) -> dict:
     tpl = workflow_for(session, overrides_dir)
     try:
-        finding = validate_finding(payload, tpl.findings_schema)
+        finding = validate_finding(payload, tpl.findings_schema, tpl.findings_fields)
     except (ValidationError, ValueError) as e:
         raise EnforcementError(f"finding failed schema '{tpl.findings_schema}': {e}") from e
     _validate_evidence(session, finding.evidence)
