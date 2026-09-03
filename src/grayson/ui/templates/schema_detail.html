@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block title %}grayson — {{ name }}{% endblock %}
+{% block head %}
+<style>
+.sccols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 860px) { .sccols { grid-template-columns: 1fr; } }
+.elform { display: grid; gap: 8px; margin-top: 8px; }
+.elform label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.elform label > input[type=text], .elform label > textarea, .elform label > select { width: 100%; }
+.elform .two { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+.elform .hint { font-size: 11.5px; color: var(--faint); font-weight: 400; }
+.elform .check { flex-direction: row; align-items: center; gap: 6px; font-weight: 500; }
+.elform .check input { width: auto; }
+.elform .submit { display: flex; gap: 8px; align-items: center; }
+.eltools { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.eltools form { display: inline; }
+.eltools .btn { padding: 2px 8px; font-size: 11.5px; }
+details.editfold > summary { cursor: pointer; color: var(--act); font-size: 12.5px; list-style: none; user-select: none; font-weight: 600; }
+details.editfold > summary::-webkit-details-marker { display: none; }
+details.editfold[open] > summary { color: var(--muted); }
+.fieldtable { width: 100%; }
+.fieldtable td { font-size: 12.5px; }
+.fieldtable .k { font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+.fieldtable .marks { display: flex; gap: 4px; flex-wrap: wrap; }
+pre.example { background: var(--panel2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  padding: 10px 12px; font-size: 12px; line-height: 1.5; overflow-x: auto; margin: 0; }
+.danger-zone { border-color: var(--bad); }
+</style>
+{% endblock %}
+
+{% macro op_fields(kind, action, key="", branch="") -%}
+<input type="hidden" name="kind" value="{{ kind }}">
+<input type="hidden" name="action" value="{{ action }}">
+{% if key %}<input type="hidden" name="key" value="{{ key }}">{% endif %}
+{% if branch %}<input type="hidden" name="branch" value="{{ branch }}">{% endif %}
+{%- endmacro %}
+
+{% macro field_form(f, orig="", branch="") -%}
+<form class="elform" method="post" action="/schemas/{{ name }}/element?t={{ token }}">
+  {{ op_fields("field", "upsert", "", branch) }}
+  <input type="hidden" name="orig_key" value="{{ orig }}">
+  <div class="two">
+    <label>key <input type="text" name="key" value="{{ f.key if f else '' }}" pattern="[a-z][a-z0-9_]*" required placeholder="owner_team"></label>
+    <label>choices — closed list, optional <input type="text" name="choices" value="{{ f.choices | join(' | ') if f else '' }}" placeholder="fixed | deferred">
+      <span class="hint">separated by |; the value must then be one of them</span></label>
+  </div>
+  <label>description — what belongs in this field
+    <textarea name="description" rows="2">{{ f.description.strip() if f else '' }}</textarea></label>
+  <label class="check"><input type="checkbox" name="required" {{ "checked" if (f.required if f else true) }}> required — a finding without it is refused</label>
+  <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
+</form>
+{%- endmacro %}
+
+{% macro field_tools(key, branch="", first=false, last=false) -%}
+<div class="eltools">
+  <form method="post" action="/schemas/{{ name }}/element?t={{ token }}">
+    {{ op_fields("field", "move", key, branch) }}<input type="hidden" name="direction" value="up">
+    <button class="btn ghost sm" type="submit" title="Move up" {{ "disabled" if first }}>↑</button></form>
+  <form method="post" action="/schemas/{{ name }}/element?t={{ token }}">
+    {{ op_fields("field", "move", key, branch) }}<input type="hidden" name="direction" value="down">
+    <button class="btn ghost sm" type="submit" title="Move down" {{ "disabled" if last }}>↓</button></form>
+  <span class="grow"></span>
+  <form method="post" action="/schemas/{{ name }}/element?t={{ token }}">
+    {{ op_fields("field", "delete", key, branch) }}
+    <button class="btn danger sm" type="submit">Remove…</button></form>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
+  <a href="/schemas?t={{ token }}">Schemas</a><span class="sep">/</span>
+  <span class="mono">{{ name }}</span></nav>
+
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow">
+      <h1>{{ (schema.title if schema and schema.title else name) }}</h1>
+      {% if is_core %}<span class="badge plain">built in</span>
+      {% elif mine %}<span class="badge todo">mine</span>
+      {% else %}<span class="badge act">team</span>{% endif %}
+      {% if schema %}<span class="badge plain" title="The built-in this schema extends">extends {{ schema.base }}</span>{% endif %}
+    </div>
+    {% if schema and schema.description %}<div class="lede">{{ schema.description.strip() }}</div>
+    {% elif is_core %}<div class="lede">Ships with grayson; extend it under a new name to add fields or branches.</div>{% endif %}
+  </div>
+  <span class="actions">
+    {% if not is_core %}<a class="btn ghost" href="/schemas/{{ name }}/yaml?t={{ token }}">YAML</a>{% endif %}
+    {% if editable %}<a class="btn secondary" href="/schemas/{{ name }}/edit?t={{ token }}">Edit YAML</a>{% endif %}
+    <form class="inline" method="post" action="/schemas/{{ name }}/fork?t={{ token }}">
+      <span class="row" style="gap: 6px;">
+        <input type="text" name="new_name" value="{{ fork_name }}" pattern="[a-z][a-z0-9_]*" required style="width: 220px;">
+        <button class="btn secondary" type="submit">{{ "Extend" if is_core else "Fork" }}</button>
+      </span>
+    </form>
+  </span>
+</div>
+
+<div class="tiles">
+  <a class="tile" href="#fields"><div class="num">{{ spec.required_extra | length }}</div><div class="lbl">extra field{{ "s" if spec.required_extra | length != 1 }}</div></a>
+  <a class="tile" href="#fields"><div class="num">{{ spec.required_extra | selectattr("required") | list | length }}</div><div class="lbl">required</div></a>
+  <a class="tile" href="#branches"><div class="num">{{ spec.conditional_extra | length }}</div><div class="lbl">branch{{ "es" if spec.conditional_extra | length != 1 }}</div></a>
+  <a class="tile" href="#used"><div class="num {{ 'ok' if used_by }}">{{ used_by | length }}</div><div class="lbl">workflow{{ "s" if used_by | length != 1 }} use it</div></a>
+</div>
+
+{% if warnings %}
+<div class="card attn mt-3">
+  <b>Lint has {{ warnings | length }} note{{ "s" if warnings | length != 1 }}</b>
+  <ul class="small" style="margin: 6px 0 0; padding-left: 18px;">{% for w in warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<div class="sccols">
+  <div>
+    <h2 id="fields">Fields {{ help("findings_fields") }}</h2>
+    <div class="card">
+      <table class="fieldtable">
+        <thead><tr><th>field</th><th>holds</th><th></th></tr></thead>
+        <tbody>
+        {% for e in spec.required_extra %}
+        <tr id="field-{{ e.key }}">
+          <td class="k">{{ e.key }}</td>
+          <td>{{ e.description }}{% if e.choices %}<div class="row" style="gap: 4px; margin-top: 3px;">{% for ch in e.choices %}<span class="chip">{{ ch }}</span>{% endfor %}</div>{% endif %}</td>
+          <td><span class="marks">
+            {% if e.required %}<span class="badge attn" title="A finding without it is refused">required</span>{% else %}<span class="badge plain">optional</span>{% endif %}
+            {% if e.source == "schema" %}<span class="badge plain" title="From the built-in {{ spec.base }}">built in</span>
+            {% elif e.source == "schema+library" %}<span class="badge act" title="A built-in field this schema tightens">built in, tightened here</span>
+            {% else %}<span class="badge act">this schema</span>{% endif %}
+            {% if e.key == spec.discriminator %}<span class="badge todo" title="Its value selects a branch">discriminator</span>{% endif %}
+          </span></td>
+        </tr>
+        {% if editable and e.source != "schema" %}
+        {% set own = (schema.fields | selectattr("key", "equalto", e.key) | list)[0] %}
+        {% set idx = schema.fields.index(own) %}
+        <tr><td colspan="3" style="padding-top: 0;">
+          <details class="editfold"><summary>Edit this field</summary>{{ field_form(own, own.key) }}</details>
+          {{ field_tools(own.key, "", idx == 0, idx == schema.fields | length - 1) }}
+        </td></tr>
+        {% endif %}
+        {% else %}
+        <tr><td colspan="3" class="faint">No fields beyond the base — findings need title, severity, confidence, summary and evidence only.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if editable %}
+      <details class="editfold" style="margin-top: 12px;" data-fold="add-field"><summary>+ Add a field</summary>{{ field_form(none) }}</details>
+      {% endif %}
+      <details class="inlinefold" style="margin-top: 12px;" data-fold="base-fields">
+        <summary>Base fields</summary>
+        <table class="fieldtable" style="margin-top: 6px;"><tbody>
+          {% for b in spec.base_fields %}
+          <tr><td class="k">{{ b.key }}{% if b.required %} <span class="attn-text">*</span>{% endif %}</td>
+            <td>{{ b.description }}<div class="faint" style="font-size: 11.5px;">{{ b.rule }}</div></td></tr>
+          {% endfor %}
+        </tbody></table>
+        <div class="overline" style="margin-top: 10px;">Enforced calibration</div>
+        <ul class="small muted" style="margin: 4px 0 0; padding-left: 18px;">{% for rule in spec.enforced %}<li>{{ rule }}</li>{% endfor %}</ul>
+      </details>
+      <details class="inlinefold" style="margin-top: 8px;" data-fold="example">
+        <summary>Example payload</summary>
+        <pre class="example mt-2">{{ spec.example | tojson(indent=2) }}</pre>
+      </details>
+    </div>
+
+    <h2 id="branches">Branches {{ help("schema_branches") }}</h2>
+    <div class="card">
+      {% if spec.discriminator %}
+      <div class="row" style="gap: 6px;">
+        <span class="faint small">on</span><span class="chip mono">{{ spec.discriminator }}</span>
+        {% if schema and schema.discriminator %}<span class="badge act">this schema's</span>{% else %}<span class="badge plain">built in to {{ spec.base }}</span>{% endif %}
+        <span class="muted small" style="margin-left: 6px;">{{ spec.discriminator_hint }}</span>
+      </div>
+      {% for value, fields in spec.conditional_extra.items() %}
+      <div style="margin-top: 12px;">
+        <div class="overline"><span class="mono">{{ spec.discriminator }} = {{ value }}</span> needs</div>
+        {% if fields %}
+        <table class="fieldtable" style="margin-top: 4px;"><tbody>
+          {% for f in fields %}
+          <tr><td class="k">{{ f.key }}</td>
+            <td>{{ f.description }}{% if f.choices %} <span class="faint">({{ f.choices | join(" | ") }})</span>{% endif %}</td>
+            <td>{% if not f.required %}<span class="badge plain">optional</span>{% endif %}</td></tr>
+          {% if editable and schema and schema.discriminator %}
+          {% set own = (schema.branches.get(value, []) | selectattr("key", "equalto", f.key) | list)[0] %}
+          {% set idx = schema.branches[value].index(own) %}
+          <tr><td colspan="3" style="padding-top: 0;">
+            <details class="editfold"><summary>Edit this field</summary>{{ field_form(own, own.key, value) }}</details>
+            {{ field_tools(own.key, value, idx == 0, idx == schema.branches[value] | length - 1) }}
+          </td></tr>
+          {% endif %}
+          {% endfor %}
+        </tbody></table>
+        {% else %}<div class="faint small" style="margin-top: 4px;">No further fields.</div>{% endif %}
+        {% if editable and schema and schema.discriminator %}
+        <details class="editfold" style="margin-top: 6px;"><summary>+ Add a field to this branch</summary>{{ field_form(none, "", value) }}</details>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% else %}
+      <div class="muted small">None — every finding under this schema needs the same fields.</div>
+      {% endif %}
+      {% if editable and not (spec.discriminator and not schema.discriminator) %}
+      <details class="editfold" style="margin-top: 12px;" data-fold="discriminator">
+        <summary>{{ "Change or clear the discriminator" if schema.discriminator else "Set a discriminator" }}</summary>
+        <form class="elform" method="post" action="/schemas/{{ name }}/element?t={{ token }}">
+          <input type="hidden" name="kind" value="discriminator">
+          <label>field whose value selects a branch
+            <select name="key">
+              <option value="" {{ "selected" if not schema.discriminator }}>none — no branches</option>
+              {% for f in schema.fields if f.choices and f.required %}<option value="{{ f.key }}" {{ "selected" if f.key == schema.discriminator }}>{{ f.key }} ({{ f.choices | join(" | ") }})</option>{% endfor %}
+            </select>
+            <span class="hint">only required fields with choices qualify; changing it clears the branches</span></label>
+          <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
+        </form>
+      </details>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    {% if editable %}
+    <h2>Header</h2>
+    <div class="card">
+      <details class="editfold" data-fold="meta"><summary>Edit title, description, base</summary>
+        <form class="elform" method="post" action="/schemas/{{ name }}/element?t={{ token }}">
+          <input type="hidden" name="kind" value="meta">
+          <label>title <input type="text" name="title" value="{{ schema.title }}"></label>
+          <label>description — workflow authors pick a schema by it
+            <textarea name="description" rows="4">{{ schema.description.strip() }}</textarea></label>
+          <label>extends <select name="base">
+            {% for b in bases %}<option value="{{ b }}" {{ "selected" if b == schema.base }}>{{ b }}</option>{% endfor %}
+          </select><span class="hint">the built-in whose fields and rules this schema keeps</span></label>
+          <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
+        </form>
+      </details>
+    </div>
+    {% endif %}
+
+    <h2 id="used">Used by</h2>
+    <div class="card">
+      {% for w in used_by %}<a class="chip" href="/workflows/{{ w }}?t={{ token }}">{{ w }}</a>
+      {% else %}<span class="muted small">No workflow names this schema yet — set it as a workflow's findings schema from its header.</span>{% endfor %}
+    </div>
+
+    <h2>Provenance</h2>
+    {% if is_core %}
+    <div class="card attn">
+      <b style="display: inline-flex; align-items: center; gap: 7px;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--attn)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>Built in — ships with grayson</b>
+      <div class="muted small" style="margin-top: 5px;">Read-only; extend it to customize.</div>
+    </div>
+    {% else %}
+    <div class="card">
+      <dl class="props">
+        <dt>Created by</dt><dd>{% if schema.created_by %}<span class="mono">{{ schema.created_by }}</span>{% else %}<span class="faint">unrecorded</span>{% endif %}</dd>
+        {% if schema.forked_from %}<dt>Forked from</dt><dd><a class="mono" href="/schemas/{{ schema.forked_from }}?t={{ token }}">{{ schema.forked_from }}</a></dd>{% endif %}
+        <dt>Extends</dt><dd><a class="mono" href="/schemas/{{ schema.base }}?t={{ token }}">{{ schema.base }}</a></dd>
+        <dt>File</dt><dd class="mono small">findings_schemas/{{ name }}.yaml</dd>
+      </dl>
+      {% if not editable %}<div class="muted small mt-1">A teammate's — fork to edit.</div>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if editable %}
+    <h2>Danger zone</h2>
+    <div class="card danger-zone">
+      <details class="editfold" data-fold="delete"><summary>Delete this schema</summary>
+        <div class="muted small mt-2">Removes <span class="mono">findings_schemas/{{ name }}.yaml</span>
+          from the library{% if auto_push %} and pushes{% endif %}.{% if used_by %}
+          <b class="attn-text">{{ used_by | length }} workflow{{ "s" if used_by | length != 1 }} use it</b> — refused until they point elsewhere.{% endif %}
+          {{ help("schema_delete") }}</div>
+        <form class="row mt-2" method="post" action="/schemas/{{ name }}/delete?t={{ token }}"
+          onsubmit="return confirm('Delete findings schema {{ name }} from the library?');">
+          <input type="text" name="confirm_name" placeholder="type {{ name }} to confirm" style="width: auto; flex: 1 1 200px;" required autocomplete="off">
+          <button class="btn danger sm" type="submit">Delete schema</button>
+        </form>
+      </details>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

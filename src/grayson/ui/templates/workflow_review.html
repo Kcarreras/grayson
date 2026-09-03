@@ -19,14 +19,16 @@ pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
 {% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
-  <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
+  {% if base_path == "/schemas" %}<a href="/schemas?t={{ token }}">Schemas</a><span class="sep">/</span>{% endif %}
+  <a href="{{ base_path }}/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
   <span>confirm</span></nav>
 
 <div class="pagehead">
   <div class="titles">
     <div class="titlerow"><h1>Confirm: {{ what }}</h1>
       <span class="badge attn">not saved yet</span></div>
-    <div class="lede">Nothing is written to <span class="mono">workflows/{{ name }}.yaml</span> until
+    <div class="lede">Nothing is written to <span class="mono">{{ file_dir }}/{{ name }}.yaml</span>{% if extra_files %}
+      or {% for path, _ in extra_files %}<span class="mono">{{ path }}</span>{% endfor %}{% endif %} until
       you confirm{% if auto_push %}; saving also pushes to the team library{% endif %}.</div>
   </div>
 </div>
@@ -46,16 +48,17 @@ pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
 </div>
 {% endif %}
 
-<form method="post" action="/workflows/{{ name }}/edit?t={{ token }}" class="card mt-3"
+<form method="post" action="{{ confirm_path }}?t={{ token }}" class="card mt-3"
   style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
   <input type="hidden" name="yaml" value="{{ text }}">
+  {% for k, v in hidden.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% if not unchanged %}
   <button class="btn confirm" type="submit" name="action" value="confirm">Save to library</button>
   {% endif %}
   {% if origin == "yaml" %}
   <button class="btn ghost" type="submit" name="action" value="back">Back to the editor</button>
   {% endif %}
-  <a class="btn ghost" href="/workflows/{{ name }}?t={{ token }}">Cancel</a>
+  <a class="btn ghost" href="{{ base_path }}/{{ name }}?t={{ token }}">Cancel</a>
   <span class="muted small">{{ help("workflow_confirm") }}</span>
 </form>
 
@@ -69,6 +72,10 @@ pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
     {% else %}
     <div class="card empty">No line differs.</div>
     {% endif %}
+    {% for path, body in extra_files %}
+    <h2 class="mt-3">New file <span class="mono" style="font-weight: 500; text-transform: none; letter-spacing: 0;">{{ path }}</span></h2>
+    <pre class="preview">{{ body }}</pre>
+    {% endfor %}
   </div>
   <div>
     <h2>As it will read {{ help("workflow_preview") }}</h2>

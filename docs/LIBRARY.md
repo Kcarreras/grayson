@@ -14,7 +14,8 @@ grayson library link git@github.com:your-org/qa-library.git --auto-push
 ```
 
 This clones the repo, scaffolds the structure (`knowledge/`, `views/`,
-`workflows/`, `checks/`, `records/`, `reports/`), pushes the first commit,
+`workflows/`, `findings_schemas/`, `checks/`, `records/`, `reports/`),
+pushes the first commit,
 and points the workspace at the clone. Collaborators run the same command.
 
 - `--auto-push` commits and pushes every library write; otherwise
@@ -35,6 +36,7 @@ and points the workspace at the clone. Collaborators run the same command.
 | `knowledge/` | One document per table (`<db>/<schema>/<table>.md`): descriptors, dated definition observations, facts with provenance; `glossary.md` | agents propose, humans confirm |
 | `views/` | The QA view library: `registry.yaml` (name, purpose, source tables, base files, DDL path) and `ddl/*.sql` | humans register the views agents proposed |
 | `workflows/` | Workflow templates: overrides of the built-ins and custom investigation types | humans, `grayson workflow fork` |
+| `findings_schemas/` | The team's own findings schemas: each extends a built-in with fields and, optionally, branches ([WORKFLOWS.md](WORKFLOWS.md#shared-schemas-in-the-library)) | humans, `grayson schema new`, `grayson workflow promote` |
 | `checks/` | External check results as JSON (Airflow, dbt, scheduled QA jobs) | automation |
 | `records/` | Published session output: accepted findings, verified fixes, and each closed session's `report.md` + `report.json` | sessions, at human-approved moments |
 | `reports/` | Report **profiles** (`*.yaml`) — how reports render. The reports themselves are in `records/` | humans |

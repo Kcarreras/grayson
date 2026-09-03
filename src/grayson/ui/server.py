@@ -397,17 +397,38 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
     _NO_USAGE = {"count": 0, "open": 0, "last": ""}
 
-    def _schema_catalog(workflows) -> list[dict]:
-        """Every built-in findings schema unpacked, with the workflows that use it."""
-        from grayson.findings.schemas import FINDINGS_SCHEMAS, describe_schema
+    def _schema_catalog() -> list[dict]:
+        """Every findings schema unpacked — built in and library — with the
+        workflows that use it and, for library ones, whose it is."""
+        from grayson.findings.authoring import can_edit_schema, workflows_using
+        from grayson.findings.library import core_schema_names, list_library_schemas
+        from grayson.findings.schemas import describe_schema
+        from grayson.identity import get_user_id
 
-        users: dict[str, list[str]] = {name: [] for name in FINDINGS_SCHEMAS}
-        for tpl in workflows:
-            users.setdefault(tpl.findings_schema, []).append(tpl.name)
-        return [
-            {**describe_schema(name), "used_by": users.get(name, [])}
-            for name in sorted(FINDINGS_SCHEMAS)
-        ]
+        user_id = get_user_id()
+        schemas_dir = workspace.findings_schemas_dir
+        rows = []
+        for name in sorted(core_schema_names()):
+            rows.append(
+                {
+                    **describe_schema(name, None, schemas_dir),
+                    "used_by": workflows_using(name, workspace.workflows_dir),
+                    "mine": False,
+                    "editable": False,
+                    "field_count": 0,
+                }
+            )
+        for sc in list_library_schemas(schemas_dir):
+            rows.append(
+                {
+                    **describe_schema(sc.name, None, schemas_dir),
+                    "used_by": workflows_using(sc.name, workspace.workflows_dir),
+                    "mine": bool(user_id) and sc.created_by == user_id,
+                    "editable": can_edit_schema(sc, user_id),
+                    "field_count": len(sc.fields),
+                }
+            )
+        return rows
 
     def _workflows_context(error: str | None = None) -> dict:
         from grayson.identity import get_user_id
@@ -453,7 +474,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "user_tags": user_tags,
             "tag_filters": [(f"tag-{t}", f"#{t}") for t in user_tags],
             "fold_open": len(rows) <= 8,
-            "schemas": _schema_catalog([r["tpl"] for r in rows]),
+            "schemas": _schema_catalog(),
             "fork_bases": sorted(r["tpl"].name for r in rows),
             "user_id": user_id,
             "auto_push": bool(workspace.config.library_auto_push),
@@ -474,7 +495,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(e.args[0] if e.args else e)) from e
 
     def _detail_context(tpl, error: str | None = None) -> dict:
-        from grayson.findings.schemas import FINDINGS_SCHEMAS, describe_schema
+        from grayson.findings.library import core_schema_names, known_schema_names
+        from grayson.findings.schemas import describe_schema
         from grayson.identity import get_user_id
         from grayson.workflows.authoring import can_edit, format_chart_lines
         from grayson.workflows.lint import lint_template
@@ -490,8 +512,12 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "editable": can_edit(tpl, user_id),
             "mine": bool(user_id) and tpl.created_by == user_id,
             "usage": _workflow_usage().get(tpl.name, _NO_USAGE),
-            "schema": describe_schema(tpl.findings_schema, tpl.findings_fields),
-            "schema_names": sorted(FINDINGS_SCHEMAS),
+            "schema": describe_schema(
+                tpl.findings_schema, tpl.findings_fields, workspace.findings_schemas_dir
+            ),
+            "schema_names": known_schema_names(workspace.findings_schemas_dir),
+            "can_promote": bool(tpl.findings_fields) and tpl.findings_schema in core_schema_names(),
+            "promote_name": f"{tpl.name.replace('-', '_')}_v1",
             "guard_profiles": sorted(workspace.config.guard_profiles),
             "warnings": [] if is_core else lint_template(tpl),
             "inputs_used": inputs_used,
@@ -542,7 +568,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "workflow_yaml.html",
             {
                 "nav": "workflows",
-                "tpl": tpl,
+                "noun": "workflow",
+                "base_path": "/workflows",
+                "name": tpl.name,
                 "text": text,
                 "is_core": name in core_names(),
                 "editable": can_edit(tpl, get_user_id()),
@@ -552,6 +580,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     def _workflow_edit_context(name: str, text: str, error: str | None = None) -> dict:
         return {
             "nav": "workflows",
+            "noun": "workflow",
+            "base_path": "/workflows",
             "name": name,
             "text": text,
             "error": error,
@@ -590,30 +620,69 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             _workflow_edit_context(name, path.read_text(encoding="utf-8")),
         )
 
-    def _review(request: Request, name: str, current, new_tpl, origin: str, what: str) -> Any:
-        """The confirmation step every edit passes through: what changes, the
-        template as it will read, and lint's opinion of it. Nothing is written
-        until the person confirms from here."""
-        from grayson.workflows.authoring import _dump, diff_yaml, render_preview
-        from grayson.workflows.lint import lint_template
+    def _review_page(
+        request: Request,
+        *,
+        base_path: str,
+        file_dir: str,
+        name: str,
+        before: str,
+        after: str,
+        preview: str,
+        warnings: list[str],
+        origin: str,
+        what: str,
+        extra_files: list[tuple[str, str]] | None = None,
+        confirm_path: str | None = None,
+        hidden: dict[str, str] | None = None,
+    ) -> Any:
+        """The confirmation step every library edit passes through: what
+        changes, the file as it will read, and lint's opinion of it. Nothing
+        is written until the person confirms from here."""
+        from grayson.util import unified_diff_text
 
-        before = _workflow_text(name, current)
-        after = _dump(new_tpl)
         return templates.TemplateResponse(
             request,
             "workflow_review.html",
             {
                 "nav": "workflows",
+                "base_path": base_path,
+                "file_dir": file_dir,
                 "name": name,
                 "text": after,
-                "diff": diff_yaml(before, after, name),
-                "unchanged": before == after,
-                "preview": render_preview(new_tpl),
-                "warnings": lint_template(new_tpl),
+                "diff": unified_diff_text(
+                    before,
+                    after,
+                    f"{file_dir}/{name}.yaml (library)",
+                    f"{file_dir}/{name}.yaml (after save)",
+                ),
+                "unchanged": before == after and not extra_files,
+                "preview": preview,
+                "warnings": warnings,
                 "origin": origin,
                 "what": what,
+                "extra_files": extra_files or [],
+                "confirm_path": confirm_path or f"{base_path}/{name}/edit",
+                "hidden": hidden or {},
                 "auto_push": bool(workspace.config.library_auto_push),
             },
+        )
+
+    def _review(request: Request, name: str, current, new_tpl, origin: str, what: str) -> Any:
+        from grayson.workflows.authoring import _dump, render_preview
+        from grayson.workflows.lint import lint_template
+
+        return _review_page(
+            request,
+            base_path="/workflows",
+            file_dir="workflows",
+            name=name,
+            before=_workflow_text(name, current),
+            after=_dump(new_tpl),
+            preview=render_preview(new_tpl, workspace.findings_schemas_dir),
+            warnings=lint_template(new_tpl),
+            origin=origin,
+            what=what,
         )
 
     @app.post("/workflows/{name}/edit")
@@ -671,7 +740,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             op["required"] = "required" in form
             op["adds_scope"] = "adds_scope" in form
         try:
-            new_tpl = apply_element_edit(tpl, op)
+            new_tpl = apply_element_edit(tpl, op, workspace.findings_schemas_dir)
         except WorkflowAuthoringError as e:
             return templates.TemplateResponse(
                 request,
@@ -777,6 +846,409 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             f"grayson workflows: new {new_name}" + (f" (fork of {fork_of})" if fork_of else ""),
         )
         return _redirect(f"/workflows/{new_name}")
+
+    @app.post("/workflows/{name}/promote")
+    async def workflow_promote(request: Request, name: str) -> Any:
+        """Lift a workflow's own findings fields into a shared library schema
+        and point the workflow at it — reviewed first like any edit: the
+        workflow's diff and the schema file that would be created."""
+        _check(request)
+        from grayson.findings.authoring import dump_schema, lint_schema, render_schema_preview
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+        from grayson.workflows.authoring import (
+            WorkflowAuthoringError,
+            _dump,
+            plan_promotion,
+            promote_fields,
+        )
+
+        tpl = _editable_or_403(name)
+        form = await request.form()
+        schema_name = str(form.get("schema_name", "")).strip()
+        title = str(form.get("title", "")).strip()
+        description = str(form.get("description", "")).strip()
+        action = str(form.get("action", "review"))
+        try:
+            if action == "confirm":
+                promote_fields(
+                    workspace.workflows_dir, name, schema_name, get_user_id(), title, description
+                )
+            else:
+                schema, repointed = plan_promotion(
+                    workspace.workflows_dir, name, schema_name, get_user_id(), title, description
+                )
+        except WorkflowAuthoringError as e:
+            return templates.TemplateResponse(
+                request,
+                "workflow_detail.html",
+                _detail_context(tpl, error=str(e)),
+                status_code=400,
+            )
+        if action == "confirm":
+            maybe_auto_push(workspace, f"grayson schemas: promote {name} fields -> {schema_name}")
+            return _redirect(f"/schemas/{schema_name}")
+        return _review_page(
+            request,
+            base_path="/workflows",
+            file_dir="workflows",
+            name=name,
+            before=_workflow_text(name, tpl),
+            after=_dump(repointed),
+            preview=render_schema_preview(schema, None, [name]),
+            warnings=lint_schema(schema),
+            origin="element",
+            what=f"promoting its findings fields to the shared schema '{schema_name}'",
+            extra_files=[(f"findings_schemas/{schema_name}.yaml", dump_schema(schema))],
+            confirm_path=f"/workflows/{name}/promote",
+            hidden={"schema_name": schema_name, "title": title, "description": description},
+        )
+
+    # -- findings schemas ---------------------------------------------------
+
+    def _schemas_context(error: str | None = None) -> dict:
+        from grayson.findings.library import list_library_schemas, schema_problems
+        from grayson.findings.schemas import FINDINGS_SCHEMAS
+        from grayson.identity import get_user_id
+
+        rows = _schema_catalog()
+        for r in rows:
+            tags = ["builtin" if not r["library"] else "library"]
+            if r["mine"]:
+                tags.append("mine")
+            if r["forked_from"]:
+                tags.append("fork")
+            if r["discriminator"]:
+                tags.append("branches")
+            if not r["used_by"]:
+                tags.append("unused")
+            r["tags"] = tags
+        return {
+            "nav": "workflows",
+            "rows": rows,
+            "problems": schema_problems(workspace.findings_schemas_dir),
+            "bases": sorted(FINDINGS_SCHEMAS),
+            "fork_bases": [sc.name for sc in list_library_schemas(workspace.findings_schemas_dir)],
+            "user_id": get_user_id(),
+            "auto_push": bool(workspace.config.library_auto_push),
+            "error": error,
+        }
+
+    @app.get("/schemas", response_class=HTMLResponse)
+    def schemas_page(request: Request) -> Any:
+        _check(request)
+        return templates.TemplateResponse(request, "schemas.html", _schemas_context())
+
+    def _schema_or_404(name: str):
+        """A library schema (model), or None for a built-in; 404 otherwise."""
+        from grayson.findings.library import SchemaNotFound, core_schema_names, get_library_schema
+
+        if name in core_schema_names():
+            return None
+        try:
+            return get_library_schema(name, workspace.findings_schemas_dir)
+        except SchemaNotFound as e:
+            raise HTTPException(status_code=404, detail=str(e.args[0] if e.args else e)) from e
+
+    def _schema_detail_context(name: str, error: str | None = None) -> dict:
+        from grayson.findings.authoring import can_edit_schema, lint_schema, workflows_using
+        from grayson.findings.library import core_schema_names
+        from grayson.findings.schemas import FINDINGS_SCHEMAS, describe_schema
+        from grayson.identity import get_user_id
+
+        schema = _schema_or_404(name)
+        user_id = get_user_id()
+        return {
+            "nav": "workflows",
+            "name": name,
+            "schema": schema,
+            "spec": describe_schema(name, None, workspace.findings_schemas_dir),
+            "is_core": name in core_schema_names(),
+            "editable": schema is not None and can_edit_schema(schema, user_id),
+            "mine": schema is not None and bool(user_id) and schema.created_by == user_id,
+            "used_by": workflows_using(name, workspace.workflows_dir),
+            "warnings": lint_schema(schema) if schema is not None else [],
+            "bases": sorted(FINDINGS_SCHEMAS),
+            "fork_name": f"{name}_{user_id}" if user_id else f"{name}_fork",
+            "user_id": user_id,
+            "auto_push": bool(workspace.config.library_auto_push),
+            "error": error,
+        }
+
+    @app.get("/schemas/{name}", response_class=HTMLResponse)
+    def schema_detail(request: Request, name: str) -> Any:
+        _check(request)
+        return templates.TemplateResponse(
+            request, "schema_detail.html", _schema_detail_context(name)
+        )
+
+    def _schema_text(name: str) -> str:
+        from grayson.findings.authoring import dump_schema
+
+        path = workspace.findings_schemas_dir / f"{name}.yaml"
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+        schema = _schema_or_404(name)
+        if schema is None:
+            raise HTTPException(status_code=404, detail="built-in schemas have no YAML file")
+        return dump_schema(schema)
+
+    @app.get("/schemas/{name}/yaml", response_class=HTMLResponse)
+    def schema_yaml(request: Request, name: str, raw: str = "") -> Any:
+        _check(request)
+        from grayson.findings.authoring import can_edit_schema
+        from grayson.identity import get_user_id
+
+        schema = _schema_or_404(name)
+        text = _schema_text(name)
+        if raw:
+            return Response(
+                text,
+                media_type="text/plain; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{name}.yaml"'},
+            )
+        return templates.TemplateResponse(
+            request,
+            "workflow_yaml.html",
+            {
+                "nav": "workflows",
+                "noun": "schema",
+                "base_path": "/schemas",
+                "name": name,
+                "text": text,
+                "is_core": False,
+                "editable": schema is not None and can_edit_schema(schema, get_user_id()),
+            },
+        )
+
+    def _schema_edit_context(name: str, text: str, error: str | None = None) -> dict:
+        return {
+            "nav": "workflows",
+            "noun": "schema",
+            "base_path": "/schemas",
+            "name": name,
+            "text": text,
+            "error": error,
+            "auto_push": bool(workspace.config.library_auto_push),
+        }
+
+    def _schema_editable_or_403(name: str):
+        from grayson.findings.authoring import can_edit_schema
+        from grayson.identity import get_user_id
+
+        schema = _schema_or_404(name)
+        if schema is None:
+            raise HTTPException(
+                status_code=403, detail="built-in schemas are canonical — extend one instead"
+            )
+        if not can_edit_schema(schema, get_user_id()):
+            raise HTTPException(
+                status_code=403,
+                detail=f"'{name}' was created by '{schema.created_by}' — fork it instead",
+            )
+        return schema
+
+    @app.get("/schemas/{name}/edit", response_class=HTMLResponse)
+    def schema_edit(request: Request, name: str) -> Any:
+        _check(request)
+        _schema_editable_or_403(name)
+        return templates.TemplateResponse(
+            request, "workflow_edit.html", _schema_edit_context(name, _schema_text(name))
+        )
+
+    def _schema_review(request: Request, name: str, new_schema, origin: str, what: str) -> Any:
+        from grayson.findings.authoring import (
+            dump_schema,
+            lint_schema,
+            render_schema_preview,
+            workflows_using,
+        )
+
+        return _review_page(
+            request,
+            base_path="/schemas",
+            file_dir="findings_schemas",
+            name=name,
+            before=_schema_text(name),
+            after=dump_schema(new_schema),
+            preview=render_schema_preview(
+                new_schema, None, workflows_using(name, workspace.workflows_dir)
+            ),
+            warnings=lint_schema(new_schema),
+            origin=origin,
+            what=what,
+        )
+
+    @app.post("/schemas/{name}/edit")
+    async def schema_save(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.findings.authoring import (
+            SchemaAuthoringError,
+            save_schema_yaml,
+            validate_schema_text,
+        )
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+
+        form = await request.form()
+        text = str(form.get("yaml", ""))
+        action = str(form.get("action", "review"))
+        if action == "back":
+            return templates.TemplateResponse(
+                request, "workflow_edit.html", _schema_edit_context(name, text)
+            )
+        try:
+            if action == "confirm":
+                save_schema_yaml(workspace.findings_schemas_dir, name, text, get_user_id())
+            else:
+                new_schema = validate_schema_text(
+                    workspace.findings_schemas_dir, name, text, get_user_id()
+                )
+        except SchemaAuthoringError as e:
+            return templates.TemplateResponse(
+                request,
+                "workflow_edit.html",
+                _schema_edit_context(name, text, error=str(e)),
+                status_code=400,
+            )
+        if action != "confirm":
+            return _schema_review(request, name, new_schema, "yaml", "the YAML you edited")
+        maybe_auto_push(workspace, f"grayson schemas: edit {name}")
+        return _redirect(f"/schemas/{name}")
+
+    @app.post("/schemas/{name}/element")
+    async def schema_element(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.findings.authoring import SchemaAuthoringError, apply_schema_edit
+
+        schema = _schema_editable_or_403(name)
+        form = await request.form()
+        op = {k: str(v) for k, v in form.items() if k != "t"}
+        if op.get("action", "upsert") == "upsert" and op.get("kind") == "field":
+            op["required"] = "required" in form
+        try:
+            new_schema = apply_schema_edit(schema, op)
+        except SchemaAuthoringError as e:
+            return templates.TemplateResponse(
+                request,
+                "schema_detail.html",
+                _schema_detail_context(name, error=str(e)),
+                status_code=400,
+            )
+        key = op.get("key") or op.get("orig_key") or ""
+        what = {
+            "meta": "the header",
+            "field": f"{'branch ' + op['branch'] + ' ' if op.get('branch') else ''}field '{key}'",
+            "discriminator": f"the discriminator ('{key}')"
+            if key
+            else "the discriminator (clearing it)",
+        }.get(op.get("kind", ""), "an element")
+        verb = {"delete": "removing", "move": "moving"}.get(op.get("action", ""), "editing")
+        return _schema_review(request, name, new_schema, "element", f"{verb} {what}")
+
+    @app.post("/schemas/{name}/delete")
+    async def schema_delete(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.findings.authoring import (
+            SchemaAuthoringError,
+            delete_schema,
+            workflows_using,
+        )
+        from grayson.findings.library import SchemaNotFound, get_library_schema
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+
+        form = await request.form()
+        typed = str(form.get("confirm_name", "")).strip()
+        try:
+            if typed != name:
+                raise SchemaAuthoringError(
+                    f"type the schema's name ('{name}') to confirm its deletion"
+                )
+            delete_schema(
+                workspace.findings_schemas_dir,
+                name,
+                get_user_id(),
+                workflows_using(name, workspace.workflows_dir),
+            )
+        except SchemaAuthoringError as e:
+            try:
+                get_library_schema(name, workspace.findings_schemas_dir)
+            except SchemaNotFound:
+                return templates.TemplateResponse(
+                    request, "schemas.html", _schemas_context(error=str(e)), status_code=400
+                )
+            return templates.TemplateResponse(
+                request,
+                "schema_detail.html",
+                _schema_detail_context(name, error=str(e)),
+                status_code=400,
+            )
+        maybe_auto_push(workspace, f"grayson schemas: delete {name}")
+        return _redirect("/schemas")
+
+    @app.post("/schemas/{name}/fork")
+    async def schema_fork(request: Request, name: str) -> Any:
+        _check(request)
+        from grayson.findings.authoring import SchemaAuthoringError, create_schema
+        from grayson.findings.library import SchemaNotFound, core_schema_names
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+
+        form = await request.form()
+        new_name = str(form.get("new_name", "")).strip()
+        _schema_or_404(name)
+        try:
+            if name in core_schema_names():
+                create_schema(
+                    workspace.findings_schemas_dir, new_name, base=name, user_id=get_user_id()
+                )
+            else:
+                create_schema(
+                    workspace.findings_schemas_dir, new_name, fork_of=name, user_id=get_user_id()
+                )
+        except (SchemaAuthoringError, SchemaNotFound) as e:
+            return templates.TemplateResponse(
+                request,
+                "schema_detail.html",
+                _schema_detail_context(name, error=str(e.args[0] if e.args else e)),
+                status_code=400,
+            )
+        maybe_auto_push(workspace, f"grayson schemas: fork {name} -> {new_name}")
+        return _redirect(f"/schemas/{new_name}")
+
+    @app.post("/schemas/new")
+    async def schema_create(request: Request) -> Any:
+        _check(request)
+        from grayson.findings.authoring import SchemaAuthoringError, create_schema
+        from grayson.findings.library import SchemaNotFound
+        from grayson.identity import get_user_id
+        from grayson.library import maybe_auto_push
+
+        form = await request.form()
+        new_name = str(form.get("new_name", "")).strip()
+        base = str(form.get("base", "")).strip() or None
+        fork_of = str(form.get("fork_of", "")).strip() or None
+        try:
+            create_schema(
+                workspace.findings_schemas_dir,
+                new_name,
+                base=None if fork_of else base,
+                fork_of=fork_of,
+                user_id=get_user_id(),
+            )
+        except (SchemaAuthoringError, SchemaNotFound) as e:
+            return templates.TemplateResponse(
+                request,
+                "schemas.html",
+                _schemas_context(error=str(e.args[0] if e.args else e)),
+                status_code=400,
+            )
+        maybe_auto_push(
+            workspace,
+            f"grayson schemas: new {new_name}" + (f" (fork of {fork_of})" if fork_of else ""),
+        )
+        return _redirect(f"/schemas/{new_name}")
 
     # -- settings ---------------------------------------------------------
 

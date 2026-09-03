@@ -7,9 +7,8 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from grayson.charts.spec import KINDS as CHART_KINDS
-from grayson.findings.schemas import BASE_FIELD_KEYS
+from grayson.findings.library import FindingField
 
-_FIELD_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 
 #: every template model tolerates and round-trips unknown fields: a newer
@@ -87,60 +86,6 @@ class CheckDef(BaseModel):
     #: test, and it lets lint catch a required input that no check ever uses —
     #: a question asked of the user and then quietly ignored.
     uses_inputs: list[str] = Field(default_factory=list)
-
-
-class FindingField(BaseModel):
-    """A field this workflow requires (or documents) in every finding's `extra`.
-
-    The built-in schemas are fixed with the release; a workflow extends the
-    one it names with its own fields, so a team's claims carry the structure
-    the team needs — an owning team, a verdict from a closed list, a ticket —
-    and the gate refuses a finding without them. `choices` closes the value
-    set; `required: false` documents a field for the agent without gating on
-    it. A key that matches a built-in extra of the base schema tightens that
-    field (its description and choices) rather than adding a second one.
-    """
-
-    model_config = _ROUND_TRIP
-
-    key: str
-    description: str = ""
-    required: bool = True
-    choices: list[str] = Field(default_factory=list)
-
-    @field_validator("key")
-    @classmethod
-    def _key_shape(cls, v: str) -> str:
-        if not _FIELD_KEY_RE.match(v):
-            raise ValueError(
-                f"findings field key '{v}' must be lowercase letters, digits or '_' "
-                "(starting with a letter), e.g. owner_team"
-            )
-        if v in BASE_FIELD_KEYS:
-            raise ValueError(
-                f"findings field '{v}' is a base field every finding already carries — "
-                "workflow fields live in `extra` and need their own key"
-            )
-        return v
-
-    @field_validator("choices")
-    @classmethod
-    def _choices(cls, v: list[str]) -> list[str]:
-        cleaned = [str(c).strip() for c in v if str(c).strip()]
-        if len(cleaned) != len(set(cleaned)):
-            raise ValueError("findings field choices repeat a value")
-        return cleaned
-
-    def label(self) -> str:
-        """One line for previews and the console."""
-        quals = []
-        if self.choices:
-            quals.append(f"one of: {' | '.join(self.choices)}")
-        if not self.required:
-            quals.append("optional")
-        head = self.key + (f" ({'; '.join(quals)})" if quals else "")
-        desc = " ".join(self.description.split())
-        return f"{head}: {desc}" if desc else head
 
 
 class WorkflowTemplate(BaseModel):

@@ -473,3 +473,201 @@ def test_delete_refused_while_sessions_are_open(client, workspace):
     r = _post(client, "/workflows/mine/delete", {"confirm_name": "mine"})
     assert r.status_code == 400 and "open session" in r.text
     assert (workspace.workflows_dir / "mine.yaml").exists()
+
+
+# -- findings schemas ------------------------------------------------------------
+
+
+def _schema_element(client, name, **fields):
+    return _post(client, f"/schemas/{name}/element", fields)
+
+
+def _schema_confirm(client, name, page_text):
+    return _post(
+        client, f"/schemas/{name}/edit", {"yaml": _reviewed_yaml(page_text), "action": "confirm"}
+    )
+
+
+def test_schema_catalog_lists_builtin_and_library(client, workspace):
+    from grayson.findings.authoring import create_schema
+
+    set_user_id("kcg")
+    create_schema(workspace.findings_schemas_dir, "orders_triage_v1", user_id="kcg")
+    create_schema(workspace.findings_schemas_dir, "theirs_v1", user_id="bob")
+    (workspace.findings_schemas_dir / "broken.yaml").write_text("name: [", encoding="utf-8")
+    page = _get(client, "/schemas").text
+    assert 'data-list-tools="schemas"' in page and 'data-list="schemas"' in page
+    for chip in ("builtin", "library", "mine", "branches", "unused", "broken"):
+        assert f'data-tag="{chip}"' in page
+    assert "bug_hunter_v1" in page and "orders_triage_v1" in page and "theirs_v1" in page
+    assert 'data-tags="library mine unused"' in page
+    assert "lint failed" in page and "/schemas/broken/delete" in page
+    assert "/schemas/new" in page
+
+
+def test_schema_detail_builtin_and_library(client, workspace):
+    from grayson.findings.authoring import create_schema
+
+    set_user_id("kcg")
+    page = _get(client, "/schemas/bug_hunter_v1").text
+    assert "Built in" in page and "blast_radius" in page
+    assert "resolution = root_caused" in page  # built-in branches drawn
+    assert "/schemas/bug_hunter_v1/element" not in page and "Delete this schema" not in page
+    assert "Extend" in page  # the fork button extends a built-in
+    create_schema(workspace.findings_schemas_dir, "orders_triage_v1", user_id="kcg")
+    page = _get(client, "/schemas/orders_triage_v1").text
+    assert "/schemas/orders_triage_v1/element" in page and "Delete this schema" in page
+    assert "Set a discriminator" in page  # offered even before a field qualifies
+    assert "extends standard_v1" in page
+    assert _get(client, "/schemas/nope").status_code == 404
+    assert _get(client, "/schemas/bug_hunter_v1/yaml").status_code == 404
+    assert _get(client, "/schemas/bug_hunter_v1/edit").status_code == 403
+
+
+def test_schema_element_edits_review_then_save(client, workspace):
+    from grayson.findings.authoring import create_schema
+    from grayson.findings.library import get_library_schema
+
+    set_user_id("kcg")
+    d = workspace.findings_schemas_dir
+    create_schema(d, "orders_triage_v1", user_id="kcg")
+    r = _schema_element(
+        client,
+        "orders_triage_v1",
+        kind="field",
+        action="upsert",
+        key="outcome",
+        description="What happened.",
+        choices="fixed | deferred",
+        required="on",
+    )
+    assert r.status_code == 200 and "Confirm: editing field &#39;outcome&#39;" in r.text
+    assert not [f for f in get_library_schema("orders_triage_v1", d).fields if f.key == "outcome"]
+    assert _schema_confirm(client, "orders_triage_v1", r.text).status_code == 303
+    r = _schema_element(client, "orders_triage_v1", kind="discriminator", key="outcome")
+    assert "Confirm: editing the discriminator" in r.text
+    _schema_confirm(client, "orders_triage_v1", r.text)
+    r = _schema_element(
+        client,
+        "orders_triage_v1",
+        kind="field",
+        action="upsert",
+        branch="fixed",
+        key="fix_ref",
+        description="The change.",
+        required="on",
+    )
+    assert "Confirm: editing branch fixed field &#39;fix_ref&#39;" in r.text
+    _schema_confirm(client, "orders_triage_v1", r.text)
+    sc = get_library_schema("orders_triage_v1", d)
+    assert sc.discriminator == "outcome" and [f.key for f in sc.branches["fixed"]] == ["fix_ref"]
+    page = _get(client, "/schemas/orders_triage_v1").text
+    assert "outcome = fixed" in page and "Add a field to this branch" in page
+    assert "Change or clear the discriminator" in page
+    # errors re-render the page
+    r = _schema_element(client, "orders_triage_v1", kind="field", key="severity", description="x")
+    assert r.status_code == 400 and "base field" in r.text
+    # a teammate's, and a built-in, refuse
+    create_schema(d, "theirs_v1", user_id="bob")
+    assert _schema_element(client, "theirs_v1", kind="meta", title="x").status_code == 403
+    assert _schema_element(client, "standard_v1", kind="meta", title="x").status_code == 403
+
+
+def test_schema_yaml_edit_review_and_fork(client, workspace):
+    from grayson.findings.authoring import create_schema
+    from grayson.findings.library import get_library_schema
+
+    set_user_id("kcg")
+    d = workspace.findings_schemas_dir
+    create_schema(d, "orders_triage_v1", user_id="kcg")
+    raw = client.get("/schemas/orders_triage_v1/yaml", params={"t": TOKEN, "raw": "1"})
+    assert raw.headers["content-type"].startswith("text/plain")
+    assert 'filename="orders_triage_v1.yaml"' in raw.headers["content-disposition"]
+    assert _get(client, "/schemas/orders_triage_v1/edit").status_code == 200
+    draft = raw.text.replace("title: Orders Triage", "title: Mine")
+    review = _post(client, "/schemas/orders_triage_v1/edit", {"yaml": draft})
+    assert review.status_code == 200 and "+title: Mine" in review.text
+    assert get_library_schema("orders_triage_v1", d).title == "Orders Triage"
+    assert _schema_confirm(client, "orders_triage_v1", review.text).status_code == 303
+    assert get_library_schema("orders_triage_v1", d).title == "Mine"
+    r = _post(client, "/schemas/orders_triage_v1/edit", {"yaml": "name: ["})
+    assert r.status_code == 400 and "YAML does not parse" in r.text
+    r = _post(client, "/schemas/orders_triage_v1/fork", {"new_name": "orders_triage_v2"})
+    assert r.status_code == 303 and "/schemas/orders_triage_v2?" in r.headers["location"]
+    assert get_library_schema("orders_triage_v2", d).forked_from == "orders_triage_v1"
+    r = _post(client, "/schemas/bug_hunter_v1/fork", {"new_name": "bh_v1"})
+    assert r.status_code == 303 and get_library_schema("bh_v1", d).base == "bug_hunter_v1"
+    r = _post(client, "/schemas/new", {"new_name": "fresh_v1", "base": "parity_v1"})
+    assert r.status_code == 303 and get_library_schema("fresh_v1", d).base == "parity_v1"
+    r = _post(client, "/schemas/new", {"new_name": "fresh_v1", "base": "parity_v1"})
+    assert r.status_code == 400 and "already exists" in r.text
+
+
+def test_schema_delete_rules_in_console(client, workspace):
+    from grayson.findings.authoring import create_schema
+
+    set_user_id("kcg")
+    d = workspace.findings_schemas_dir
+    create_schema(d, "orders_triage_v1", user_id="kcg")
+    create_schema(d, "theirs_v1", user_id="bob")
+    (workspace.workflows_dir / "w.yaml").write_text(
+        "name: w\ntitle: W\nfindings_schema: orders_triage_v1\n", encoding="utf-8"
+    )
+    r = _post(client, "/schemas/orders_triage_v1/delete", {"confirm_name": "orders_triage_v1"})
+    assert r.status_code == 400 and "findings schema of 1 workflow" in r.text
+    r = _post(client, "/schemas/theirs_v1/delete", {"confirm_name": "theirs_v1"})
+    assert r.status_code == 400 and "only its author" in r.text
+    r = _post(client, "/schemas/orders_triage_v1/delete", {"confirm_name": "wrong"})
+    assert r.status_code == 400 and "type the schema" in r.text
+    (workspace.workflows_dir / "w.yaml").unlink()
+    r = _post(client, "/schemas/orders_triage_v1/delete", {"confirm_name": "orders_triage_v1"})
+    assert r.status_code == 303 and not (d / "orders_triage_v1.yaml").exists()
+    (d / "broken.yaml").write_text("name: [", encoding="utf-8")
+    r = _post(client, "/schemas/broken/delete", {"confirm_name": "broken"})
+    assert r.status_code == 303 and not (d / "broken.yaml").exists()
+
+
+def test_workflow_on_library_schema_and_promotion(client, workspace):
+    from grayson.findings.library import get_library_schema
+
+    set_user_id("kcg")
+    create_workflow(workspace.workflows_dir, "orders-x", fork_of="table-health", user_id="kcg")
+    r = _element(
+        client,
+        "orders-x",
+        kind="field",
+        action="upsert",
+        key="owner_team",
+        description="who",
+        choices="a | b",
+        required="on",
+    )
+    _confirm(client, "orders-x", r.text)
+    page = _get(client, "/workflows/orders-x").text
+    assert "Promote this workflow" in page
+    # review shows the workflow's diff and the schema file that would be created
+    r = _post(client, "/workflows/orders-x/promote", {"schema_name": "orders_x_v1"})
+    assert r.status_code == 200
+    assert "findings_schemas/orders_x_v1.yaml" in r.text
+    assert "+findings_schema: orders_x_v1" in r.text
+    assert not (workspace.findings_schemas_dir / "orders_x_v1.yaml").exists()
+    r = _post(
+        client, "/workflows/orders-x/promote", {"schema_name": "orders_x_v1", "action": "confirm"}
+    )
+    assert r.status_code == 303 and "/schemas/orders_x_v1?" in r.headers["location"]
+    assert [
+        f.key for f in get_library_schema("orders_x_v1", workspace.findings_schemas_dir).fields
+    ] == ["owner_team"]
+    tpl = get_workflow("orders-x", workspace.workflows_dir)
+    assert tpl.findings_schema == "orders_x_v1" and tpl.findings_fields == []
+    page = _get(client, "/workflows/orders-x").text
+    assert "library · extends standard_v1" in page
+    assert 'href="/schemas/orders_x_v1?' in page
+    assert "library schema" in page  # the field's source badge
+    assert "Promote this workflow" not in page  # already on a library schema
+    # a bad name re-renders the workflow page with the error
+    r = _post(client, "/workflows/orders-x/promote", {"schema_name": "Bad Name"})
+    assert r.status_code == 400
+    # the workflow catalog's schema section links the library schema
+    page = _get(client, "/workflows").text
+    assert 'href="/schemas/orders_x_v1?' in page and "Open the schemas page" in page

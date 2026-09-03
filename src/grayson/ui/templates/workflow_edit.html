@@ -13,29 +13,40 @@
 {% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
-  <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
+  {% if noun == "schema" %}<a href="/schemas?t={{ token }}">Schemas</a><span class="sep">/</span>{% endif %}
+  <a href="{{ base_path }}/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
   <span>edit</span></nav>
 
 <div class="pagehead">
   <div class="titles">
     <div class="titlerow"><h1>Edit {{ name }} as YAML {{ help("workflow_yaml") }}</h1></div>
     <div class="lede">The whole file at once; single elements edit on
-      <a href="/workflows/{{ name }}?t={{ token }}">the workflow page</a>.</div>
+      <a href="{{ base_path }}/{{ name }}?t={{ token }}">the {{ noun }} page</a>.</div>
   </div>
 </div>
 
 <div class="editcols mt-3">
-  <form method="post" action="/workflows/{{ name }}/edit?t={{ token }}">
+  <form method="post" action="{{ base_path }}/{{ name }}/edit?t={{ token }}">
     <textarea name="yaml" rows="30" spellcheck="false"
       style="font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.6;">{{ text }}</textarea>
     <div class="row" style="margin-top: 10px;">
       <button class="btn" type="submit" name="action" value="review">Review changes…</button>
-      <a class="btn ghost" href="/workflows/{{ name }}?t={{ token }}">Cancel</a>
+      <a class="btn ghost" href="{{ base_path }}/{{ name }}?t={{ token }}">Cancel</a>
 
     </div>
   </form>
   <div class="card ref">
     <div class="overline">Fields</div>
+    {% if noun == "schema" %}
+    <dl>
+      <dt>base</dt><dd>the built-in schema this one extends; its fields and rules stay</dd>
+      <dt>fields[]</dt><dd><span class="mono">key, description, required, choices</span> — what every finding carries in <span class="mono">extra</span></dd>
+      <dt>discriminator</dt><dd>one of <span class="mono">fields</span>, required, with <span class="mono">choices</span>: its value selects a branch (only when the base does not branch already)</dd>
+      <dt>branches</dt><dd><span class="mono">value: [fields…]</span> — the further fields that value requires</dd>
+    </dl>
+    <div class="faint small" style="margin-top: 10px;">Renames are forks, not edits. A field named
+      like one the base requires tightens it. Fields grayson does not know are kept on save.</div>
+    {% else %}
     <dl>
       <dt>tags</dt><dd>free labels the catalog filters by: <span class="mono">[orders, finance]</span></dd>
       <dt>setup_inputs[].adds_scope</dt><dd>tables named in the answer join the session's readable scope</dd>
@@ -47,6 +58,7 @@
     </dl>
     <div class="faint small" style="margin-top: 10px;">Renames are forks, not edits. Fields grayson
       does not know are kept on save.</div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

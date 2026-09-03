@@ -41,6 +41,7 @@ class Workspace:
         (path / "knowledge").mkdir(exist_ok=True)
         (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
         (path / "workflows").mkdir(exist_ok=True)
+        (path / "findings_schemas").mkdir(exist_ok=True)
         (path / "records").mkdir(exist_ok=True)
         from grayson.checks import scaffold_checks_dir
 
@@ -122,6 +123,11 @@ class Workspace:
     @property
     def workflows_dir(self) -> Path:
         return self._library_root() / "workflows"
+
+    @property
+    def findings_schemas_dir(self) -> Path:
+        """The team's own findings schemas, beside workflows/ in the library."""
+        return self._library_root() / "findings_schemas"
 
     @property
     def checks_dir(self) -> Path:

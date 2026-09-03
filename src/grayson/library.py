@@ -16,7 +16,15 @@ from pathlib import Path
 from grayson.config import CONFIG_FILENAME
 from grayson.workspace import Workspace
 
-LIBRARY_ASSETS = ("knowledge", "views", "workflows", "checks", "records", "reports")
+LIBRARY_ASSETS = (
+    "knowledge",
+    "views",
+    "workflows",
+    "findings_schemas",
+    "checks",
+    "records",
+    "reports",
+)
 
 #: shared library settings, versioned with the library itself (docs/LIBRARY.md
 #: "Admins"). Today it holds one thing: who may remove any published record.
@@ -82,6 +90,16 @@ A file here with the same name as a built-in template overrides it; a new
 name adds a custom workflow. Forked workflows (`grayson workflow fork`) land
 here too, so a team's refinements travel with the library.
 """,
+    "findings_schemas": """\
+# findings_schemas/
+
+The team's own findings schemas: each a YAML file that names a built-in
+schema as its `base` and extends it — fields every finding must carry
+(`fields`, each with a description, `required`, and an optional closed
+`choices` list) and, optionally, a `discriminator` whose value selects a
+branch of further fields. A workflow names one with `findings_schema`.
+Author-only edits; `grayson schema lint` checks every file.
+""",
     "records": """\
 # records/
 
@@ -138,6 +156,7 @@ def init_library(path: Path, admins: list[str] | None = None) -> Path:
     (path / "knowledge").mkdir(exist_ok=True)
     (path / "views" / "ddl").mkdir(parents=True, exist_ok=True)
     (path / "workflows").mkdir(exist_ok=True)
+    (path / "findings_schemas").mkdir(exist_ok=True)
     (path / "records").mkdir(exist_ok=True)
     (path / "reports").mkdir(exist_ok=True)
     profile = path / "reports" / "default.yaml"
@@ -671,14 +690,22 @@ def library_doctor(workspace: Workspace) -> dict:
 
     lib = workspace.config.library_path or workspace.root
     knowledge = KnowledgeStore(workspace.knowledge_dir).lint()
+    from grayson.findings.authoring import lint_schemas
+
     workflows = lint_workflows(workspace.workflows_dir)
+    schemas = lint_schemas(workspace.findings_schemas_dir, workspace.workflows_dir)
     records = _lint_records(workspace.records_dir)
     settings = _lint_settings(lib)
     return {
         "library": str(lib),
-        "ok": knowledge["ok"] and workflows["ok"] and records["ok"] and settings["ok"],
+        "ok": knowledge["ok"]
+        and workflows["ok"]
+        and schemas["ok"]
+        and records["ok"]
+        and settings["ok"],
         "knowledge": knowledge,
         "workflows": workflows,
+        "schemas": schemas,
         "records": records,
         "settings": settings,
         "repo": repo_status(lib),

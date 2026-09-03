@@ -18,6 +18,7 @@ from grayson.core.engine import EnforcementError
 from grayson.core.proposals import ProposalError
 from grayson.core.run import cache_find, check_statement, run_statement, snapshot_metadata
 from grayson.core.session import STAGES, Session, find_recent_duplicate, resolve_session_id
+from grayson.findings.library import known_schema_names, schemas_dir_beside
 from grayson.findings.schemas import describe_schema
 from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request, validate_response
@@ -40,6 +41,10 @@ cache_app = typer.Typer(help="Cached results: find, preview, analyze.", no_args_
 worker_app = typer.Typer(help="Parallel worker registration.", no_args_is_help=True)
 guard_app = typer.Typer(help="Statement validation.", no_args_is_help=True)
 workflow_app = typer.Typer(help="Workflow templates.", no_args_is_help=True)
+schema_app = typer.Typer(
+    help="Findings schemas: the built-ins, and the team's own extensions of them.",
+    no_args_is_help=True,
+)
 checkpoint_app = typer.Typer(help="Checkpoints (evidence-gated).", no_args_is_help=True)
 profile_app = typer.Typer(
     help="Deterministic table profiling (citable evidence).", no_args_is_help=True
@@ -80,6 +85,7 @@ app.add_typer(cache_app, name="cache")
 app.add_typer(worker_app, name="worker")
 app.add_typer(guard_app, name="guard")
 app.add_typer(workflow_app, name="workflow")
+app.add_typer(schema_app, name="schema")
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(profile_app, name="profile")
 app.add_typer(finding_app, name="finding")
@@ -707,7 +713,9 @@ def session_start(
             "setup_inputs": [i.model_dump() for i in tpl.setup_inputs],
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "findings_schema": tpl.findings_schema,
-            "findings_schema_spec": describe_schema(tpl.findings_schema, tpl.findings_fields),
+            "findings_schema_spec": describe_schema(
+                tpl.findings_schema, tpl.findings_fields, ws.findings_schemas_dir
+            ),
         },
         "setup_inputs": provided,
     }
@@ -1495,18 +1503,24 @@ def workflow_show(name: str) -> None:
         fail(str(e.args[0] if e.args else e))
         return
     out = tpl.model_dump()
-    out["findings_schema_spec"] = describe_schema(tpl.findings_schema, tpl.findings_fields)
+    out["findings_schema_spec"] = describe_schema(
+        tpl.findings_schema, tpl.findings_fields, schemas_dir_beside(overrides)
+    )
     emit(out)
 
 
 @workflow_app.command("schemas")
 def workflow_schemas() -> None:
-    """List the built-in findings schemas with every field unpacked — the
-    options a workflow's `findings_schema` chooses between. A workflow adds
-    its own fields on top with `findings_fields`."""
-    from grayson.findings.schemas import FINDINGS_SCHEMAS
-
-    emit({name: describe_schema(name) for name in sorted(FINDINGS_SCHEMAS)})
+    """Every findings schema — built in and library — with its fields unpacked:
+    the options a workflow's `findings_schema` chooses between (see also
+    `grayson schema list|show`)."""
+    try:
+        schemas_dir = Workspace.find().findings_schemas_dir
+    except FileNotFoundError:
+        schemas_dir = None
+    emit(
+        {name: describe_schema(name, None, schemas_dir) for name in known_schema_names(schemas_dir)}
+    )
 
 
 @workflow_app.command("preview")
@@ -1627,9 +1641,238 @@ def workflow_lint() -> None:
     except FileNotFoundError:
         overrides = None
     report = lint_workflows(overrides)
+    from grayson.findings.authoring import lint_schemas
+
+    report["schemas"] = lint_schemas(schemas_dir_beside(overrides), overrides)
+    report["ok"] = report["ok"] and report["schemas"]["ok"]
     emit(report)
     if not report["ok"]:
         raise typer.Exit(1)
+
+
+@workflow_app.command("promote")
+def workflow_promote(
+    name: str = typer.Argument(..., help="A library workflow you created, with findings_fields."),
+    schema: str = typer.Option(
+        ..., "--schema", help="Name for the new schema, e.g. orders_triage_v1."
+    ),
+    title: str = typer.Option("", "--title"),
+    description: str = typer.Option("", "--description"),
+) -> None:
+    """Lift a workflow's own findings_fields into a shared library schema and
+    point the workflow at it. This is how most shared schemas start: fields
+    one workflow needed turn out to be what the team's findings all need."""
+    from grayson.identity import get_user_id
+    from grayson.library import maybe_auto_push
+    from grayson.workflows.authoring import WorkflowAuthoringError, promote_fields
+
+    ws = _workspace()
+    try:
+        path, tpl = promote_fields(
+            ws.workflows_dir, name, schema, get_user_id(), title=title, description=description
+        )
+    except (WorkflowAuthoringError, WorkflowNotFound) as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    maybe_auto_push(ws, f"grayson schemas: promote {name} fields -> {schema}")
+    emit(
+        {
+            "schema": str(path),
+            "workflow": name,
+            "findings_schema": tpl.findings_schema,
+            "next": f"`grayson schema preview {schema}` to confirm the shape, then "
+            "`grayson library push`",
+        }
+    )
+
+
+# -- schema --------------------------------------------------------------
+
+
+def _schemas_dirs() -> tuple[Path | None, Path | None]:
+    try:
+        ws = Workspace.find()
+        return ws.findings_schemas_dir, ws.workflows_dir
+    except FileNotFoundError:
+        return None, None
+
+
+@schema_app.command("list")
+def schema_list() -> None:
+    """List findings schemas — built in and library — with which workflows use each."""
+    from grayson.findings.authoring import workflows_using
+    from grayson.findings.library import core_schema_names, list_library_schemas, schema_problems
+
+    schemas_dir, workflows_dir = _schemas_dirs()
+    out = [
+        {
+            "name": name,
+            "builtin": True,
+            "base": name,
+            "used_by": workflows_using(name, workflows_dir),
+        }
+        for name in sorted(core_schema_names())
+    ] + [
+        {
+            "name": sc.name,
+            "builtin": False,
+            "base": sc.base,
+            "title": sc.title,
+            "description": sc.description.strip(),
+            "created_by": sc.created_by,
+            "forked_from": sc.forked_from,
+            "fields": [f.key for f in sc.fields],
+            "discriminator": sc.discriminator,
+            "used_by": workflows_using(sc.name, workflows_dir),
+        }
+        for sc in list_library_schemas(schemas_dir)
+    ]
+    emit(out)
+    problems = schema_problems(schemas_dir)
+    if problems:
+        typer.echo(
+            json.dumps(
+                {
+                    "warning": f"{len(problems)} library schema file(s) are not loadable — "
+                    "run `grayson schema lint`",
+                    "problems": problems,
+                },
+                indent=2,
+            ),
+            err=True,
+        )
+
+
+@schema_app.command("show")
+def schema_show(name: str) -> None:
+    """A schema unpacked: every field a finding must carry, the branches, the
+    enforced rules, and an example payload — built in or library."""
+    from grayson.findings.authoring import workflows_using
+    from grayson.findings.library import SchemaNotFound, get_library_schema, known_schema
+
+    schemas_dir, workflows_dir = _schemas_dirs()
+    if not known_schema(name, schemas_dir):
+        try:
+            get_library_schema(name, schemas_dir)  # raises with the reason
+        except SchemaNotFound as e:
+            fail(str(e.args[0] if e.args else e))
+            return
+    out = describe_schema(name, None, schemas_dir)
+    out["used_by"] = workflows_using(name, workflows_dir)
+    emit(out)
+
+
+@schema_app.command("preview")
+def schema_preview(name: str) -> None:
+    """Render a library schema the way a person signs off on it; paste `text`
+    to the user. Lint findings ride along."""
+    from grayson.findings.authoring import lint_schema, render_schema_preview, workflows_using
+    from grayson.findings.library import SchemaNotFound, core_schema_names, get_library_schema
+
+    schemas_dir, workflows_dir = _schemas_dirs()
+    if name in core_schema_names():
+        emit({"name": name, "builtin": True, "spec": describe_schema(name, None, schemas_dir)})
+        return
+    try:
+        schema = get_library_schema(name, schemas_dir)
+    except SchemaNotFound as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    used_by = workflows_using(name, workflows_dir)
+    out: dict = {"name": name, "builtin": False}
+    warnings = lint_schema(schema)
+    if warnings:
+        out["lint"] = warnings
+    out["text"] = render_schema_preview(schema, schemas_dir, used_by)
+    emit(out)
+
+
+@schema_app.command("new")
+def schema_new(
+    name: str = typer.Argument(
+        ..., help="Schema name (lowercase, underscores), e.g. orders_triage_v1."
+    ),
+    base: str = typer.Option("standard_v1", "--base", help="The built-in schema this one extends."),
+    fork: str = typer.Option(
+        None, "--fork", help="Copy an existing library schema (lineage recorded)."
+    ),
+    title: str = typer.Option("", "--title"),
+) -> None:
+    """Scaffold a new findings schema in the team library, extending a built-in
+    or forking a library schema. Stamped with your `grayson user` id."""
+    from grayson.findings.authoring import SchemaAuthoringError, create_schema, lint_schemas
+    from grayson.findings.library import SchemaNotFound
+    from grayson.identity import get_user_id
+
+    ws = _workspace()
+    try:
+        path = create_schema(
+            ws.findings_schemas_dir,
+            name,
+            base=None if fork else base,
+            fork_of=fork,
+            title=title,
+            user_id=get_user_id(),
+        )
+    except (SchemaAuthoringError, SchemaNotFound) as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    emit(
+        {
+            "created": str(path),
+            **({"forked_from": fork} if fork else {"base": base}),
+            "lint": lint_schemas(ws.findings_schemas_dir, ws.workflows_dir),
+            "next": "edit the YAML (or use the console's Schemas page), then "
+            "`grayson schema lint`, confirm the shape with `grayson schema preview <name>`, "
+            "point a workflow at it (findings_schema), and `grayson library push`",
+        }
+    )
+
+
+@schema_app.command("lint")
+def schema_lint() -> None:
+    """Validate the library's findings schema YAML: parse/shape errors,
+    built-in shadowing, duplicate names (errors), plus quality warnings.
+    Exits non-zero on errors."""
+    from grayson.findings.authoring import lint_schemas
+
+    schemas_dir, workflows_dir = _schemas_dirs()
+    report = lint_schemas(schemas_dir, workflows_dir)
+    emit(report)
+    if not report["ok"]:
+        raise typer.Exit(1)
+
+
+@schema_app.command("delete")
+def schema_delete(
+    name: str = typer.Argument(..., help="A library schema you created."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Delete a library schema you authored. Built-ins cannot go, a
+    colleague's file cannot go under your id, and a schema a workflow still
+    names stays until the workflow points elsewhere."""
+    from grayson.findings.authoring import SchemaAuthoringError, delete_schema, workflows_using
+    from grayson.identity import get_user_id
+    from grayson.library import maybe_auto_push
+
+    ws = _workspace()
+    if not yes and not typer.confirm(
+        f"Delete findings schema '{name}' from the library "
+        f"({ws.findings_schemas_dir / f'{name}.yaml'})?"
+    ):
+        raise typer.Exit(1)
+    try:
+        path = delete_schema(
+            ws.findings_schemas_dir, name, get_user_id(), workflows_using(name, ws.workflows_dir)
+        )
+    except SchemaAuthoringError as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    out: dict = {"deleted": str(path)}
+    pushed = maybe_auto_push(ws, f"grayson schemas: delete {name}")
+    if pushed is not None:
+        out["push"] = pushed
+    emit(out)
 
 
 # -- checkpoint ----------------------------------------------------------

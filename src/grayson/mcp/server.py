@@ -135,10 +135,60 @@ def build_server(workspace: Workspace) -> Any:
         try:
             tpl = get_workflow(name, workspace.workflows_dir)
             out = tpl.model_dump()
-            out["findings_schema_spec"] = describe_schema(tpl.findings_schema, tpl.findings_fields)
+            out["findings_schema_spec"] = describe_schema(
+                tpl.findings_schema, tpl.findings_fields, workspace.findings_schemas_dir
+            )
             return out
         except WorkflowNotFound as e:
             return _err(e)
+
+    @mcp.tool(
+        description="List findings schemas — the built-ins and the team library's own "
+        "extensions of them — with which workflows use each. A workflow names one as "
+        "its findings_schema; `schema_show` unpacks any of them."
+    )
+    def schema_list() -> dict:
+        from grayson.findings.authoring import workflows_using
+        from grayson.findings.library import (
+            core_schema_names,
+            list_library_schemas,
+            schema_problems,
+        )
+
+        return {
+            "builtin": sorted(core_schema_names()),
+            "library": [
+                {
+                    "name": sc.name,
+                    "title": sc.title,
+                    "description": sc.description.strip(),
+                    "base": sc.base,
+                    "fields": [f.key for f in sc.fields],
+                    "discriminator": sc.discriminator,
+                    "created_by": sc.created_by,
+                    "used_by": workflows_using(sc.name, workspace.workflows_dir),
+                }
+                for sc in list_library_schemas(workspace.findings_schemas_dir)
+            ],
+            "library_problems": schema_problems(workspace.findings_schemas_dir),
+        }
+
+    @mcp.tool(
+        description="A findings schema unpacked (built in or library): every base field "
+        "with its rule, the `extra` fields required with any closed choice lists, the "
+        "discriminator and its branches, the enforced calibration rules, and an example "
+        "payload shaped to pass."
+    )
+    def schema_show(name: str) -> dict:
+        from grayson.findings.authoring import workflows_using
+        from grayson.findings.library import known_schema, known_schema_names
+
+        if not known_schema(name, workspace.findings_schemas_dir):
+            known = ", ".join(known_schema_names(workspace.findings_schemas_dir))
+            return {"error": f"unknown findings schema '{name}' (known: {known})"}
+        out = describe_schema(name, None, workspace.findings_schemas_dir)
+        out["used_by"] = workflows_using(name, workspace.workflows_dir)
+        return out
 
     @mcp.tool(
         description="Start a QA session for a workflow over target tables. Pass the "
@@ -235,7 +285,9 @@ def build_server(workspace: Workspace) -> Any:
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "suggested_checks": [c.model_dump() for c in tpl.suggested_checks],
             "findings_schema": tpl.findings_schema,
-            "findings_schema_spec": describe_schema(tpl.findings_schema, tpl.findings_fields),
+            "findings_schema_spec": describe_schema(
+                tpl.findings_schema, tpl.findings_fields, workspace.findings_schemas_dir
+            ),
             "setup_inputs": provided,
             "view_coverage": registry.coverage_check(tables, current),
             "views_in_scope": enter_session_scope(registry, s, tables),
