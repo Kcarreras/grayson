@@ -17,6 +17,11 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from grayson.knowledge.relationships import (
+    for_disk,
+    normalize_relationships,
+    relationship_issues,
+)
 from grayson.util import utcnow
 
 #: version of the knowledge-doc format this grayson reads and writes. Docs
@@ -46,7 +51,8 @@ _FQN_PART = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")  # \Z: no trailing-newline 
 
 #: structured base-descriptor fields, alongside the open-ended facts list.
 #: `columns` entries are {name, type?, description?, nullable?}; `relationships`
-#: entries are {to, on, cardinality?, note?}.
+#: entries are {to, on, cardinality?, note?} in the canonical shape defined in
+#: knowledge/relationships.py (which also absorbs the shorthands agents write).
 PROFILE_KEYS = ("grain", "freshness", "owners", "columns", "relationships", "open_questions")
 _PROFILE_DEFAULTS: dict[str, object] = {
     "grain": "",
@@ -201,7 +207,7 @@ class KnowledgeStore:
             doc[key] = data.get(key, default.copy() if isinstance(default, list) else default)
         # Hand-edited files write these in looser shapes; normalize once here so
         # every consumer (graph, completeness, templates, agents) sees dicts.
-        doc["relationships"] = _norm_relationships(doc.get("relationships"))
+        doc["relationships"], _ = normalize_relationships(doc.get("relationships"), fqn.upper())
         doc["columns"] = _norm_columns(doc.get("columns"))
         return doc
 
@@ -229,6 +235,10 @@ class KnowledgeStore:
         for key in PROFILE_KEYS:  # only write populated profile fields (small diffs)
             if doc.get(key):
                 front[key] = doc[key]
+        if front.get("relationships"):
+            # `keys` is derived from `on` on every read; writing it would invite
+            # the two to drift apart under a hand edit
+            front["relationships"] = for_disk(front["relationships"])
         for key, value in (doc.get("extra") or {}).items():
             front.setdefault(key, value)  # round-trip, but never clobber a defined key
         definitions = _norm_definitions(doc.get("definitions"), doc.get("definition_files"))
@@ -378,22 +388,30 @@ class KnowledgeStore:
                 isinstance(c, dict) and c.get("name") for c in cols
             ):
                 raise ValueError("columns must be a list of objects, each with at least a 'name'")
+        warnings: list[str] = []
         if "relationships" in updates:
             rels = updates["relationships"]
             if not isinstance(rels, list) or not all(
-                (isinstance(r, dict) and (r.get("to") or r.get("table")))
+                (isinstance(r, dict) and any(r.get(k) for k in ("to", "table", "target")))
                 or (isinstance(r, str) and r.strip())
                 for r in rels
             ):
                 raise ValueError(
                     "relationships must be a list of objects with at least a 'to' table "
-                    "(a bare 'DB.SCHEMA.TABLE' string is accepted as shorthand)"
+                    "(a bare 'DB.SCHEMA.TABLE' string is accepted as shorthand); the join "
+                    "key goes in 'on' as 'COL' or 'THIS_COL = THAT_COL', and 'cardinality' "
+                    "is one-to-one | one-to-many | many-to-one | many-to-many, this table first"
                 )
-            updates = {**updates, "relationships": _norm_relationships(rels)}
+            normalized, warnings = normalize_relationships(rels, fqn.upper())
+            updates = {**updates, "relationships": normalized}
         doc = self.read(fqn)
         doc.update(updates)
         self._write(fqn, doc)
-        return self.read(fqn)
+        out = self.read(fqn)
+        # What had to be guessed or could not be read, so the agent that wrote
+        # it can fix the shape now instead of a reader finding it on the map.
+        out["warnings"] = warnings + [i for i in relationship_issues(out) if i not in warnings]
+        return out
 
     def set_definition_files(self, fqn: str, files: list[str], by: str = "agent") -> dict:
         """The format-1 way to say where a table is defined: bare paths. They
@@ -634,6 +652,8 @@ class KnowledgeStore:
                             "missing beside the doc — re-run the capture or drop the entry",
                         }
                     )
+            for problem in relationship_issues(doc):
+                warnings.append({"table": fqn, "problem": problem})
             ids = [f["id"] for f in doc["facts"]]
             dupes = sorted({i for i in ids if ids.count(i) > 1})
             if dupes:
@@ -948,25 +968,6 @@ def _strip_heading(body: str, table: str) -> str:
     if lines and lines[0].strip().lstrip("#").strip().upper() == table.upper():
         return (lines[1] if len(lines) > 1 else "").strip()
     return body.strip()
-
-
-def _norm_relationships(value: object) -> list[dict]:
-    """Canonicalize relationship entries: dicts pass through (with 'table'/'join'
-    accepted as aliases for 'to'/'on'), a bare string is shorthand for its 'to'
-    table, anything else is dropped rather than crashing a reader."""
-    out: list[dict] = []
-    for rel in value if isinstance(value, list) else []:
-        if isinstance(rel, dict):
-            rel = dict(rel)
-            if not rel.get("to") and rel.get("table"):
-                rel["to"] = rel.pop("table")
-            if not rel.get("on") and rel.get("join"):
-                rel["on"] = rel.pop("join")
-            if rel.get("to"):
-                out.append(rel)
-        elif isinstance(rel, str) and rel.strip():
-            out.append({"to": rel.strip()})
-    return out
 
 
 def _norm_columns(value: object) -> list[dict]:

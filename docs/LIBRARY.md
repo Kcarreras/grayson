@@ -74,6 +74,50 @@ The console's Knowledge tab adds a relationship canvas of the whole library
 (Cytoscape + ELK, vendored); each table page shows its completeness report,
 facts, and covering external checks.
 
+### Recording a relationship
+
+The schema map draws exactly what the descriptor says, so the shape matters.
+Each entry in a table's `relationships` list is:
+
+```yaml
+relationships:
+- to: SHOP.PUBLIC.CUSTOMERS          # fully qualified; a bare name is completed
+                                      #   from this table's DB.SCHEMA, with a warning
+  on: CUSTOMER_ID                     # both sides share the name
+  cardinality: many-to-one            # THIS table first: many orders, one customer
+- to: SHOP.PUBLIC.PROMOS
+  on: PROMO_CODE = CODE               # this table's column = the other's column
+  cardinality: many-to-one
+  note: only orders placed after 2024-01 carry a code
+- to: SHOP.PUBLIC.ORDER_LINES
+  on: ORDER_ID, LINE_NO = LINE        # composite key: comma-separated pairs
+  cardinality: one-to-many
+```
+
+Rules, all enforced on read and write by `knowledge/relationships.py`:
+
+- **`on` is column pairs, this table first.** `COL` when both tables use the
+  same name, `THIS_COL = THAT_COL` when they differ, `, ` between the parts of
+  a composite key. Qualified forms (`ORDERS.CUSTOMER_ID = CUSTOMERS.ID`), lists,
+  `{from, to}` mappings and the aliases `join`, `join_key(s)`, `keys`, `using`
+  are read and rewritten to this form. A join that is not a column equality
+  (`lower(email) = lower(EMAIL)`) is kept as written, flagged, and drawn in
+  italics — the map cannot say whose column is whose.
+- **`cardinality` is one of** `one-to-one`, `one-to-many`, `many-to-one`,
+  `many-to-many`, **read from this table towards `to`.** `1:N`, `N:1`,
+  `one_to_many`, `many to one` and the like are accepted and canonicalised.
+  Anything else is kept as written and flagged.
+- **One relationship, one edge.** A declaration from either side, in any
+  accepted spelling, merges with the other side's: both tables recording
+  `ORDERS ⟷ CUSTOMERS` on `CUSTOMER_ID` is one solid line; only one recording
+  it is a dashed line; the two disagreeing on cardinality or on the join
+  columns is drawn in the attention colour and spelled out in the tooltip.
+
+`knowledge set` (CLI and MCP) returns `warnings` naming every shape it had to
+guess or could not read — the agent that wrote the entry is the right one to
+fix it. `grayson library doctor` reports the same for what is already in the
+library, plus a join-key column the table's own column list does not have.
+
 ## Where a table is defined, and what it is made of
 
 A knowledge doc holds three different things, and they come from different

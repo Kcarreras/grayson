@@ -206,6 +206,105 @@ def test_relationship_graph_merges_both_sides_and_marks_gaps():
     assert known["DB.S.SHIPMENTS"] is False  # referenced but never described
 
 
+def test_relationship_graph_merges_reciprocals_however_they_were_spelled():
+    """The field bug: ORDERS wrote 'PROMO_CODE = CODE', PROMOS wrote
+    'PROMOS.CODE = ORDERS.PROMO_CODE', and the map drew two dashed lines."""
+    docs = {
+        "DB.S.ORDERS": {
+            "relationships": [
+                {"to": "DB.S.PROMOS", "on": "PROMO_CODE = CODE", "cardinality": "N:1"},
+                {"to": "DB.S.LINES", "on": "ORDER_ID, LINE_NO = LINE", "cardinality": "1:N"},
+            ]
+        },
+        "DB.S.PROMOS": {
+            "relationships": [{"to": "DB.S.ORDERS", "on": "PROMOS.CODE = ORDERS.PROMO_CODE"}]
+        },
+        "DB.S.LINES": {
+            "relationships": [
+                {"to": "DB.S.ORDERS", "on": ["LINE = LINE_NO", "ORDER_ID"], "cardinality": "N:1"}
+            ]
+        },
+    }
+    g = relationship_graph(_normalized(docs))
+    assert len(g["edges"]) == 2
+    by_target = {e["target"]: e for e in g["edges"]}
+    promos = by_target["DB.S.PROMOS"]
+    assert promos["mutual"] is True and promos["conflict"] == ""
+    assert promos["keys"] == [{"from": "PROMO_CODE", "to": "CODE"}]
+    assert promos["label"] == "ORDERS.PROMO_CODE = PROMOS.CODE"
+    assert promos["cardinality"] == "many-to-one"
+    assert (promos["source_end"], promos["target_end"]) == ("many", "one")
+    assert promos["declared_by"] == ["DB.S.ORDERS", "DB.S.PROMOS"]
+    lines = by_target["DB.S.LINES"]
+    assert lines["mutual"] is True and lines["conflict"] == ""  # 1:N seen from the other side
+    assert lines["label"] == "ORDER_ID\nORDERS.LINE_NO = LINES.LINE"
+
+
+def test_relationship_graph_flags_disagreement_between_sides():
+    docs = {
+        "DB.S.A": {
+            "relationships": [
+                {"to": "DB.S.B", "on": "K", "cardinality": "one-to-many"},
+                {"to": "DB.S.C", "on": "K1"},
+            ]
+        },
+        # B agrees on the key but says one-to-many too: both cannot be right
+        "DB.S.B": {"relationships": [{"to": "DB.S.A", "on": "K", "cardinality": "one-to-many"}]},
+        # C names a different key: two edges between one pair, both flagged
+        "DB.S.C": {"relationships": [{"to": "DB.S.A", "on": "K2"}]},
+    }
+    g = relationship_graph(_normalized(docs))
+    ab = next(e for e in g["edges"] if {e["source"], e["target"]} == {"DB.S.A", "DB.S.B"})
+    assert ab["mutual"] is True
+    assert "A records one-to-many" in ab["conflict"] and "B records one-to-many" in ab["conflict"]
+    ac = [e for e in g["edges"] if {e["source"], e["target"]} == {"DB.S.A", "DB.S.C"}]
+    assert len(ac) == 2 and all(e["parallel"] == 2 for e in ac)
+    # a lone cardinality is adopted from whichever side recorded it
+    docs2 = {
+        "DB.S.A": {"relationships": [{"to": "DB.S.B", "on": "K"}]},
+        "DB.S.B": {"relationships": [{"to": "DB.S.A", "on": "K", "cardinality": "one-to-many"}]},
+    }
+    e = relationship_graph(_normalized(docs2))["edges"][0]
+    assert e["source"] == "DB.S.A" and e["cardinality"] == "many-to-one"
+    assert (e["source_end"], e["target_end"]) == ("many", "one")
+
+
+def test_relationship_graph_keeps_free_text_joins_visible_as_such():
+    docs = {
+        "DB.S.A": {
+            "relationships": [
+                {"to": "DB.S.B", "on": "lower(email) = lower(EMAIL)", "cardinality": "lots"},
+                {"to": "DB.S.C"},
+            ]
+        }
+    }
+    g = relationship_graph(_normalized(docs))
+    by_target = {e["target"]: e for e in g["edges"]}
+    b = by_target["DB.S.B"]
+    assert b["parsed"] is False and b["keys"] == []
+    assert b["label"] == "lower(email) = lower(EMAIL)"  # drawn as written, in italics
+    assert b["cardinality"] == "" and b["cardinality_text"] == "lots"  # no end markers
+    assert (b["source_end"], b["target_end"]) == ("", "")
+    c = by_target["DB.S.C"]
+    assert c["parsed"] is True and c["label"] == "" and c["on"] == ""
+
+
+def test_relationship_graph_accepts_unnormalized_docs():
+    # relationship_graph() is also called on docs a caller built by hand
+    g = relationship_graph({"DB.S.A": {"relationships": [{"to": "DB.S.B", "on": "X = Y"}]}})
+    assert g["edges"][0]["keys"] == [{"from": "X", "to": "Y"}]
+
+
+def _normalized(docs):
+    """What the store hands the graph: canonical entries with derived keys."""
+    from grayson.knowledge.relationships import normalize_relationships
+
+    return {
+        fqn: {**doc, "relationships": normalize_relationships(doc.get("relationships"), fqn)[0]}
+        for fqn, doc in docs.items()
+    }
+
+
 def test_relationship_graph_focus_is_a_neighbourhood():
     docs = {
         "DB.S.A": {"relationships": [{"to": "DB.S.B", "on": "K"}]},
@@ -274,6 +373,30 @@ def test_library_map_on_the_knowledge_tab(client, workspace):
     store.set_profile("DB.S.T1", {"relationships": [{"to": "DB.S.T2", "on": "ID"}]})
     page = client.get(f"/knowledge?t={TOKEN}")
     assert "Schema map" in page.text and "relgraph-library" in page.text
+
+
+def test_relationship_table_says_whose_column_is_whose(client, workspace):
+    """The fallback table (and the canvas payload) name the table each join
+    column belongs to — the verbatim `on` never did."""
+    store = KnowledgeStore(workspace.knowledge_dir)
+    store.set_profile(
+        "DB.S.ORDERS",
+        {
+            "relationships": [
+                {"to": "DB.S.PROMOS", "on": "PROMO_CODE = CODE", "cardinality": "N:1"},
+                {"to": "DB.S.X", "on": "lower(a) = lower(b)"},
+            ]
+        },
+    )
+    page = client.get(f"/knowledge/DB.S.ORDERS?t={TOKEN}").text
+    assert "ORDERS.PROMO_CODE = PROMOS.CODE" in page
+    assert "many-to-one" in page and "ORDERS many · PROMOS one" in page
+    assert "ORDERS only" in page  # declared by one side
+    assert 'class="freetext"' in page and "lower(a) = lower(b)" in page
+    payload = json.loads(page.split('id="relgraph-table-model">')[1].split("</script>")[0])
+    promos = next(e for e in payload["edges"] if e["target"] == "DB.S.PROMOS")
+    assert promos["label"] == "ORDERS.PROMO_CODE = PROMOS.CODE"
+    assert promos["source_end"] == "many" and promos["target_end"] == "one"
 
 
 def test_checks_tab_lists_and_flags(client, workspace):

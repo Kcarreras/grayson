@@ -68,7 +68,13 @@ they are equivalent. Never query Snowflake except through grayson.
    still undescribed). Ask the user for anything the data can't tell you. Save durable
    one-off answers with `grayson knowledge add`, and record the structured base
    descriptor (grain, column definitions, relationships, freshness) with
-   `grayson knowledge set`. If a target has no recorded knowledge at all, settle
+   `grayson knowledge set`. Record a relationship as
+   `{"to": "DB.SCHEMA.TABLE", "on": "THIS_COL = THAT_COL", "cardinality": "many-to-one"}`
+   — `on` is this table's column first (just `"COL"` when both share the name,
+   comma-separated for a composite key), cardinality is this table first
+   (ORDERS → CUSTOMERS is many-to-one). The console's schema map draws exactly
+   that; read the `warnings` the command returns and fix any shape it flags.
+   If a target has no recorded knowledge at all, settle
    grain/semantics with the user early — or run the `table-onboarding` workflow first.
    The recorded column list is a human artefact and falls behind the warehouse:
    session start reports `knowledge_drift` (columns added, dropped, or retyped since

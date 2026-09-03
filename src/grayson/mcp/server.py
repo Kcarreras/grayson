@@ -886,7 +886,12 @@ def build_server(workspace: Workspace) -> Any:
     @mcp.tool(
         description="Set structured base-descriptor fields for a table: grain, columns "
         "(name/type/description), relationships, freshness, owners, open_questions. "
-        "Merged per-field; returns the doc plus completeness. For where the table is "
+        "Merged per-field; returns the doc plus completeness and `warnings` (shapes that "
+        "had to be guessed or could not be read — fix them now, the schema map draws what "
+        "you recorded). Each relationship is {to: 'DB.SCHEMA.TABLE', on: 'THIS_COL = "
+        "THAT_COL' (just 'COL' when both sides share the name; comma-separate a composite "
+        "key), cardinality: one-to-one|one-to-many|many-to-one|many-to-many with THIS "
+        "table first (ORDERS → CUSTOMERS is many-to-one), note?}. For where the table is "
         "defined, prefer knowledge_define: it resolves a local file to its repo, "
         "commit, and hash instead of recording a bare path."
     )

@@ -6,6 +6,23 @@
  * of each other and the picture stays readable as the schema grows. Nothing
  * here positions anything by hand.
  *
+ * What an edge says, and how it says it:
+ *   - the label is the join key as column pairs: "ORDER_ID" when both sides
+ *     share the name, "ORDERS.PROMO_CODE = PROMOS.CODE" when they differ (the
+ *     line does not say which end declared it, so the label must), one pair
+ *     per line for a composite key. A join the server could not read as
+ *     column pairs is drawn in italics, as written.
+ *   - the line ends carry cardinality in crow's-foot spirit: a bar for "one",
+ *     a fork for "many". No cardinality recorded, no end markers.
+ *   - dashed: declared by one side only. A dashed node outline: a table the
+ *     library references but has no doc for.
+ * The tooltip spells all of it out in words, with the table each column
+ * belongs to, so nothing depends on decoding the glyphs.
+ *
+ * Colours come from the page's CSS tokens and are re-read when the theme
+ * changes (the nav toggle or the OS), so the canvas never keeps the previous
+ * theme's palette.
+ *
  * Everything is vendored under static/vendor - the console makes no network
  * requests and works offline.
  */
@@ -18,32 +35,28 @@
 
   var MONO = "ui-monospace, Consolas, monospace";
 
-  function build(root) {
-    var payload = document.getElementById(root.dataset.model);
-    if (!payload) throw new Error("no graph model");
-    var model = JSON.parse(payload.textContent);
-    var canvas = root.querySelector(".relgraph-canvas");
-    var t = {
+  function palette() {
+    return {
       panel: token("--panel"),
-      panel2: token("--panel2"),
-      border: token("--border"),
+      node: token("--rg-node") || token("--panel2"),
+      nodeBorder: token("--rg-node-border") || token("--border"),
+      edge: token("--rg-edge") || token("--border"),
+      edgeInk: token("--rg-edge-ink") || token("--ink-2"),
+      ink: token("--ink"),
       ink2: token("--ink-2"),
       muted: token("--muted"),
       faint: token("--faint"),
-      act: token("--act")
+      act: token("--act"),
+      attn: token("--attn")
     };
+  }
 
-    var elements = model.nodes
-      .map(function (n) {
-        return { group: "nodes", data: n };
-      })
-      .concat(
-        model.edges.map(function (e) {
-          return { group: "edges", data: e };
-        })
-      );
+  // Cytoscape has no crow's foot; "tee" is the standard "one" bar and "vee"
+  // is the closest thing to a fork. The legend under the canvas shows both.
+  var END_SHAPE = { one: "tee", many: "vee", "": "none" };
 
-    var style = [
+  function styleFor(t) {
+    return [
       {
         selector: "node",
         style: {
@@ -53,11 +66,11 @@
           width: "label",
           height: "label",
           padding: "10px",
-          "background-color": t.panel2,
-          "border-width": 1,
-          "border-color": t.border,
+          "background-color": t.node,
+          "border-width": 1.2,
+          "border-color": t.nodeBorder,
           label: "data(label)",
-          color: t.ink2,
+          color: t.ink,
           "font-family": MONO,
           "font-size": 12,
           "text-valign": "center",
@@ -88,40 +101,85 @@
           "taxi-direction": "auto",
           "taxi-turn": "50%",
           "taxi-turn-min-distance": 12,
-          width: 1.4,
-          "line-color": t.border,
-          "target-arrow-color": t.border,
-          "target-arrow-shape": "triangle",
-          "arrow-scale": 0.8,
+          width: 1.6,
+          "line-color": t.edge,
+          "source-arrow-color": t.edge,
+          "target-arrow-color": t.edge,
+          "source-arrow-shape": "none",
+          "target-arrow-shape": "none",
+          "arrow-scale": 0.9,
           "font-family": MONO,
-          "font-size": 10,
-          color: t.muted,
+          "font-size": 11,
+          color: t.edgeInk,
+          "text-wrap": "wrap",
+          "text-max-width": "260px",
           // An opaque chip behind the label is what stops join keys from
           // dissolving into the lines they sit on.
           "text-background-color": t.panel,
           "text-background-opacity": 1,
           "text-background-padding": 3,
           "text-background-shape": "roundrectangle",
-          "text-border-color": t.border,
+          "text-border-color": t.edge,
           "text-border-width": 1,
           "text-border-opacity": 1,
           "text-rotation": "none"
         }
       },
-      { selector: "edge.labelled", style: { label: "data(on)" } },
+      { selector: "edge.labelled", style: { label: "data(label)" } },
+      // A join that is not column pairs: shown as written, but visibly so.
+      { selector: "edge[!parsed]", style: { "font-style": "italic", color: t.muted } },
+      { selector: 'edge[source_end = "one"]', style: { "source-arrow-shape": END_SHAPE.one } },
+      { selector: 'edge[source_end = "many"]', style: { "source-arrow-shape": END_SHAPE.many } },
+      { selector: 'edge[target_end = "one"]', style: { "target-arrow-shape": END_SHAPE.one } },
+      { selector: 'edge[target_end = "many"]', style: { "target-arrow-shape": END_SHAPE.many } },
       {
         // Declared by one side only - usually an incomplete profile rather than
         // a different kind of relationship.
         selector: "edge[!mutual]",
-        style: { "line-style": "dashed" }
+        style: { "line-style": "dashed", "line-dash-pattern": [6, 4] }
       },
-      { selector: ".dim", style: { opacity: 0.18 } },
+      {
+        // The two sides disagree (on cardinality, or on which columns join):
+        // a fact worth a human's eye, coloured as such.
+        selector: "edge[conflict != ''], edge[parallel > 1]",
+        style: {
+          "line-color": t.attn,
+          "source-arrow-color": t.attn,
+          "target-arrow-color": t.attn,
+          "text-border-color": t.attn
+        }
+      },
+      { selector: ".dim", style: { opacity: 0.22 } },
       {
         selector: "edge.hot",
-        style: { "line-color": t.act, "target-arrow-color": t.act, width: 2.2, color: t.act }
+        style: {
+          "line-color": t.act,
+          "source-arrow-color": t.act,
+          "target-arrow-color": t.act,
+          width: 2.4,
+          color: t.ink,
+          "text-border-color": t.act
+        }
       },
       { selector: "node.hot", style: { "border-color": t.act, color: t.act } }
     ];
+  }
+
+  function build(root) {
+    var payload = document.getElementById(root.dataset.model);
+    if (!payload) throw new Error("no graph model");
+    var model = JSON.parse(payload.textContent);
+    var canvas = root.querySelector(".relgraph-canvas");
+
+    var elements = model.nodes
+      .map(function (n) {
+        return { group: "nodes", data: n };
+      })
+      .concat(
+        model.edges.map(function (e) {
+          return { group: "edges", data: e };
+        })
+      );
 
     // Node placement is the expensive step and it scales badly. Measured on a
     // synthetic warehouse schema: NETWORK_SIMPLEX takes 43 ms at 40 nodes,
@@ -129,6 +187,19 @@
     // than the payoff. BRANDES_KOEPF does 129 nodes in 263 ms; it spends about
     // 70% more vertical space, which on a big map you are panning anyway.
     var COMPACT_PLACEMENT_MAX_NODES = 60;
+
+    // The join-key chip sits mid-edge and edges draw under nodes, so a chip
+    // wider than the gap between layers is hidden behind the boxes it joins.
+    // Size the gap from the longest label line (11px mono, ~6.8px a glyph),
+    // capped where the label wraps anyway (text-max-width above).
+    var longestLabel = model.edges.reduce(function (n, e) {
+      return Math.max(n, String(e.label || "").split("\n").reduce(function (m, l) {
+        return Math.max(m, l.length);
+      }, 0));
+    }, 0);
+    var layerGap = model.edge_labels
+      ? Math.min(300, Math.max(112, Math.round(longestLabel * 6.8) + 56))
+      : 112;
 
     function layout(direction) {
       return {
@@ -152,7 +223,7 @@
           "elk.spacing.nodeNode": 42,
           "elk.spacing.edgeNode": 26,
           "elk.spacing.edgeEdge": 16,
-          "elk.layered.spacing.nodeNodeBetweenLayers": 96,
+          "elk.layered.spacing.nodeNodeBetweenLayers": layerGap,
           "elk.layered.spacing.edgeNodeBetweenLayers": 26,
           "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES"
         }
@@ -164,7 +235,7 @@
     var cy = cytoscape({
       container: canvas,
       elements: elements,
-      style: style,
+      style: styleFor(palette()),
       layout: layout(direction),
       wheelSensitivity: 0.2,
       maxZoom: 2.5,
@@ -178,16 +249,38 @@
 
     if (model.edge_labels) cy.edges().addClass("labelled");
 
+    // -- theme ------------------------------------------------------------
+    // Tokens were read once at build; re-read them whenever the theme moves.
+    function restyle() {
+      cy.style(styleFor(palette()));
+    }
+    if (window.MutationObserver) {
+      new MutationObserver(restyle).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"]
+      });
+    }
+    if (window.matchMedia) {
+      var mq = window.matchMedia("(prefers-color-scheme: light)");
+      if (mq.addEventListener) mq.addEventListener("change", restyle);
+      else if (mq.addListener) mq.addListener(restyle);
+    }
+
     // -- hover detail ----------------------------------------------------
     var tip = root.querySelector(".relgraph-tip");
 
     // Table names, join keys and notes are written by agents into the knowledge
     // library, so the tooltip is assembled from nodes rather than interpolated
     // into innerHTML - none of it is trusted markup.
-    function line(text, tag) {
+    function line(text, tag, cls) {
       var el = document.createElement(tag || "div");
       el.textContent = text;
+      if (cls) el.className = cls;
       return el;
+    }
+
+    function leaf(fqn) {
+      return fqn.split(".").pop();
     }
 
     function describe(el) {
@@ -199,13 +292,37 @@
         out.appendChild(line(el.connectedEdges().length + " relationship(s)"));
         return out;
       }
-      out.appendChild(
-        line(d.source.split(".").pop() + " → " + d.target.split(".").pop(), "b")
-      );
-      if (d.on) out.appendChild(line("on " + d.on));
-      if (d.cardinality) out.appendChild(line(d.cardinality));
+      var s = leaf(d.source), t = leaf(d.target);
+      var head = s + " → " + t;
+      if (d.cardinality) head += "  (" + d.cardinality + ")";
+      out.appendChild(line(head, "b"));
+      if (d.source_end) {
+        out.appendChild(
+          line(d.source_end + " " + s + (d.source_end === "many" ? " rows" : " row") +
+            " per " + d.target_end + " " + t + (d.target_end === "many" ? " rows" : " row"),
+            "div", "tip-side")
+        );
+      }
+      if (d.keys && d.keys.length) {
+        d.keys.forEach(function (k) {
+          out.appendChild(line(s + "." + k.from + " = " + t + "." + k.to, "div", "tip-mono"));
+        });
+      } else if (d.on) {
+        out.appendChild(line("join as written: " + d.on, "i"));
+      } else {
+        out.appendChild(line("no join key recorded", "i", "tip-warn"));
+      }
       if (d.note) out.appendChild(line(d.note));
-      if (!d.mutual) out.appendChild(line("declared by one side only", "i"));
+      if (d.conflict) out.appendChild(line("sides disagree: " + d.conflict, "div", "tip-warn"));
+      if (d.parallel > 1) {
+        out.appendChild(
+          line(d.parallel + " different join keys are recorded between these tables", "div", "tip-warn")
+        );
+      }
+      out.appendChild(
+        line(d.mutual ? "declared by both tables" : "declared by " + leaf(d.declared_by[0]) + " only",
+          "i", "tip-side")
+      );
       return out;
     }
 

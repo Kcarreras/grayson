@@ -90,7 +90,10 @@ def test_loose_shapes_normalize_instead_of_crashing(workspace):
     doc = store.read("DB.S.PAYMENTS")
     rels = doc["relationships"]
     assert [r["to"] for r in rels] == ["DB.S.CUSTOMERS", "DB.S.ORDERS"]  # 42 dropped
-    assert rels[1]["on"] == "PAYMENTS.ORDER_ID = ORDERS.ORDER_ID"  # join alias mapped
+    # the `join` alias is read, and its qualified spelling canonicalises to the
+    # column pair the map can draw: same name both sides, so just the column
+    assert rels[1]["on"] == "ORDER_ID"
+    assert rels[1]["keys"] == [{"from": "ORDER_ID", "to": "ORDER_ID"}]
     assert doc["columns"][0] == {"name": "PAYMENT_ID"}  # string column coerced
 
     client = TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1")
@@ -106,3 +109,37 @@ def test_set_profile_validates_relationships(workspace):
         store.set_profile("DB.S.T9", {"relationships": [42]})
     out = store.set_profile("DB.S.T9", {"relationships": ["DB.S.OTHER", {"table": "DB.S.THIRD"}]})
     assert [r["to"] for r in out["relationships"]] == ["DB.S.OTHER", "DB.S.THIRD"]
+
+
+def test_set_profile_returns_shape_warnings(workspace):
+    """An agent that records a join key the map cannot read hears about it in
+    the same call, not from a reader of the canvas later."""
+    store = KnowledgeStore(workspace.knowledge_dir)
+    out = store.set_profile(
+        "DB.S.ORDERS",
+        {
+            "columns": [{"name": "ORDER_ID"}, {"name": "CUSTOMER_ID"}],
+            "relationships": [
+                {"to": "customers", "on": "customer_id", "cardinality": "N:1"},
+                {"to": "DB.S.PROMOS", "on": "lower(code) = lower(PROMO_CODE)"},
+                {"to": "DB.S.LINES", "on": "LINE_ID", "cardinality": "lots"},
+            ],
+        },
+    )
+    rels = {r["to"]: r for r in out["relationships"]}
+    assert rels["DB.S.CUSTOMERS"]["on"] == "CUSTOMER_ID"  # qualified from ORDERS, upper-cased
+    assert rels["DB.S.CUSTOMERS"]["cardinality"] == "many-to-one"
+    assert rels["DB.S.PROMOS"]["keys"] == []  # free text stays free text
+    assert rels["DB.S.PROMOS"]["on"] == "lower(code) = lower(PROMO_CODE)"
+    joined = " | ".join(out["warnings"])
+    assert "not fully qualified" in joined and "DB.S.CUSTOMERS" in joined
+    assert "not a column equality" in joined
+    assert "'lots'" in joined
+    assert "LINE_ID" in joined and "not in this table's recorded columns" in joined
+    # the derived `keys` never reach the file; `on` does, canonicalised
+    text = store.table_path("DB.S.ORDERS").read_text(encoding="utf-8")
+    assert "keys:" not in text and "cardinality: many-to-one" in text
+    assert "'on': CUSTOMER_ID" in text  # quoted: a bare `on` is a YAML boolean
+    # ...and lint reports the same for what is already on disk
+    problems = " | ".join(w["problem"] for w in store.lint()["warnings"])
+    assert "free text" in problems and "'lots'" in problems

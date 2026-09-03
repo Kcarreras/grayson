@@ -2,7 +2,11 @@
 
    The canvas is Cytoscape.js laid out by ELK (static/vendor). The table below
    it is not a consolation prize: it is the accessible, copyable, searchable
-   form of the same data, and it is what remains if the canvas cannot render. #}
+   form of the same data, and it is what remains if the canvas cannot render.
+
+   Every edge carries the join key as column pairs oriented from the declaring
+   table (`keys`), the canonical cardinality, and which table(s) declared it,
+   so both the canvas and the table can say whose column is whose. #}
 {% macro relgraph(graph, token, dom_id="relgraph", height=420) %}
 <div class="relgraph" data-model="{{ dom_id }}-model"
      data-href="/knowledge/__FQN__{% if token %}?t={{ token }}{% endif %}"
@@ -23,8 +27,13 @@
     <div class="relgraph-note">Laying out diagram…</div>
   </div>
   <div class="faint small relgraph-legend">
-    Drag to pan, scroll to zoom, click a table to open it. Dashed outline: not
-    described in the library yet. Dashed line: only one side declares it.
+    <span class="lg">Drag to pan · scroll to zoom · click a table to open it</span>
+    <span class="lg"><svg viewBox="0 0 34 12" aria-hidden="true"><line x1="3" y1="6" x2="31" y2="6"/><line x1="4" y1="1" x2="4" y2="11"/></svg>one</span>
+    <span class="lg"><svg viewBox="0 0 34 12" aria-hidden="true"><line x1="3" y1="6" x2="31" y2="6"/><path d="M 31 1 L 24 6 L 31 11"/></svg>many</span>
+    <span class="lg"><svg viewBox="0 0 34 12" aria-hidden="true"><line x1="3" y1="6" x2="31" y2="6"/></svg>cardinality not recorded</span>
+    <span class="lg"><svg viewBox="0 0 34 12" aria-hidden="true"><line class="dash" x1="3" y1="6" x2="31" y2="6"/></svg>declared by one side only</span>
+    <span class="lg"><svg viewBox="0 0 34 12" aria-hidden="true"><rect class="dash" x="4" y="1" width="26" height="10" rx="3"/></svg>not described in the library yet</span>
+    <span class="lg"><span class="mono">T1.A = T2.B</span> whose column is whose; <i>italic</i>: a join kept as written, not read as columns</span>
   </div>
   <script type="application/json" id="{{ dom_id }}-model">{{ graph | tojson }}</script>
 </div>
@@ -33,15 +42,25 @@
   <summary>Relationships as a table ({{ graph.edges | length }})</summary>
   <div class="fold-body scroll">
     <table>
-      <tr><th>From</th><th>To</th><th>On</th><th>Cardinality</th><th>Note</th></tr>
+      <tr><th>From</th><th>To</th><th>Join key</th><th>Cardinality</th><th>Declared by</th><th>Note</th></tr>
       {% for e in graph.edges %}
+      {% set s = e.source.split(".") | last %}{% set t = e.target.split(".") | last %}
       <tr>
         <td class="mono">{{ e.source }}</td>
         <td class="mono">{{ e.target }}</td>
-        <td class="mono">{{ e.on or "—" }}</td>
-        <td class="muted small">{{ e.cardinality or "—" }}</td>
-        <td class="muted small">{{ e.note }}{% if not e.mutual %}<span class="faint">
-          declared by one side only</span>{% endif %}</td>
+        <td class="mono joinkey">
+          {#- e["keys"], not e.keys: on a dict the attribute is the method #}
+          {%- if e["keys"] -%}
+            {%- for k in e["keys"] -%}<span class="pair">{{ s }}.{{ k["from"] }} = {{ t }}.{{ k["to"] }}</span>{%- endfor -%}
+          {%- elif e.on -%}<span class="freetext" title="Not read as column pairs; shown as written">{{ e.on }}</span>
+          {%- else -%}<span class="attn-text">none recorded</span>{%- endif -%}
+        </td>
+        <td class="muted small">{{ e.cardinality_text or "—" }}
+          {%- if e.cardinality %} <span class="faint">({{ s }} {{ e.source_end }} · {{ t }} {{ e.target_end }})</span>{% endif %}
+          {%- if e.conflict %}<div class="attn-text">sides disagree: {{ e.conflict }}</div>{% endif %}</td>
+        <td class="muted small">{% if e.mutual %}both{% else %}{{ e.declared_by[0].split(".") | last }} only{% endif %}
+          {%- if e.parallel > 1 %}<div class="attn-text">{{ e.parallel }} different join keys recorded for this pair</div>{% endif %}</td>
+        <td class="muted small">{{ e.note }}</td>
       </tr>
       {% endfor %}
     </table>

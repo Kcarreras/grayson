@@ -16,6 +16,16 @@ from typing import Any
 
 from markupsafe import Markup, escape
 
+from grayson.knowledge.relationships import (
+    CARDINALITIES,
+    cardinality_ends,
+    flip_cardinality,
+    flip_keys,
+    join_label,
+    normalize_cardinality,
+    parse_join,
+)
+
 # ALL-CAPS heading followed by a colon, e.g. "WHY THIS FIX:", "RISKS:",
 # "ASSUMPTIONS TO CONFIRM BEFORE APPLYING:". Requires >= 3 chars so ordinary
 # sentences with a capitalized word and colon ("SQL:") rarely false-positive.
@@ -330,45 +340,94 @@ def _qualifier(fqn: str) -> str:
     return ".".join(fqn.split(".")[:-1])
 
 
-def _pair_key(a: str, b: str, on: str) -> tuple[str, str, str]:
+def _pair_key(a: str, b: str, rel: Mapping[str, Any]) -> tuple[str, str, Any]:
     """Direction-independent identity of a relationship.
 
-    A declaring 'to B on ID' and B declaring 'to A on ID' describe one edge, not
-    two. The old diagram drew both, which is where its duplicated parallel lines
-    came from.
+    A declaring 'to B on PROMO_CODE = CODE' and B declaring 'to A on CODE =
+    PROMO_CODE' describe one edge, not two: the column pairs are oriented from
+    the lexically smaller table before comparing, so the spelling each side
+    chose does not matter. A join that never parsed into columns falls back to
+    its text. The old diagram compared raw strings, which is where its
+    duplicated parallel lines came from.
     """
     lo, hi = sorted((a, b))
-    return (lo, hi, re.sub(r"\s+", "", str(on).upper()))
+    keys = rel.get("keys") or []
+    if keys:
+        oriented = keys if a == lo else flip_keys(keys)
+        return (lo, hi, frozenset((k["from"], k["to"]) for k in oriented))
+    return (lo, hi, re.sub(r"\s+", "", str(rel.get("on") or "").upper()))
 
 
 def _collect_edges(docs: Mapping[str, Mapping[str, Any]]) -> list[dict]:
-    """Every declared relationship across `docs`, deduplicated."""
-    seen: dict[tuple[str, str, str], dict] = {}
-    for source, doc in docs.items():
+    """Every declared relationship across `docs`, deduplicated.
+
+    Each edge runs from the table that declared it to the table it names, and
+    carries the join key as column pairs oriented the same way, the canonical
+    cardinality (source side first) and the ends that cardinality puts on the
+    line. When both tables declare it the edge is `mutual`; when they disagree
+    on cardinality the edge says so rather than silently keeping one.
+    """
+    seen: dict[tuple[str, str, Any], dict] = {}
+    for raw_source, doc in docs.items():
+        source = str(raw_source).upper()
         for rel in doc.get("relationships") or []:
             if not isinstance(rel, Mapping):  # store.read normalizes; stay safe anyway
                 continue
             target = str(rel.get("to") or "").strip().upper()
             if not target or target == source:
                 continue
-            on = str(rel.get("on") or "")
-            key = _pair_key(source, target, on)
+            keys = rel.get("keys")
+            if keys is None:  # a caller handing us un-normalized docs
+                keys = parse_join(rel.get("on"), source, target) or []
+            rel = {**rel, "keys": keys}
+            card = normalize_cardinality(rel.get("cardinality"))
+            key = _pair_key(source, target, rel)
             if key in seen:
-                # Keep the first declaration but remember that both sides agree;
-                # a relationship only one side knows about is worth flagging.
-                seen[key]["mutual"] = True
+                first = seen[key]
+                first["mutual"] = True
+                first["declared_by"].append(source)
+                # The other side's cardinality reads in the opposite direction.
+                theirs = flip_cardinality(card) if first["source"] == target else card
+                if theirs and not first["cardinality"]:
+                    first["cardinality"] = theirs
+                    first["source_end"], first["target_end"] = cardinality_ends(theirs)
+                elif theirs and theirs != first["cardinality"]:
+                    first["conflict"] = (
+                        f"{_leaf(first['source'])} records {first['cardinality']}, "
+                        f"{_leaf(source)} records {card}"
+                    )
+                if rel.get("note") and not first["note"]:
+                    first["note"] = str(rel["note"])
                 continue
+            source_end, target_end = cardinality_ends(card)
+            on = str(rel.get("on") or "")
             seen[key] = {
                 "source": source,
                 "target": target,
                 "on": on,
-                "cardinality": str(rel.get("cardinality") or ""),
+                "keys": list(keys),
+                # what the canvas prints on the line; free text stays as written
+                "label": join_label(keys, source, target) if keys else on,
+                "parsed": bool(keys) or not on,
+                "cardinality": card if card in CARDINALITIES else "",
+                "cardinality_text": card,
+                "source_end": source_end,
+                "target_end": target_end,
                 "note": str(rel.get("note") or ""),
                 "mutual": False,
+                "declared_by": [source],
+                "conflict": "",
             }
     edges = list(seen.values())
+    # Two different join keys recorded between the same pair of tables is
+    # usually the two sides disagreeing, not two relationships; say so.
+    by_pair: dict[tuple[str, str], int] = {}
+    for edge in edges:
+        pair = tuple(sorted((edge["source"], edge["target"])))
+        by_pair[pair] = by_pair.get(pair, 0) + 1
     for i, edge in enumerate(edges):
         edge["id"] = f"e{i}"
+        edge["parallel"] = by_pair[tuple(sorted((edge["source"], edge["target"])))]
     return edges
 
 
