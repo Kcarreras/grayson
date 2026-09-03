@@ -435,3 +435,28 @@ def test_answer_key_covers_every_planted_problem_and_decoy(tmp_path):
                  "last day", "PAID_AT", "Black Friday"):  # fmt: skip
         assert term in key, term
     assert len(DECOYS) >= 5 and len(PLANTED) == 10
+
+
+def test_a_finding_counts_toward_one_problem_only(sandbox_ws):
+    truth = ground_truth()
+    sid = _start("bug-hunter", "SANDBOX.SHOP.ORDERS_ENRICHED")
+    q = _query(sid, "SELECT COUNT(*) AS N FROM SANDBOX.SHOP.ORDERS_ENRICHED")
+    s = Session(sandbox_ws, sid)
+    # a fan-out finding worded with 'revenue' and 'inflated' brushes the
+    # minor-units matcher; it must be credited to fan-out alone
+    _finding(
+        s, q, "Row count and revenue inflated by duplicate rows",
+        f"Orders with re-issued promo codes appear twice after the LEFT JOIN, inflating "
+        f"revenue; {truth['orders_enriched']['extra_rows']} extra rows.",
+        extra={
+            "resolution": "root_caused",
+            "root_cause": "PROMOS has duplicate CODE rows",
+            "blast_radius": "see summary",
+            "alternatives_tested": "ORDERS itself is unique",
+        },
+    )  # fmt: skip
+    result = score_session(s)
+    by_id = {p["id"]: p for p in result["problems"]}
+    assert by_id["orders_join_fanout"]["points"] == 3
+    assert by_id["orders_amount_in_cents"]["identified"] is False
+    assert result["score"] == {"points": 3, "possible": 6}

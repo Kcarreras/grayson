@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from bisect import bisect_right
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -64,7 +65,7 @@ class ChartSpec(BaseModel):
     #: histogram only: the bin count the author asked for (None = chosen from
     #: the row count); the effective count, after the edges are made round,
     #: is reported by chart_data
-    bins: int | None = Field(default=None, ge=MIN_BINS, le=MAX_BINS)
+    bins: int | None = None
     worker: str | None = None
     created_at: str = Field(default_factory=utcnow)
 
@@ -73,13 +74,21 @@ class ChartSpec(BaseModel):
         if self.kind == "histogram":
             if self.y:
                 raise ValueError(
-                    "a histogram bins its x column and counts rows — it takes no y column"
+                    "a histogram takes no y column — it bins the numeric x column and counts "
+                    "rows. To plot a measure you already aggregated, use bar"
                 )
         elif not self.y:
-            raise ValueError("y is required: name at least one measure column")
+            raise ValueError(f"{self.kind} charts need at least one y column (a measure)")
         if self.bins is not None and self.kind != "histogram":
             raise ValueError("bins applies to histograms only")
         return self
+
+    @field_validator("bins")
+    @classmethod
+    def _bins_in_range(cls, v: int | None) -> int | None:
+        if v is not None and not (MIN_BINS <= v <= MAX_BINS):
+            raise ValueError(f"bins must be between {MIN_BINS} and {MAX_BINS}, got {v}")
+        return v
 
     @field_validator("qid")
     @classmethod
@@ -142,18 +151,13 @@ def add_chart(
     """Validate a chart against the cached artifact and persist it."""
     if kind not in KINDS:
         raise ChartError(f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
-    if kind == "histogram":
-        if y:
-            raise ChartError(
-                "a histogram takes no y column — it bins the numeric x column and counts "
-                "rows. To plot a measure you already aggregated, use bar"
-            )
-        if bins is not None and not (MIN_BINS <= bins <= MAX_BINS):
-            raise ChartError(f"bins must be between {MIN_BINS} and {MAX_BINS}, got {bins}")
-    elif bins is not None:
-        raise ChartError("bins applies to histograms only")
-    if kind != "histogram" and not y:
-        raise ChartError(f"{kind} charts need at least one y column (a measure)")
+    # kind-specific shape rules (y per kind, bins) live on ChartSpec and are
+    # checked first, before the artifact is read
+    try:
+        ChartSpec(chart_id="c_000", qid="q_0000", kind=kind, x=x, y=y, title="_", bins=bins)
+    except PydanticValidationError as e:
+        first = e.errors()[0]
+        raise ChartError(str(first.get("ctx", {}).get("error") or first["msg"])) from e
     if kind == "bar" and len(y) > 1:
         raise ChartError(
             "bar charts take one y column — make one chart per measure "
@@ -317,22 +321,20 @@ def _nice_width(raw: float) -> float:
 def bin_edges(lo: float, hi: float, bins: int) -> list[float]:
     """Bin edges of a round width covering [lo, hi]. The count comes out near
     `bins`, not exactly on it: round edges are worth more than a round count.
-    A degenerate range (every value equal) gets one bin around the value."""
-    if bins < 1:
-        bins = 1
+    A degenerate range (every value equal) gets one bin around the value.
+    Edges are computed as start + i × width, never by running addition, so
+    0.1 ten times is 1.0 and a value on an edge lands in the bin it opens."""
+    bins = max(bins, 1)
     if hi <= lo:
         width = _nice_width(abs(lo) * 0.1 or 1.0)
         start = math.floor(lo / width) * width
         return [round(start, 10), round(start + width, 10)]
     width = _nice_width((hi - lo) / bins)
     start = math.floor(lo / width) * width
-    edges = [start]
-    # the top edge is exclusive except for the last bin, which takes hi itself
-    while edges[-1] < hi or len(edges) < 2:
-        edges.append(edges[-1] + width)
-        if len(edges) > MAX_BINS + 1:  # rounding produced more bins than asked: coarsen
-            return bin_edges(lo, hi, max(1, bins // 2))
-    return [round(e, 10) for e in edges]
+    count = max(1, math.ceil((hi - start) / width - 1e-9))
+    if count > MAX_BINS:  # rounding produced more bins than asked: coarsen
+        return bin_edges(lo, hi, max(1, bins // 2))
+    return [round(start + i * width, 10) for i in range(count + 1)]
 
 
 def _bin_label(lo: float, hi: float) -> str:
@@ -372,8 +374,8 @@ def _histogram_data(session: Session, spec: dict) -> dict:
     counts = [0] * (len(edges) - 1)
     last = len(counts) - 1
     for v in values:
-        i = int((v - edges[0]) / width)
-        counts[min(max(i, 0), last)] += 1  # the top edge is inclusive
+        # a bin owns its lower edge; the top edge belongs to the last bin
+        counts[min(max(bisect_right(edges, round(v, 10)) - 1, 0), last)] += 1
     points = [
         {"x": _bin_label(edges[i], edges[i + 1]), "lo": edges[i], "hi": edges[i + 1], "y": [c]}
         for i, c in enumerate(counts)

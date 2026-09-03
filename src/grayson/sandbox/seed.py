@@ -143,7 +143,7 @@ _FIRST = [
     "Fleur",
     "Aoife",
     "Cian",
-]  # noqa: SIM905
+]
 _LAST = [
     "Smith",
     "Johnson",
@@ -197,7 +197,7 @@ _LAST = [
     "Byrne",
     "Ryan",
     "Walsh",
-]  # noqa: SIM905
+]
 _DOMAINS = (
     ("gmail.com", 44),
     ("outlook.com", 9),
@@ -238,6 +238,11 @@ _WEEKDAY = (1.0, 1.05, 1.02, 1.0, 1.1, 0.86, 0.8)  # Mon..Sun
 
 def _fq(name: str) -> str:
     return f"{CATALOG}.{SCHEMA}.{name}"
+
+
+def table_names() -> list[str]:
+    """Every seeded table, fully qualified — LAST_ALTERED is the inventory."""
+    return [_fq(t) for t in LAST_ALTERED]
 
 
 def _weighted(rng: random.Random, table: tuple[tuple[str, int], ...]) -> str:

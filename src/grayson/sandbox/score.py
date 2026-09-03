@@ -28,6 +28,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from grayson.sandbox.seed import _fq
+
 if TYPE_CHECKING:
     from grayson.core.session import Session
     from grayson.workspace import Workspace
@@ -63,12 +65,6 @@ class Problem:
     quantities: tuple[str, ...] = ()  # keys into the truth section
     ids: str | None = None  # key into the truth section
     section: str = field(default="")
-
-
-def _fq(name: str) -> str:
-    from grayson.sandbox.seed import CATALOG, SCHEMA
-
-    return f"{CATALOG}.{SCHEMA}.{name}"
 
 
 PLANTED: tuple[Problem, ...] = (
@@ -652,12 +648,37 @@ def score_finding(problem: Problem, truth: dict, finding: dict) -> dict:
     quantified, expected = _quantified(problem, truth, text) if identified else (False, [])
     return {
         "fid": finding["fid"],
+        "problem": problem.id,
         "identified": identified,
         "explained": explained,
         "quantified": quantified,
         "points": int(identified) + int(explained) + int(quantified),
+        # how many identify terms hit: the tiebreak when one finding's words
+        # brush two problems, so it is attributed to the one it is about
+        "hits": _term_hits(problem.identify, text) if identified else 0,
         "expected": expected,
     }
+
+
+def _term_hits(groups: tuple[tuple[str, ...], ...], text: str) -> int:
+    return sum(1 for group in groups for term in group if re.search(term, text, re.IGNORECASE))
+
+
+def attribute(problems: list[Problem], truth: dict, findings: list[dict]) -> dict[str, list]:
+    """Each finding counts toward at most one problem: the one it scores
+    highest on, then the one whose terms it hits most. Planted problems on a
+    shared table share words (inflated revenue is both a fan-out and a
+    minor-units symptom), and without this a single finding would be
+    credited with identifying both."""
+    by_problem: dict[str, list] = {p.id: [] for p in problems}
+    for finding in findings:
+        scored = [score_finding(p, truth, finding) for p in problems]
+        hits = [sc for sc in scored if sc["identified"]]
+        if not hits:
+            continue
+        best = max(hits, key=lambda sc: (sc["points"], sc["hits"]))
+        by_problem[best["problem"]].append(best)
+    return by_problem
 
 
 # -- sessions ----------------------------------------------------------------
@@ -665,8 +686,8 @@ def score_finding(problem: Problem, truth: dict, finding: dict) -> dict:
 
 def _effort(session: Session) -> dict:
     stats = session.query_stats()
-    log = session.query_log(limit=stats["total"] + 1)
-    executed_ts = sorted(q["ts"] for q in log if q["status"] == "executed" and q["ts"])
+    log = session.query_log(limit=stats["total"] + 1, status="executed")
+    executed_ts = sorted(q["ts"] for q in log if q["ts"])
     interventions = session.interventions()
     checkpoints = session.checkpoints()
     from grayson.charts import list_charts
@@ -715,9 +736,9 @@ def score_session(session: Session, truth: dict | None = None) -> dict:
     accepted = {f["fid"] for f in findings if f["accepted"] and not f.get("superseded_by")}
     matched: set[str] = set()
     rows = []
+    attributed = attribute(problems, truth, live)
     for problem in problems:
-        scored = [score_finding(problem, truth, f) for f in live]
-        hits = [s for s in scored if s["identified"]]
+        hits = attributed[problem.id]
         matched.update(s["fid"] for s in hits)
         best = max(hits, key=lambda s: (s["points"], s["fid"] in accepted), default=None)
         rows.append(

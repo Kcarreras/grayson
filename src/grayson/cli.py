@@ -3088,7 +3088,7 @@ def sandbox_init(
     human. Point your agent at the workspace WITHOUT showing it the answer key.
     """
     from grayson.sandbox.executor import sandbox_db_path
-    from grayson.sandbox.seed import render_answer_key, seed_sandbox
+    from grayson.sandbox.seed import render_answer_key, seed_sandbox, table_names
 
     _refuse_nested_workspace(path)
     try:
@@ -3107,14 +3107,7 @@ def sandbox_init(
         {
             "workspace": str(ws.root),
             "warehouse": str(sandbox_db_path(ws.root)),
-            "tables": [
-                "SANDBOX.SHOP.CUSTOMERS",
-                "SANDBOX.SHOP.ORDERS",
-                "SANDBOX.SHOP.PROMOS",
-                "SANDBOX.SHOP.ORDERS_ENRICHED",
-                "SANDBOX.SHOP.PAYMENTS",
-                "SANDBOX.SHOP.PAYMENTS_V2",
-            ],
+            "tables": table_names(),
             "answer_key": str(key_path),
             "next": [
                 f"cd {path}",
