@@ -25,6 +25,27 @@ _SECTION_RE = re.compile(r"(?:(?<=^)|(?<=[.?!)\]]\s)|(?<=\n))([A-Z][A-Z0-9 /&',-
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
 
 
+#: what each base-descriptor gap is called on a tile, where "3 gaps" says
+#: nothing a reader can act on. Keyed by the item `completeness()` reports.
+_GAP_LABELS = {
+    "grain": "no grain",
+    "columns": "no columns",
+    "freshness": "no freshness",
+    "relationships": "no relationships",
+    "definition_files": "no definition",
+}
+_COLUMN_GAP = re.compile(r"^column_descriptions \((\d+)/(\d+)\)$")
+
+
+def gap_label(item: str) -> str:
+    """A completeness gap as a reader names it: `grain` -> "no grain",
+    `column_descriptions (3/10)` -> "3/10 columns described"."""
+    m = _COLUMN_GAP.match(item)
+    if m:
+        return f"{m.group(1)}/{m.group(2)} columns described"
+    return _GAP_LABELS.get(item, item.replace("_", " "))
+
+
 def paragraphs(text: object, sentences_per_para: int = 3) -> Markup:
     """Break agent prose into readable paragraphs.
 

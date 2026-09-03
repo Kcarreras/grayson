@@ -86,7 +86,8 @@
       {% if c.open_questions %}
         <span class="badge attn">{{ c.open_questions }} open</span>{% endif %}
       {% if c.base_complete %}<span class="badge ok">base complete</span>
-      {% else %}<span class="badge plain">{{ c.missing | length }} gap{{ "s" if c.missing | length != 1 }}</span>{% endif %}
+      {% else %}{# name each gap on the tile — a count says nothing a reader can act on #}
+      {% for m in c.missing %}<span class="badge plain" title="Still undescribed: {{ m | replace("_", " ") }}">{{ gap_label(m) }}</span>{% endfor %}{% endif %}
     </span>
   </summary>
   <div class="ink2 small" style="margin: 8px 0 2px;">{{ t.grain or "grain not declared" }}</div>
@@ -97,9 +98,6 @@
     {% if c.facts_user_confirmed %}
       <span class="badge ok">{{ c.facts_user_confirmed }} confirmed</span>{% endif %}
   </div>
-  {% if c.missing %}
-  <div class="faint small" style="margin-top: 8px;">missing: {{ c.missing | join(", ") }}</div>
-  {% endif %}
   <a class="btn secondary sm" style="margin-top: 10px;" href="/knowledge/{{ t.table }}?t={{ token }}">Open →</a>
 </details>
 {% endif %}

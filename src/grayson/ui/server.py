@@ -34,7 +34,13 @@ from grayson.records import (
     search_records,
     session_records,
 )
-from grayson.ui.format import GLOSSARY, paragraphs, relationship_graph, split_sections
+from grayson.ui.format import (
+    GLOSSARY,
+    gap_label,
+    paragraphs,
+    relationship_graph,
+    split_sections,
+)
 from grayson.ui.sqlhl import highlight_sql
 from grayson.util import parse_table_list
 from grayson.workspace import Workspace
@@ -57,6 +63,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.globals["token"] = token or ""
     templates.env.globals["help"] = _help_widget
+    templates.env.globals["gap_label"] = gap_label
     templates.env.globals["stages"] = STAGES
     templates.env.globals["asset_version"] = __version__
     templates.env.filters["sections"] = split_sections
