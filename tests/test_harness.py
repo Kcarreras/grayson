@@ -148,6 +148,9 @@ def test_workflow_author_skill_written_per_harness(tmp_path):
         text = (root / rel).read_text(encoding="utf-8")
         assert text.startswith("---\nname: grayson-workflow-author\n")
         assert "workflow preview" in text and "MEANINGLESS without" in text
+        # the interview covers the workflow's own findings fields and deletion
+        assert "findings_fields" in text and "choices" in text
+        assert "workflow delete" in text
         assert (root / ".grayson" / "WORKFLOW_AUTHOR.md").is_file()
 
     codex_root = tmp_path / "codex"

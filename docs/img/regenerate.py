@@ -124,7 +124,7 @@ add_chart(
     "Inflated rows by order day",
     note="duplication tracks promo usage, not load time",
 )
-add_chart(
+radius_chart = add_chart(
     s,
     q3,
     "bar",
@@ -132,14 +132,18 @@ add_chart(
     ["EXTRA_ROWS"],
     "Duplicated rows by promo code",
     note="the fan-out isolates to two codes",
-)
+)["chart_id"]
 
 engine.complete_checkpoint(
     s, "validate_expectation", [q1, q2], "3396 rows vs 3000 orders; expectation holds in ORDERS"
 )
 engine.complete_checkpoint(s, "replicate_anomaly", [q1, q5], "396 order_ids appear twice")
 engine.complete_checkpoint(
-    s, "scope_blast_radius", [q3, q7], "confined to SUMMER25 and FLASH5; every status affected"
+    s,
+    "scope_blast_radius",
+    [q3, q7],
+    "confined to SUMMER25 and FLASH5; every status affected",
+    charts=[radius_chart],  # the workflow requires the blast radius as a picture
 )
 engine.complete_checkpoint(s, "upstream_trace", [q3, q4], "both codes were re-issued in PROMOS")
 

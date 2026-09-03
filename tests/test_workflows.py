@@ -200,3 +200,95 @@ def test_feature_readiness_is_distinct_from_table_health():
     fr = set(get_workflow("feature-readiness", None).required_check_keys())
     th = set(get_workflow("table-health", None).required_check_keys())
     assert not (fr & th)
+
+
+# -- tags and findings fields ---------------------------------------------------
+
+
+def test_tags_normalise_and_validate():
+    from grayson.workflows.models import WorkflowTemplate
+
+    assert WorkflowTemplate(name="x", tags=["Orders", "orders", " fin-ance "]).tags == [
+        "orders",
+        "fin-ance",
+    ]
+    with pytest.raises(ValueError, match="tag"):
+        WorkflowTemplate(name="x", tags=["has space"])
+
+
+def test_findings_fields_validate():
+    from grayson.workflows.models import WorkflowTemplate
+
+    tpl = WorkflowTemplate(
+        name="x",
+        findings_fields=[{"key": "verdict", "choices": ["ship", " hold "], "required": False}],
+    )
+    assert tpl.findings_fields[0].choices == ["ship", "hold"]
+    assert tpl.findings_fields[0].label() == "verdict (one of: ship | hold; optional)"
+    with pytest.raises(ValueError, match="base field"):
+        WorkflowTemplate(name="x", findings_fields=[{"key": "evidence"}])
+    with pytest.raises(ValueError, match="duplicate findings field"):
+        WorkflowTemplate(name="x", findings_fields=[{"key": "a"}, {"key": "a"}])
+    with pytest.raises(ValueError, match="key"):
+        WorkflowTemplate(name="x", findings_fields=[{"key": "Bad-Key"}])
+
+
+def test_findings_fields_gate_in_a_session(workspace):
+    """The engine validates against the built-in schema plus the workflow's
+    own fields, so a library workflow's demands are enforced, not advisory."""
+    from conftest import FakeExecutor
+    from grayson.core import engine
+    from grayson.core.engine import EnforcementError
+    from grayson.core.run import run_statement
+    from grayson.core.session import Session
+
+    (workspace.workflows_dir / "strict.yaml").write_text(
+        "name: strict\ntitle: S\ndescription: d\n"
+        "required_checks:\n  - key: a\n    title: A\n    description: d\n"
+        "findings_fields:\n  - key: verdict\n    description: ship or hold\n"
+        "    choices: [ship, hold]\n",
+        encoding="utf-8",
+    )
+    s = Session.create(
+        workspace,
+        workflow="strict",
+        targets=["DB.S.T1"],
+        guard=workspace.config.guard_profiles["moderate"].model_copy(),
+        guard_profile="moderate",
+    )
+    engine.seed_from_workflow(s, workspace.workflows_dir)
+    qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
+    payload = {
+        "title": "Something",
+        "severity": "low",
+        "confidence": "low",
+        "summary": "A long enough summary.",
+        "evidence": [qid],
+    }
+    with pytest.raises(EnforcementError, match="verdict"):
+        engine.record_finding(s, payload, overrides_dir=workspace.workflows_dir)
+    with pytest.raises(EnforcementError, match="must be one of"):
+        engine.record_finding(
+            s, {**payload, "extra": {"verdict": "maybe"}}, overrides_dir=workspace.workflows_dir
+        )
+    out = engine.record_finding(
+        s, {**payload, "extra": {"verdict": "hold"}}, overrides_dir=workspace.workflows_dir
+    )
+    payload = out.get("payload") or out
+    if isinstance(payload, str):
+        import json
+
+        payload = json.loads(payload)
+    assert payload["extra"]["verdict"] == "hold"
+
+
+def test_lint_notes_a_findings_field_without_description(workspace):
+    from grayson.workflows import lint_workflows
+
+    (workspace.workflows_dir / "f.yaml").write_text(
+        "name: f\ntitle: F\ndescription: d\nrequired_checks:\n  - key: a\n    title: A\n"
+        "    description: d\nfindings_fields:\n  - key: owner\n",
+        encoding="utf-8",
+    )
+    warned = [w["problem"] for w in lint_workflows(workspace.workflows_dir)["warnings"]]
+    assert any("findings field 'owner' has no description" in w for w in warned)

@@ -1,99 +1,192 @@
 {% extends "base.html" %}
+{% from "_macros.html" import list_tools %}
 {% block title %}grayson — workflows{% endblock %}
 {% block head %}
 <style>
-.card.wfcard { display: flex; flex-direction: column; gap: 7px; margin-bottom: 0; }
-.wfcard .desc { color: var(--ink-2); font-size: 13px; flex: 1; }
-.wfcard .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
-  border-top: 1px solid var(--border-soft); padding-top: 9px; font-size: 12px;
-  color: var(--muted); }
-.newcard { border-style: dashed; }
+.wfsum { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; list-style: none;
+  user-select: none; }
+.wfsum::-webkit-details-marker { display: none; }
+.wfsum .c-caret { margin-top: 3px; }
+.wfsum .wft { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.wfsum .wft b { color: var(--ink); }
+.wfsum .wft .desc { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.wfsum .marks { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end;
+  flex: 0 1 auto; }
+.wfbody { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.wfmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 12px;
+  color: var(--muted); border-top: 1px solid var(--border-soft); padding-top: 8px; }
+.wftags { display: flex; gap: 4px; flex-wrap: wrap; }
+.schemagrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.fieldrow { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px;
+  font-size: 12.5px; align-items: baseline; }
+.fieldrow .k { font-family: ui-monospace, Consolas, monospace; color: var(--ink-2); }
+.fieldrow .d { color: var(--muted); }
+.newform { display: grid; gap: 8px; grid-template-columns: minmax(200px, 1fr) minmax(180px, 1fr) max-content;
+  align-items: center; }
+@media (max-width: 720px) { .newform { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}
 {% block content %}
-<h1>Workflows {{ help("workflows") }}</h1>
-<div class="muted small">{% if user_id %}Your id: <span class="chip">{{ user_id }}</span>
-  {% else %}No user id set — run <code>grayson user set &lt;id&gt;</code> to sign your
-  workflows and facts.{% endif %}</div>
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow"><h1>Workflows {{ help("workflows") }}</h1></div>
+    <div class="lede">{{ core_count }} core, {{ team_count }} in the team library.
+      {% if user_id %}Your id: <span class="chip">{{ user_id }}</span>
+      {% else %}No user id set — run <code>grayson user set &lt;id&gt;</code> to sign your
+      workflows and facts.{% endif %}</div>
+  </div>
+</div>
 
 {% if problems %}
 <div class="banner mt-3">{{ problems | length }} workflow
-  file(s) fail lint and cannot start sessions.</div>
+  file(s) fail lint and cannot start sessions — filter <b>lint failed</b> below.</div>
 {% endif %}
 
-<h2>Core</h2>
-<div class="grid">
-  {% for row in cores %}
-  <a class="card wfcard" href="/workflows/{{ row.tpl.name }}?t={{ token }}">
-    <div class="row split">
-      <b>{{ row.tpl.title or row.tpl.name }}</b>
-      <span class="badge plain">core</span>
-    </div>
-    <span class="mono faint small">{{ row.tpl.name }}</span>
-    <div class="desc">{{ row.tpl.description.strip().split("\n")[0] }}</div>
-    <div class="meta">
-      <span>{{ row.tpl.required_checks | length }} checkpoints</span>
-      <span class="faint">·</span>
-      <span class="mono">{{ row.tpl.findings_schema }}</span>
-      <span class="grow"></span>
-      <span class="faint">{{ row.usage.count }} session{{ "s" if row.usage.count != 1 }}</span>
-    </div>
-  </a>
-  {% endfor %}
-</div>
-
-<h2>Team library</h2>
-<div class="grid">
-  {% for row in team %}
-  <a class="card wfcard" href="/workflows/{{ row.tpl.name }}?t={{ token }}">
-    <div class="row split">
-      <b>{{ row.tpl.title or row.tpl.name }}</b>
-      {% if row.mine %}<span class="badge todo">mine</span>
+<details class="section" id="catalog" data-fold="catalog" open>
+<summary><h2>Catalog
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ rows | length + problems | length }}</span></h2></summary>
+{{ list_tools("workflows", [
+  ("group", "asc", "Core first, then A–Z"),
+  ("name", "asc", "Name A–Z"),
+  ("sessions", "desc", "Most used"),
+  ("last", "desc", "Recently used"),
+  ("checks", "desc", "Most checkpoints"),
+], [
+  ("core", "core"),
+  ("team", "team"),
+  ("mine", "mine"),
+  ("fork", "forks"),
+  ("charts", "requires charts"),
+  ("custom-schema", "own findings fields"),
+  ("active", "sessions open"),
+  ("broken", "lint failed"),
+] + tag_filters, "Filter by name, description, schema, tag…") }}
+<div class="listwrap">
+<div class="grid listgrid" data-list="workflows" data-noun="workflow">
+{% for row in rows %}{% set tpl = row.tpl %}
+<details class="card foldcard" data-item data-fold="{{ tpl.name }}" {% if fold_open %}open{% endif %}
+  data-tags="{{ row.tags | join(' ') }}"
+  data-s-group="{{ row.group }}" data-s-name="{{ tpl.name }}"
+  data-s-sessions="{{ row.usage.count }}" data-s-last="{{ row.usage.last }}"
+  data-s-checks="{{ tpl.required_checks | length }}">
+  <summary class="wfsum">
+    <span class="c-caret">▸</span>
+    <span class="wft">
+      <a href="/workflows/{{ tpl.name }}?t={{ token }}" title="Open {{ tpl.name }}"><b>{{ tpl.title or tpl.name }}</b></a>
+      <span class="desc">{{ tpl.description.strip().split("\n")[0] | truncate(150, true, "…") }}</span>
+    </span>
+    <span class="marks">
+      {% if row.core %}<span class="badge plain">core</span>
+      {% elif row.mine %}<span class="badge todo">mine</span>
       {% else %}<span class="badge act">team</span>{% endif %}
-    </div>
+      {% if row.usage.open %}<span class="badge attn" title="Sessions still open on this workflow">{{ row.usage.open }} open</span>{% endif %}
+    </span>
+  </summary>
+  <div class="wfbody">
     <div class="row" style="gap: 6px;">
-      <span class="mono faint small">{{ row.tpl.name }}</span>
-      {% if row.tpl.forked_from %}
-      <span class="faint small">forked from</span>
-      <span class="chip">{{ row.tpl.forked_from }}</span>
-      {% endif %}
+      <span class="mono faint small">{{ tpl.name }}</span>
+      {% if tpl.forked_from %}<span class="faint small">forked from</span>
+        <a class="chip" href="/workflows/{{ tpl.forked_from }}?t={{ token }}">{{ tpl.forked_from }}</a>{% endif %}
     </div>
-    <div class="desc">{{ row.tpl.description.strip().split("\n")[0] }}</div>
-    <div class="meta">
-      <span>{{ row.tpl.required_checks | length }} checkpoints</span>
-      <span class="faint">·</span>
-      <span class="mono">{{ row.tpl.findings_schema }}</span>
+    <div class="row" style="gap: 4px;">
+      <span class="badge plain" title="Evidence-gated checkpoints">{{ tpl.required_checks | length }} gate{{ "s" if tpl.required_checks | length != 1 }}</span>
+      {% if tpl.suggested_checks %}<span class="badge plain" title="Suggested checks: breadth, no gate">+{{ tpl.suggested_checks | length }} suggested</span>{% endif %}
+      <span class="badge plain" title="Questions the human answers at setup">{{ tpl.setup_inputs | length }} input{{ "s" if tpl.setup_inputs | length != 1 }}</span>
+      {% if tpl.chart_requirements() %}<span class="badge act" title="Checkpoints that refuse to close without a chart">{{ tpl.chart_requirements() }} need{{ "s" if tpl.chart_requirements() == 1 }} a chart</span>{% endif %}
+      <span class="badge plain mono" title="Findings schema">{{ tpl.findings_schema }}{% if tpl.findings_fields %} +{{ tpl.findings_fields | length }}{% endif %}</span>
+    </div>
+    {% if tpl.tags %}<div class="wftags">{% for t in tpl.tags %}<span class="chip">#{{ t }}</span>{% endfor %}</div>{% endif %}
+    <div class="wfmeta">
+      <span>{{ row.usage.count }} session{{ "s" if row.usage.count != 1 }}{% if row.usage.last %} · last {{ row.usage.last[:10] }}{% endif %}</span>
+      {% if tpl.created_by %}<span class="mono faint">by {{ tpl.created_by }}</span>{% endif %}
       <span class="grow"></span>
-      {% if row.tpl.created_by %}<span class="mono faint">by {{ row.tpl.created_by }}</span>
-      {% else %}<span class="faint">{{ row.usage.count }} session{{ "s" if row.usage.count != 1 }}</span>{% endif %}
+      <a class="btn secondary sm" href="/workflows/{{ tpl.name }}?t={{ token }}">Open →</a>
     </div>
-  </a>
-  {% endfor %}
+  </div>
+</details>
+{% endfor %}
 
-  {% for p in problems %}
-  <div class="card wfcard" style="border-color: var(--bad);">
-    <div class="row split">
-      <b class="ink2">{{ p.name or p.file }}</b>
-      <span class="badge bad">lint failed</span>
+{% for p in problems %}
+<details class="card foldcard" data-item data-fold="broken-{{ p.file }}" open
+  data-tags="team broken" data-s-group="2" data-s-name="{{ p.name or p.file }}"
+  data-s-sessions="0" data-s-last="" data-s-checks="0" style="border-color: var(--bad);">
+  <summary class="wfsum">
+    <span class="c-caret">▸</span>
+    <span class="wft"><b class="ink2">{{ p.name or p.file }}</b>
+      <span class="desc mono">workflows/{{ p.file }}</span></span>
+    <span class="marks"><span class="badge bad">lint failed</span></span>
+  </summary>
+  <div class="wfbody">
+    <div class="small muted">{{ p.problem }}</div>
+    <div class="wfmeta">
+      <span class="faint">fix and push — <code>grayson workflow lint</code> checks it</span>
+      <span class="grow"></span>
+      <form class="row" method="post" action="/workflows/{{ p.file[:-5] }}/delete?t={{ token }}"
+        style="gap: 6px;">
+        <input type="text" name="confirm_name" placeholder="type {{ p.file[:-5] }} to remove"
+          style="width: 200px;" required>
+        <button class="btn danger sm" type="submit">Remove file</button>
+      </form>
     </div>
-    <span class="mono faint small">workflows/{{ p.file }}</span>
-    <div class="desc muted">{{ p.problem }}</div>
-    <div class="meta"><span class="faint">fix and push — <code>grayson workflow lint</code> checks it</span></div>
   </div>
-  {% endfor %}
-
-  <div class="card wfcard newcard">
-    <div class="row split"><b class="muted">New workflow</b></div>
-    <div class="desc faint">Blank, or forked from any workflow.</div>
-    <form method="post" action="/workflows/new?t={{ token }}" style="display: flex; flex-direction: column; gap: 8px;">
-      <input type="text" name="new_name" placeholder="name, e.g. orders-slim-health"
-        pattern="[a-z0-9][a-z0-9-]*" required>
-      <select name="fork_of">
-        <option value="">start from scratch</option>
-        {% for base in fork_bases %}<option value="{{ base }}">fork {{ base }}</option>{% endfor %}
-      </select>
-      <div><button class="btn sm" type="submit">Create &amp; edit</button></div>
-    </form>
-  </div>
+</details>
+{% endfor %}
 </div>
+</div>
+</details>
+
+<details class="section" id="new" data-fold="new">
+<summary><h2>New workflow</h2></summary>
+<div class="card">
+  <div class="muted small" style="margin-bottom: 10px;">Blank from a scaffold, or a fork of any
+    workflow with its lineage recorded. It lands in the team library under your id; you edit it
+    element by element on its page, or as YAML.</div>
+  <form class="newform" method="post" action="/workflows/new?t={{ token }}">
+    <input type="text" name="new_name" placeholder="name, e.g. orders-slim-health"
+      pattern="[a-z0-9][a-z0-9-]*" required>
+    <select name="fork_of">
+      <option value="">start from scratch</option>
+      {% for base in fork_bases %}<option value="{{ base }}">fork {{ base }}</option>{% endfor %}
+    </select>
+    <button class="btn" type="submit">Create</button>
+  </form>
+</div>
+</details>
+
+<details class="section" id="schemas" data-fold="schemas">
+<summary><h2>Findings schemas {{ help("findings_schema") }}
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ schemas | length }} built in</span></h2></summary>
+<div class="muted small" style="margin-bottom: 10px;">Every finding carries the base fields
+  (title, severity, confidence, summary, evidence, and the optional ones). A workflow names one
+  of these schemas for the rest, and can add its own fields on top — open a workflow to see its
+  effective schema and edit its fields.</div>
+<div class="schemagrid">
+  {% for sc in schemas %}
+  <details class="card foldcard" data-fold="schema-{{ sc.name }}">
+    <summary class="chartsum">
+      <span class="name"><span class="c-caret">▸</span><b class="mono">{{ sc.name }}</b></span>
+      <span class="row" style="margin-left: auto;">
+        <span class="badge plain">{{ sc.required_extra | length }} extra field{{ "s" if sc.required_extra | length != 1 }}</span>
+        {% if sc.discriminator %}<span class="badge act" title="One field selects which further fields apply">branches on {{ sc.discriminator }}</span>{% endif %}
+      </span>
+    </summary>
+    <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 10px;">
+      {% if sc.required_extra %}
+      <div class="fieldrow">
+        {% for e in sc.required_extra %}<span class="k">{{ e.key }}</span><span class="d">{{ e.description }}</span>{% endfor %}
+      </div>
+      {% else %}<div class="faint small">No extra fields — the base fields only.</div>{% endif %}
+      {% for value, fields in sc.conditional_extra.items() %}
+      <div class="small"><span class="overline">when {{ sc.discriminator }} = {{ value }}</span>
+        <div class="fieldrow" style="margin-top: 4px;">
+          {% for e in fields %}<span class="k">{{ e.key }}</span><span class="d">{{ e.description }}</span>{% endfor %}
+        </div></div>
+      {% endfor %}
+      <div class="row" style="gap: 4px;"><span class="faint small">used by</span>
+        {% for w in sc.used_by %}<a class="chip" href="/workflows/{{ w }}?t={{ token }}">{{ w }}</a>{% else %}<span class="faint small">no workflow yet</span>{% endfor %}</div>
+    </div>
+  </details>
+  {% endfor %}
+</div>
+</details>
 {% endblock %}

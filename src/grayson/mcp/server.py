@@ -17,6 +17,7 @@ from grayson.core.engine import EnforcementError
 from grayson.core.proposals import ProposalError
 from grayson.core.run import cache_find, check_statement, run_statement, snapshot_metadata
 from grayson.core.session import Session, find_recent_duplicate, resolve_session_id
+from grayson.findings.schemas import describe_schema
 from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request
 from grayson.interventions.types import InterventionError
@@ -123,10 +124,19 @@ def build_server(workspace: Workspace) -> Any:
             "library_problems": override_problems(workspace.workflows_dir),
         }
 
-    @mcp.tool(description="Show a workflow template's setup inputs, checks, and schema.")
+    @mcp.tool(
+        description="Show a workflow template's setup inputs, checks, and findings schema. "
+        "`findings_schema_spec` unpacks the schema: every base field with its rule, the "
+        "`extra` fields this workflow requires (the built-in schema's plus the workflow's "
+        "own, with any closed choice lists), the discriminator and its branches, and an "
+        "example payload shaped to pass. Read it before your first finding_add."
+    )
     def workflow_show(name: str) -> dict:
         try:
-            return get_workflow(name, workspace.workflows_dir).model_dump()
+            tpl = get_workflow(name, workspace.workflows_dir)
+            out = tpl.model_dump()
+            out["findings_schema_spec"] = describe_schema(tpl.findings_schema, tpl.findings_fields)
+            return out
         except WorkflowNotFound as e:
             return _err(e)
 
@@ -225,6 +235,7 @@ def build_server(workspace: Workspace) -> Any:
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "suggested_checks": [c.model_dump() for c in tpl.suggested_checks],
             "findings_schema": tpl.findings_schema,
+            "findings_schema_spec": describe_schema(tpl.findings_schema, tpl.findings_fields),
             "setup_inputs": provided,
             "view_coverage": registry.coverage_check(tables, current),
             "views_in_scope": enter_session_scope(registry, s, tables),

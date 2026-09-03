@@ -121,6 +121,14 @@ def _lint_template(tpl: WorkflowTemplate, file: str, warn: Callable[..., None]) 
                 )
             elif dep == check.key:
                 warn(file, tpl.name, f"checkpoint '{check.key}' depends on itself")
+    for field in tpl.findings_fields:
+        if not field.description.strip():
+            warn(
+                file,
+                tpl.name,
+                f"findings field '{field.key}' has no description — the agent has to "
+                "fill it in, so say what belongs there",
+            )
     dupes = sorted(k for k in keys if [c.key for c in all_checks].count(k) > 1)
     if dupes:
         warn(

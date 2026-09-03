@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import list_tools %}
 {% block title %}grayson — {{ tpl.name }}{% endblock %}
 {% block head %}
 <style>
@@ -21,8 +22,126 @@
 .wfcols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: 14px; align-items: start; }
 @media (max-width: 860px) { .wfcols { grid-template-columns: 1fr; } .wfrail { flex-wrap: wrap; } }
+/* element forms: one grid per element, labels above fields, hints beneath */
+.elform { display: grid; gap: 8px; margin-top: 8px; }
+.elform label { display: flex; flex-direction: column; gap: 3px; font-size: 12px;
+  color: var(--muted); font-weight: 600; }
+.elform label > input[type=text], .elform label > textarea, .elform label > select { width: 100%; }
+.elform .two { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+.elform .hint { font-size: 11.5px; color: var(--faint); font-weight: 400; }
+.elform .check { flex-direction: row; align-items: center; gap: 6px; font-weight: 500; }
+.elform .check input { width: auto; }
+.elform .submit { display: flex; gap: 8px; align-items: center; }
+.eltools { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 10px;
+  padding-top: 8px; border-top: 1px solid var(--border-soft); }
+.eltools form { display: inline; }
+.eltools .btn { padding: 2px 8px; font-size: 11.5px; }
+details.editfold > summary { cursor: pointer; color: var(--act); font-size: 12.5px;
+  list-style: none; user-select: none; font-weight: 600; }
+details.editfold > summary::-webkit-details-marker { display: none; }
+details.editfold[open] > summary { color: var(--muted); }
+.fieldtable { width: 100%; }
+.fieldtable td { font-size: 12.5px; }
+.fieldtable .k { font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+.fieldtable .marks { display: flex; gap: 4px; flex-wrap: wrap; }
+.cpfold > summary .cpn { color: var(--faint); font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px; min-width: 16px; }
+.cpfold > summary .marks { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto;
+  font-weight: 500; }
+pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; line-height: 1.5;
+  overflow-x: auto; margin: 0; }
+.danger-zone { border-color: var(--bad); }
 </style>
 {% endblock %}
+
+{# ---- element editing macros ------------------------------------------
+   Every form posts one element operation; the server applies it, then shows
+   the diff for confirmation. Nothing here writes on its own. #}
+{% macro op_fields(kind, action, key="", list="") -%}
+<input type="hidden" name="kind" value="{{ kind }}">
+<input type="hidden" name="action" value="{{ action }}">
+{% if key %}<input type="hidden" name="key" value="{{ key }}">{% endif %}
+{% if list %}<input type="hidden" name="list" value="{{ list }}">{% endif %}
+{%- endmacro %}
+
+{% macro el_tools(kind, key, list="", first=false, last=false) -%}
+<div class="eltools">
+  <form method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+    {{ op_fields(kind, "move", key, list) }}<input type="hidden" name="direction" value="up">
+    <button class="btn ghost sm" type="submit" title="Move up" {{ "disabled" if first }}>↑</button></form>
+  <form method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+    {{ op_fields(kind, "move", key, list) }}<input type="hidden" name="direction" value="down">
+    <button class="btn ghost sm" type="submit" title="Move down" {{ "disabled" if last }}>↓</button></form>
+  {% if kind == "check" %}
+  <form method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+    {{ op_fields(kind, "move", key, list) }}
+    <input type="hidden" name="to_list" value="{{ 'suggested' if list == 'required' else 'required' }}">
+    <button class="btn ghost sm" type="submit" title="{{ 'Stop gating on this check' if list == 'required' else 'Make this check gate' }}">
+      → {{ "suggested" if list == "required" else "required" }}</button></form>
+  {% endif %}
+  <span class="grow"></span>
+  <form method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+    {{ op_fields(kind, "delete", key, list) }}
+    <button class="btn danger sm" type="submit">Remove…</button></form>
+</div>
+{%- endmacro %}
+
+{% macro check_form(c, which, orig="") -%}
+<form class="elform" method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+  {{ op_fields("check", "upsert", "", which) }}
+  <input type="hidden" name="orig_key" value="{{ orig }}">
+  <div class="two">
+    <label>key <input type="text" name="key" value="{{ c.key if c else '' }}" pattern="[a-z][a-z0-9_]*" required placeholder="null_completeness"></label>
+    <label>title <input type="text" name="title" value="{{ c.title if c else '' }}" required placeholder="Check nulls and completeness"></label>
+  </div>
+  <label>description — the intent, as the agent should read it
+    <textarea name="description" rows="4">{{ c.description.strip() if c else '' }}</textarea></label>
+  <div class="two">
+    <label>after (depends_on) <input type="text" name="depends_on" value="{{ c.depends_on | join(', ') if c else '' }}" placeholder="replicate_anomaly">
+      <span class="hint">checkpoint keys, comma-separated{% if check_keys %}: {{ check_keys | join(", ") }}{% endif %}</span></label>
+    <label>works from (uses_inputs) <input type="text" name="uses_inputs" value="{{ c.uses_inputs | join(', ') if c else '' }}" placeholder="expectation">
+      <span class="hint">setup input keys{% if tpl.setup_inputs %}: {{ tpl.input_keys() | join(", ") }}{% endif %}</span></label>
+  </div>
+  <label>required charts — one per line, <span class="mono">kinds: what it should show</span>
+    <textarea name="charts" rows="2" placeholder="bar|line: affected rows over time, so onset is visible">{{ chart_lines.get(c.key, '') if c else '' }}</textarea>
+    <span class="hint">kinds: bar, line, scatter, histogram, correlation, or any. Leave empty to
+      keep charting the agent's call. The gate then refuses to close without such a chart.</span></label>
+  <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
+</form>
+{%- endmacro %}
+
+{% macro input_form(i, orig="") -%}
+<form class="elform" method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+  {{ op_fields("input", "upsert") }}
+  <input type="hidden" name="orig_key" value="{{ orig }}">
+  <label>key <input type="text" name="key" value="{{ i.key if i else '' }}" pattern="[a-z][a-z0-9_]*" required placeholder="expectation"></label>
+  <label>prompt — the question the human answers at setup
+    <textarea name="prompt" rows="2" required>{{ i.prompt.strip() if i else '' }}</textarea></label>
+  <label class="check"><input type="checkbox" name="required" {{ "checked" if (i.required if i else true) }}> required</label>
+  <label class="check"><input type="checkbox" name="adds_scope" {{ "checked" if i and i.adds_scope }}>
+    the answer names tables that join the session's readable scope</label>
+  <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
+</form>
+{%- endmacro %}
+
+{% macro field_form(f, orig="") -%}
+<form class="elform" method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+  {{ op_fields("field", "upsert") }}
+  <input type="hidden" name="orig_key" value="{{ orig }}">
+  <div class="two">
+    <label>key <input type="text" name="key" value="{{ f.key if f else '' }}" pattern="[a-z][a-z0-9_]*" required placeholder="owner_team"></label>
+    <label>choices — closed list, optional <input type="text" name="choices" value="{{ f.choices | join(' | ') if f else '' }}" placeholder="ready | ready_with_caveats | not_ready">
+      <span class="hint">separated by |; the value must then be one of them</span></label>
+  </div>
+  <label>description — what belongs in this field
+    <textarea name="description" rows="2">{{ f.description.strip() if f else '' }}</textarea></label>
+  <label class="check"><input type="checkbox" name="required" {{ "checked" if (f.required if f else true) }}>
+    required — a finding without it is refused</label>
+  <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
+</form>
+{%- endmacro %}
+
 {% block content %}
 <nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
   <span class="mono">{{ tpl.name }}</span></nav>
@@ -32,24 +151,34 @@
     <div class="titlerow">
       <h1>{{ tpl.title or tpl.name }}</h1>
       {% if is_core %}<span class="badge plain">core</span>
-      {% elif editable and user_id and tpl.created_by == user_id %}<span class="badge todo">mine</span>
+      {% elif mine %}<span class="badge todo">mine</span>
       {% else %}<span class="badge act">team</span>{% endif %}
+      {% for t in tpl.tags %}<span class="chip">#{{ t }}</span>{% endfor %}
     </div>
     <div class="lede">{{ tpl.description.strip() }}</div>
   </div>
   <span class="actions">
-    <a class="btn ghost" href="/workflows/{{ tpl.name }}/yaml?t={{ token }}">YAML</a>
+    <a class="btn ghost" href="/workflows/{{ tpl.name }}/yaml?t={{ token }}" title="The definition as YAML, to read, copy or download">YAML</a>
     {% if editable %}
-    <a class="btn secondary" href="/workflows/{{ tpl.name }}/edit?t={{ token }}">Edit</a>
+    <a class="btn secondary" href="/workflows/{{ tpl.name }}/edit?t={{ token }}" title="Edit the whole file as YAML; elements edit in place below">Edit YAML</a>
     {% endif %}
     <form class="inline" method="post" action="/workflows/{{ tpl.name }}/fork?t={{ token }}">
       <span class="row" style="gap: 6px;">
         <input type="text" name="new_name" value="{{ fork_name }}"
           pattern="[a-z0-9][a-z0-9-]*" required style="width: 220px;">
-        <button class="btn secondary" type="submit">Fork to edit</button>
+        <button class="btn secondary" type="submit">Fork</button>
       </span>
     </form>
   </span>
+</div>
+
+<div class="tiles">
+  <a class="tile" href="#inputs"><span class="num">{{ tpl.setup_inputs | length }}</span><span class="lbl">setup inputs</span></a>
+  <a class="tile" href="#checkpoints"><span class="num">{{ tpl.required_checks | length }}</span><span class="lbl">gating checks</span></a>
+  <a class="tile" href="#checkpoints"><span class="num">{{ tpl.suggested_checks | length }}</span><span class="lbl">suggested</span></a>
+  <a class="tile" href="#checkpoints"><span class="num {{ 'attn' if tpl.chart_requirements() }}">{{ tpl.chart_requirements() }}</span><span class="lbl">need a chart</span></a>
+  <a class="tile" href="#schema"><span class="num">{{ schema.required_extra | length }}</span><span class="lbl">extra finding fields</span></a>
+  <a class="tile" href="#usage"><span class="num {{ 'ok' if usage.open }}">{{ usage.count }}</span><span class="lbl">session{{ "s" if usage.count != 1 }}{% if usage.open %} · {{ usage.open }} open{% endif %}</span></a>
 </div>
 
 <div class="card">
@@ -58,20 +187,23 @@
     <div class="wfnode">
       <div class="nh"><span class="wfdot" style="background: var(--ok);"></span>Setup</div>
       <div class="nd">{{ tpl.setup_inputs | length }} input{{ "s" if tpl.setup_inputs | length != 1 }}
-        from the human.</div>
+        from the human{% if tpl.setup_inputs | selectattr("adds_scope") | list %}; some name tables that join the scope{% endif %}.</div>
     </div>
     <div class="wflink"><div class="line"></div></div>
     <div class="wfnode" style="flex: 1.3;">
       <div class="nh"><span class="wfdot" style="background: var(--brand-accent); box-shadow: 0 0 0 3px var(--act-soft);"></span>Analysis</div>
       <div class="nd">{{ tpl.required_checks | length }} checkpoint{{ "s" if tpl.required_checks | length != 1 }}{% if tpl.suggested_checks %}
         · {{ tpl.suggested_checks | length }} suggested{% endif %}, closed by citing
-        executed queries. Guard: <b>{{ tpl.suggested_guard_profile }}</b>.</div>
+        executed queries{% if tpl.chart_requirements() %} — {{ tpl.chart_requirements() }} only with a chart{% endif %}.
+        Guard: <b>{{ tpl.suggested_guard_profile }}</b>{% if tpl.suggested_strict_scope is not none %}
+        · strict scope <b>{{ "on" if tpl.suggested_strict_scope else "off" }}</b>{% endif %}.</div>
     </div>
     <div class="wflink"><div class="line"></div>
       <div class="gate"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>evidence<br>gate</div></div>
     <div class="wfnode">
       <div class="nh"><span class="wfdot" style="background: var(--todo);"></span>Findings</div>
-      <div class="nd">Validated against <span class="mono">{{ tpl.findings_schema }}</span>;
+      <div class="nd">Validated against <span class="mono">{{ tpl.findings_schema }}</span>{% if tpl.findings_fields %}
+        plus {{ tpl.findings_fields | length }} field{{ "s" if tpl.findings_fields | length != 1 }} of this workflow's own{% endif %};
         you accept or reject each.</div>
     </div>
     <div class="wflink"><div class="line"></div>
@@ -83,16 +215,46 @@
   </div>
 </div>
 
+{% if warnings %}
+<div class="card attn mt-3">
+  <b>Lint has {{ warnings | length }} note{{ "s" if warnings | length != 1 }}</b>
+  <ul class="small" style="margin: 6px 0 0; padding-left: 18px;">
+    {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div class="wfcols">
   <div>
-    <h2>Checkpoints {{ help("checkpoints") }}</h2>
-    {% for c in tpl.required_checks %}
-    <details class="fold" {% if loop.first %}open{% endif %}>
-      <summary><span class="mono faint">{{ loop.index }}</span> {{ c.title }}
-        <span class="grow"></span><span class="mono faint small">{{ c.key }}</span></summary>
+    <h2 id="checkpoints">Checkpoints {{ help("checkpoints") }}</h2>
+    {% set all_checks = tpl.required_checks | length + tpl.suggested_checks | length %}
+    {% if all_checks %}
+    {{ list_tools("checks", [
+      ("order", "asc", "Workflow order"),
+      ("title", "asc", "Title A–Z"),
+    ], [
+      ("required", "gates"),
+      ("suggested", "suggested"),
+      ("chart", "needs a chart"),
+      ("ordered", "has prerequisites"),
+    ], "Filter checkpoints…") }}
+    {% endif %}
+    <div data-list="checks" data-noun="checkpoint">
+    {% for which, checks in [("required", tpl.required_checks), ("suggested", tpl.suggested_checks)] %}
+    {% for c in checks %}
+    <details class="fold cpfold" data-item data-fold="cp-{{ c.key }}" {% if which == "required" and loop.first %}open{% endif %}
+      data-tags="{{ which }}{% if c.charts %} chart{% endif %}{% if c.depends_on %} ordered{% endif %}"
+      data-s-order="{{ (0 if which == 'required' else 100) + loop.index }}" data-s-title="{{ c.title }}">
+      <summary><span class="cpn">{{ loop.index if which == "required" else "+" }}</span> {{ c.title }}
+        <span class="marks">
+          {% if which == "suggested" %}<span class="badge plain" title="Breadth without a gate: done where it applies">suggested</span>{% endif %}
+          {% if c.charts %}<span class="badge act" title="Closes only with a chart built from a cited query">needs chart{% if c.charts | length > 1 %} ×{{ c.charts | length }}{% endif %}</span>{% endif %}
+          {% if c.depends_on %}<span class="badge plain" title="Closes only after: {{ c.depends_on | join(', ') }}">after {{ c.depends_on | join(", ") }}</span>{% endif %}
+          <span class="mono faint small">{{ c.key }}</span>
+        </span></summary>
       <div class="fold-body">
         {% if c.description %}<div class="ink2 small mt-2">{{ c.description.strip() }}</div>
-        {% else %}<div class="faint small mt-2">No description recorded.</div>{% endif %}
+        {% else %}<div class="faint small mt-2">No description recorded — lint asks for one.</div>{% endif %}
         {% if c.depends_on or c.uses_inputs or c.charts %}
         <div class="kv" style="margin-top: 9px;">
           {% if c.depends_on %}
@@ -106,57 +268,179 @@
           {% endfor %}
         </div>
         {% endif %}
+        {% if editable %}
+        <details class="editfold mt-2"><summary>Edit this checkpoint</summary>{{ check_form(c, which, c.key) }}</details>
+        {{ el_tools("check", c.key, which, loop.first, loop.last) }}
+        {% endif %}
       </div>
     </details>
-    {% else %}
+    {% endfor %}
+    {% endfor %}
+    </div>
+    {% if not all_checks %}
     <div class="card empty">No checkpoints — sessions on this workflow have no evidence gates.</div>
-    {% endfor %}
-
-    {% if tpl.suggested_checks %}
-    <h2>Suggested {{ help("suggested_checks") }}</h2>
-    {% for c in tpl.suggested_checks %}
-    <details class="fold">
-      <summary><span class="mono faint">+</span> {{ c.title }}
-        <span class="grow"></span><span class="mono faint small">{{ c.key }}</span></summary>
-      <div class="fold-body">
-        {% if c.description %}<div class="ink2 small mt-2">{{ c.description.strip() }}</div>{% endif %}
+    {% endif %}
+    {% if editable %}
+    <details class="card editfold" data-fold="add-check"><summary>+ Add a checkpoint</summary>
+      <div class="muted small mt-2">Required checks gate review until closed with evidence;
+        suggested ones carry breadth and gate nothing. Ask: is the investigation meaningless
+        without it? Only then make it required.</div>
+      <div class="row mt-2" style="gap: 12px; align-items: flex-start;">
+        <div style="flex: 1 1 320px;"><div class="overline">Required (gates)</div>{{ check_form(none, "required") }}</div>
+        <div style="flex: 1 1 320px;"><div class="overline">Suggested (breadth)</div>{{ check_form(none, "suggested") }}</div>
       </div>
     </details>
-    {% endfor %}
     {% endif %}
 
-    <h2>Findings schema {{ help("findings_schema") }}</h2>
+    <h2 id="schema">Findings schema {{ help("findings_schema") }}</h2>
     <div class="card">
       <div class="row" style="gap: 8px;">
-        <span class="chip">{{ tpl.findings_schema }}</span>
+        <span class="chip mono">{{ schema.name }}</span>
+        {% if tpl.findings_fields %}<span class="badge todo">+{{ tpl.findings_fields | length }} of this workflow's own</span>{% endif %}
+        {% if schema.discriminator %}<span class="badge act" title="{{ schema.discriminator_hint }}">branches on {{ schema.discriminator }}</span>{% endif %}
+        <span class="grow"></span>
+        <span class="faint small">{{ schema.required_extra | selectattr("required") | list | length }} required in <span class="mono">extra</span></span>
       </div>
-      <div class="row" style="gap: 6px; margin-top: 10px;">
-        {% for f in ["title", "severity", "confidence", "summary", "evidence ≥1"] %}
-        <span class="chip">{{ f }}</span>
+      <div class="muted small" style="margin-top: 8px;">Every finding carries the base fields; the
+        schema and this workflow add the rest under <span class="mono">extra</span>. An agent reads
+        the same contract from <code>grayson workflow show {{ tpl.name }}</code>.</div>
+
+      <table class="fieldtable" style="margin-top: 10px;">
+        <thead><tr><th>field</th><th>holds</th><th></th></tr></thead>
+        <tbody>
+        {% for e in schema.required_extra %}
+        <tr id="field-{{ e.key }}">
+          <td class="k">{{ e.key }}</td>
+          <td>{{ e.description }}{% if e.choices %}<div class="row" style="gap: 4px; margin-top: 3px;">{% for ch in e.choices %}<span class="chip">{{ ch }}</span>{% endfor %}</div>{% endif %}</td>
+          <td><span class="marks">
+            {% if e.required %}<span class="badge attn" title="A finding without it is refused">required</span>{% else %}<span class="badge plain">optional</span>{% endif %}
+            {% if e.source == "workflow" %}<span class="badge todo" title="Declared by this workflow, not the built-in schema">this workflow</span>
+            {% elif e.source == "schema+workflow" %}<span class="badge todo" title="A schema field this workflow tightens">schema, tightened here</span>
+            {% else %}<span class="badge plain">schema</span>{% endif %}
+          </span></td>
+        </tr>
+        {% if editable and e.source != "schema" %}
+        <tr><td colspan="3" style="padding-top: 0;">
+          {% set own = (tpl.findings_fields | selectattr("key", "equalto", e.key) | list)[0] %}
+          <details class="editfold"><summary>Edit this field</summary>{{ field_form(own, own.key) }}</details>
+          <div class="eltools" style="border: 0; padding: 0; margin-top: 4px;">
+            <form method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+              {{ op_fields("field", "delete", own.key) }}
+              <button class="btn danger sm" type="submit">Remove…</button></form>
+          </div>
+        </td></tr>
+        {% endif %}
+        {% else %}
+        <tr><td colspan="3" class="faint">No fields beyond the base — findings need title, severity, confidence, summary and evidence only.</td></tr>
         {% endfor %}
-        {% for key, desc in required_extra %}
-        <span class="chip" style="color: var(--todo); border-color: var(--todo);"
-          title="{{ desc }}">+ {{ key }}</span>
+        </tbody>
+      </table>
+
+      {% if schema.conditional_extra %}
+      <div style="margin-top: 12px;">
+        <div class="overline">Branches on <span class="mono">{{ schema.discriminator }}</span></div>
+        <div class="muted small" style="margin: 3px 0 6px;">{{ schema.discriminator_hint }}</div>
+        {% for value, fields in schema.conditional_extra.items() %}
+        <div class="kv" style="margin-top: 6px;">
+          <span class="item"><b>{{ schema.discriminator }} = {{ value }}</b><span>needs</span></span>
+          {% for f in fields %}<span class="item" title="{{ f.description }}"><b>{{ f.key }}</b><span>{{ f.description }}</span></span>{% endfor %}
+        </div>
         {% endfor %}
       </div>
+      {% endif %}
+
+      {% if editable %}
+      <details class="editfold" style="margin-top: 12px;" data-fold="add-field"><summary>+ Add a field this workflow requires</summary>
+        <div class="muted small mt-2">Fields go under <span class="mono">extra</span> in every
+          finding. Use a closed choice list where the answer is a verdict, so it cannot be hedged.
+          Naming a field the schema already requires tightens it instead of adding a second.</div>
+        {{ field_form(none) }}
+      </details>
+      {% endif %}
+
+      <details class="inlinefold" style="margin-top: 12px;" data-fold="base-fields">
+        <summary>Base fields every finding carries, and the rules they are held to</summary>
+        <table class="fieldtable" style="margin-top: 6px;">
+          <tbody>
+          {% for b in schema.base_fields %}
+          <tr><td class="k">{{ b.key }}{% if b.required %} <span class="attn-text">*</span>{% endif %}</td>
+            <td>{{ b.description }}<div class="faint" style="font-size: 11.5px;">{{ b.rule }}</div></td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <div class="overline" style="margin-top: 10px;">Enforced calibration</div>
+        <ul class="small muted" style="margin: 4px 0 0; padding-left: 18px;">
+          {% for rule in schema.enforced %}<li>{{ rule }}</li>{% endfor %}
+        </ul>
+      </details>
+      <details class="inlinefold" style="margin-top: 8px;" data-fold="example">
+        <summary>Example payload shaped to pass</summary>
+        <pre class="example mt-2">{{ schema.example | tojson(indent=2) }}</pre>
+      </details>
     </div>
   </div>
 
   <div>
-    <h2>Setup inputs</h2>
+    {% if editable %}
+    <h2>Header</h2>
+    <div class="card">
+      <details class="editfold" data-fold="meta"><summary>Edit title, description, tags, defaults</summary>
+        <form class="elform" method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+          <input type="hidden" name="kind" value="meta">
+          <label>title <input type="text" name="title" value="{{ tpl.title }}"></label>
+          <label>description — agents pick workflows by it
+            <textarea name="description" rows="4">{{ tpl.description.strip() }}</textarea></label>
+          <label>tags <input type="text" name="tags" value="{{ tpl.tags | join(', ') }}" placeholder="orders, finance">
+            <span class="hint">comma-separated; the catalog filters by them</span></label>
+          <div class="two">
+            <label>guard profile <select name="suggested_guard_profile">
+              {% for p in guard_profiles %}<option value="{{ p }}" {{ "selected" if p == tpl.suggested_guard_profile }}>{{ p }}</option>{% endfor %}
+              {% if tpl.suggested_guard_profile not in guard_profiles %}<option value="{{ tpl.suggested_guard_profile }}" selected>{{ tpl.suggested_guard_profile }}</option>{% endif %}
+            </select></label>
+            <label>strict scope <select name="suggested_strict_scope">
+              <option value="" {{ "selected" if tpl.suggested_strict_scope is none }}>workspace default</option>
+              <option value="true" {{ "selected" if tpl.suggested_strict_scope is true }}>on</option>
+              <option value="false" {{ "selected" if tpl.suggested_strict_scope is false }}>off</option>
+            </select></label>
+          </div>
+          <label>findings schema <select name="findings_schema">
+            {% for sn in schema_names %}<option value="{{ sn }}" {{ "selected" if sn == tpl.findings_schema }}>{{ sn }}</option>{% endfor %}
+          </select><span class="hint">the built-in base; this workflow's own fields stay</span></label>
+          <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
+        </form>
+      </details>
+    </div>
+    {% endif %}
+
+    <h2 id="inputs">Setup inputs {{ help("setup_inputs") }}</h2>
     <div class="card">
       {% for i in tpl.setup_inputs %}
-      <div style="margin-bottom: 9px;">
-        <div class="mono small">{{ i.key }}{% if i.required %} <span class="attn-text">*</span>{% endif %}</div>
+      <div id="input-{{ i.key }}" style="margin-bottom: 11px;">
+        <div class="row" style="gap: 6px;">
+          <span class="mono small">{{ i.key }}{% if i.required %} <span class="attn-text" title="required">*</span>{% endif %}</span>
+          {% if i.adds_scope %}<span class="badge act" title="Tables named in the answer join the session's readable scope">adds scope</span>{% endif %}
+        </div>
         <div class="muted small">{{ i.prompt.strip() }}</div>
+        {% set used = inputs_used.get(i.key, []) %}
+        <div class="faint small" style="margin-top: 2px;">
+          {% if used %}read by <span class="mono">{{ used | join(", ") }}</span>
+          {% elif i.required %}<span class="attn-text">no checkpoint declares it works from this answer</span>
+          {% else %}no checkpoint declares it{% endif %}</div>
+        {% if editable %}
+        <details class="editfold"><summary>Edit</summary>{{ input_form(i, i.key) }}</details>
+        {{ el_tools("input", i.key, "", loop.first, loop.last) }}
+        {% endif %}
       </div>
       {% else %}<div class="muted small">None — sessions start straight into analysis.</div>{% endfor %}
+      {% if editable %}
+      <details class="editfold" data-fold="add-input" style="margin-top: 6px;"><summary>+ Add a setup input</summary>{{ input_form(none) }}</details>
+      {% endif %}
     </div>
 
-    <h2>Usage</h2>
+    <h2 id="usage">Usage</h2>
     <div class="card">
       <dl class="props">
-        <dt>Sessions</dt><dd>{{ usage.count }}{% if usage.last %} · last {{ usage.last[:10] }}{% endif %}</dd>
+        <dt>Sessions</dt><dd>{{ usage.count }}{% if usage.open %} · {{ usage.open }} open{% endif %}{% if usage.last %} · last {{ usage.last[:10] }}{% endif %}</dd>
       </dl>
     </div>
 
@@ -177,6 +461,24 @@
       {% if not editable %}
       <div class="muted small mt-1">A teammate's — fork to edit.</div>
       {% endif %}
+    </div>
+    {% endif %}
+
+    {% if editable %}
+    <h2>Danger zone</h2>
+    <div class="card danger-zone">
+      <details class="editfold" data-fold="delete"><summary>Delete this workflow</summary>
+        <div class="muted small mt-2">Removes <span class="mono">workflows/{{ tpl.name }}.yaml</span>
+          from the library{% if auto_push %} and pushes the removal{% endif %}. The library's git
+          history keeps the file. Refused while sessions are open on it{% if usage.open %} —
+          <b class="attn-text">{{ usage.open }} open now</b>{% endif %}.</div>
+        <form class="row mt-2" method="post" action="/workflows/{{ tpl.name }}/delete?t={{ token }}"
+          onsubmit="return confirm('Delete workflow {{ tpl.name }} from the library?');">
+          <input type="text" name="confirm_name" placeholder="type {{ tpl.name }} to confirm"
+            style="width: auto; flex: 1 1 200px;" required autocomplete="off">
+          <button class="btn danger sm" type="submit">Delete workflow</button>
+        </form>
+      </details>
     </div>
     {% endif %}
   </div>

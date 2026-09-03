@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}grayson — confirm {{ name }}{% endblock %}
+{% block head %}
+<style>
+pre.diff { background: var(--panel2); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; line-height: 1.55;
+  overflow-x: auto; margin: 0; }
+pre.diff .add { color: var(--ok); }
+pre.diff .del { color: var(--bad); }
+pre.diff .hunk { color: var(--act); }
+pre.diff .meta { color: var(--faint); }
+pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; line-height: 1.55;
+  overflow-x: auto; margin: 0; white-space: pre-wrap; }
+.revcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px;
+  align-items: start; }
+@media (max-width: 960px) { .revcols { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
+  <a href="/workflows/{{ name }}?t={{ token }}">{{ name }}</a><span class="sep">/</span>
+  <span>confirm</span></nav>
+
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow"><h1>Confirm: {{ what }}</h1>
+      <span class="badge attn">not saved yet</span></div>
+    <div class="lede">This is what saving writes to <span class="mono">workflows/{{ name }}.yaml</span>.
+      {% if auto_push %}The library auto-pushes, so the change reaches your team on save.
+      {% else %}It reaches your team on the next <code>grayson library push</code>.{% endif %}
+      Nothing is written until you confirm.</div>
+  </div>
+</div>
+
+{% if unchanged %}
+<div class="card empty mt-3">Nothing changes — the file already reads this way.</div>
+{% endif %}
+
+{% if warnings %}
+<div class="card attn mt-3">
+  <b>Lint will note {{ warnings | length }} thing{{ "s" if warnings | length != 1 }} after this save</b>
+  <div class="muted small" style="margin: 3px 0 6px;">Warnings do not block a save; each encodes a
+    rule agents work better with. Fix them now or after.</div>
+  <ul class="small" style="margin: 0; padding-left: 18px;">
+    {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" action="/workflows/{{ name }}/edit?t={{ token }}" class="card mt-3"
+  style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+  <input type="hidden" name="yaml" value="{{ text }}">
+  {% if not unchanged %}
+  <button class="btn confirm" type="submit" name="action" value="confirm">Save to library</button>
+  {% endif %}
+  {% if origin == "yaml" %}
+  <button class="btn ghost" type="submit" name="action" value="back">Back to the editor</button>
+  {% endif %}
+  <a class="btn ghost" href="/workflows/{{ name }}?t={{ token }}">Cancel</a>
+  <span class="muted small">{{ help("workflow_confirm") }}</span>
+</form>
+
+<div class="revcols mt-3">
+  <div>
+    <h2>What changes</h2>
+    {% if diff %}
+    <pre class="diff">{% for line in diff.splitlines() %}{% if line.startswith("+++") or line.startswith("---") %}<span class="meta">{{ line }}</span>{% elif line.startswith("@@") %}<span class="hunk">{{ line }}</span>{% elif line.startswith("+") %}<span class="add">{{ line }}</span>{% elif line.startswith("-") %}<span class="del">{{ line }}</span>{% else %}{{ line }}{% endif %}
+{% endfor %}</pre>
+    <div class="faint small mt-1">Saving writes the file in grayson's canonical layout; a hand-edited
+      file's comments and line breaks are normalised on the first save.</div>
+    {% else %}
+    <div class="card empty">No line differs.</div>
+    {% endif %}
+  </div>
+  <div>
+    <h2>As it will read</h2>
+    <div class="muted small" style="margin-bottom: 6px;">The same rendering <code>grayson workflow preview</code>
+      shows an agent's user for sign-off.</div>
+    <pre class="preview">{{ preview }}</pre>
+  </div>
+</div>
+{% endblock %}

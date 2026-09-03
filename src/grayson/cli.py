@@ -18,6 +18,7 @@ from grayson.core.engine import EnforcementError
 from grayson.core.proposals import ProposalError
 from grayson.core.run import cache_find, check_statement, run_statement, snapshot_metadata
 from grayson.core.session import STAGES, Session, find_recent_duplicate, resolve_session_id
+from grayson.findings.schemas import describe_schema
 from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request, validate_response
 from grayson.interventions.types import InterventionError
@@ -706,6 +707,7 @@ def session_start(
             "setup_inputs": [i.model_dump() for i in tpl.setup_inputs],
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "findings_schema": tpl.findings_schema,
+            "findings_schema_spec": describe_schema(tpl.findings_schema, tpl.findings_fields),
         },
         "setup_inputs": provided,
     }
@@ -1479,16 +1481,32 @@ def workflow_list() -> None:
 
 @workflow_app.command("show")
 def workflow_show(name: str) -> None:
-    """Show a workflow template's full definition (setup inputs, checks, schema)."""
+    """Show a workflow template's full definition: setup inputs, checks, and
+    the findings schema unpacked (`findings_schema_spec` — every field a
+    finding must carry, the workflow's own additions included)."""
     try:
         ws = Workspace.find()
         overrides = ws.workflows_dir
     except FileNotFoundError:
         overrides = None
     try:
-        emit(get_workflow(name, overrides).model_dump())
+        tpl = get_workflow(name, overrides)
     except WorkflowNotFound as e:
         fail(str(e.args[0] if e.args else e))
+        return
+    out = tpl.model_dump()
+    out["findings_schema_spec"] = describe_schema(tpl.findings_schema, tpl.findings_fields)
+    emit(out)
+
+
+@workflow_app.command("schemas")
+def workflow_schemas() -> None:
+    """List the built-in findings schemas with every field unpacked — the
+    options a workflow's `findings_schema` chooses between. A workflow adds
+    its own fields on top with `findings_fields`."""
+    from grayson.findings.schemas import FINDINGS_SCHEMAS
+
+    emit({name: describe_schema(name) for name in sorted(FINDINGS_SCHEMAS)})
 
 
 @workflow_app.command("preview")
@@ -1560,6 +1578,40 @@ def workflow_new(
             "preview <name>`, and `grayson library push`",
         }
     )
+
+
+@workflow_app.command("delete")
+def workflow_delete(
+    name: str = typer.Argument(..., help="A library workflow you created."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Delete a library workflow you authored. Core templates cannot go, a
+    colleague's file cannot go under your id, and a workflow with sessions
+    still open on it stays until they close. The library's git history keeps
+    the file; `library push` propagates the removal."""
+    from grayson.identity import get_user_id
+    from grayson.library import maybe_auto_push
+    from grayson.workflows.authoring import (
+        WorkflowAuthoringError,
+        delete_workflow,
+        open_sessions_on,
+    )
+
+    ws = _workspace()
+    if not yes and not typer.confirm(
+        f"Delete workflow '{name}' from the library ({ws.workflows_dir / f'{name}.yaml'})?"
+    ):
+        raise typer.Exit(1)
+    try:
+        path = delete_workflow(ws.workflows_dir, name, get_user_id(), open_sessions_on(ws, name))
+    except WorkflowAuthoringError as e:
+        fail(str(e.args[0] if e.args else e))
+        return
+    out: dict = {"deleted": str(path)}
+    pushed = maybe_auto_push(ws, f"grayson workflows: delete {name}")
+    if pushed is not None:
+        out["push"] = pushed
+    emit(out)
 
 
 @workflow_app.command("lint")

@@ -8,6 +8,9 @@ recorded unless it validates against its workflow's schema AND cites evidence
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 SEVERITIES = ["critical", "high", "medium", "low", "info"]
@@ -57,6 +60,80 @@ CONFIDENCE_RUBRIC: dict[str, str] = {
     ),
     "low": ("A lead worth recording — suggestive evidence, alternatives not yet excluded."),
 }
+
+#: The fields every finding carries whatever its schema, in the order a reader
+#: meets them, with the rule each is held to. Published so the console and the
+#: agent see the same contract the validator enforces — a schema nobody can
+#: read is a schema agents discover one rejection at a time.
+BASE_FIELDS: list[dict] = [
+    {
+        "key": "title",
+        "rule": "at least 3 characters",
+        "required": True,
+        "description": "What is wrong, in one line.",
+    },
+    {
+        "key": "severity",
+        "rule": " | ".join(SEVERITIES),
+        "required": True,
+        "description": "How much it matters, on the published scale (`finding rubric`).",
+    },
+    {
+        "key": "confidence",
+        "rule": " | ".join(CONFIDENCES),
+        "required": True,
+        "description": "How well the evidence supports the claim, not how it feels.",
+    },
+    {
+        "key": "summary",
+        "rule": "at least 10 characters",
+        "required": True,
+        "description": "The claim and what supports it, in a paragraph.",
+    },
+    {
+        "key": "evidence",
+        "rule": "one or more executed query ids (q_XXXX)",
+        "required": True,
+        "description": "The queries that demonstrate it — they must have run in this session.",
+    },
+    {
+        "key": "affected_objects",
+        "rule": "required for severity critical or high",
+        "required": False,
+        "description": "Tables and columns involved, fully qualified.",
+    },
+    {
+        "key": "reproduction",
+        "rule": "required for confidence high",
+        "required": False,
+        "description": "How someone else goes and sees it: a query, a filter, a locator.",
+    },
+    {
+        "key": "proposed_remediation",
+        "rule": "free text",
+        "required": False,
+        "description": "What would fix it, if you know.",
+    },
+    {
+        "key": "open_questions",
+        "rule": "list of strings",
+        "required": False,
+        "description": "What is still unsettled and would change the finding.",
+    },
+    {
+        "key": "supersedes",
+        "rule": "an earlier finding id (f_XXX)",
+        "required": False,
+        "description": "The finding this one corrects; applied only if the user accepts.",
+    },
+    {
+        "key": "extra",
+        "rule": "object — the schema's own fields live here",
+        "required": False,
+        "description": "Workflow-specific fields: the schema below says which.",
+    },
+]
+BASE_FIELD_KEYS: frozenset[str] = frozenset(f["key"] for f in BASE_FIELDS)
 
 #: severities that have to name what they affect. A severe finding that cannot
 #: say which objects are involved is a severity nobody can act on or check.
@@ -265,8 +342,111 @@ def _resolve_conditional(finding: Finding, schema_name: str, spec: dict) -> list
     return conditional[value]
 
 
-def validate_finding(payload: dict, schema_name: str) -> Finding:
-    """Structural validation. Raises pydantic ValidationError or ValueError."""
+def _field(f: Any) -> dict:
+    """A workflow findings field as a plain dict, whether it arrives as a
+    WorkflowTemplate model or as the YAML's own dict."""
+
+    def get(k: str, d: Any = None) -> Any:
+        return f.get(k, d) if isinstance(f, dict) else getattr(f, k, d)
+
+    return {
+        "key": str(get("key") or ""),
+        "description": str(get("description") or ""),
+        "required": bool(get("required", True)),
+        "choices": [str(c) for c in (get("choices") or [])],
+    }
+
+
+def effective_extra(schema_name: str, workflow_fields: Iterable[Any] | None = None) -> list[dict]:
+    """The unconditional `extra` fields a finding must (or may) carry under a
+    built-in schema plus a workflow's own additions, in the order an agent
+    should read them: the schema's first, then the workflow's.
+
+    Each entry: key, description, required, choices, source ('schema' or
+    'workflow'). A workflow field whose key the schema already requires
+    tightens it — description and choices are the workflow's, and it stays
+    required — rather than appearing twice.
+    """
+    spec = FINDINGS_SCHEMAS.get(schema_name, {"required_extra": []})
+    out: list[dict] = [
+        {"key": key, "description": desc, "required": True, "choices": [], "source": "schema"}
+        for key, desc in spec.get("required_extra", [])
+    ]
+    by_key = {e["key"]: e for e in out}
+    for raw in workflow_fields or []:
+        f = _field(raw)
+        if not f["key"]:
+            continue
+        if f["key"] in by_key:
+            base = by_key[f["key"]]
+            base["description"] = f["description"] or base["description"]
+            base["choices"] = f["choices"]
+            base["source"] = "schema+workflow"
+            continue
+        entry = {**f, "source": "workflow"}
+        out.append(entry)
+        by_key[f["key"]] = entry
+    return out
+
+
+def describe_schema(schema_name: str, workflow_fields: Iterable[Any] | None = None) -> dict:
+    """Everything a finding under this schema is held to, for agents and the
+    console: the base fields with their rules, the effective `extra` fields,
+    the discriminator and the branches it selects, the enforced calibration
+    rules, and an example payload shaped to pass.
+
+    `workflow_fields` are the workflow's own additions (WorkflowTemplate
+    .findings_fields); the description is of the combined contract.
+    """
+    known = schema_name in FINDINGS_SCHEMAS
+    spec = FINDINGS_SCHEMAS.get(schema_name, {"required_extra": []})
+    extra = effective_extra(schema_name, workflow_fields)
+    conditional = {
+        value: [{"key": k, "description": d} for k, d in fields]
+        for value, fields in (spec.get("conditional_extra") or {}).items()
+    }
+    example_extra: dict = {}
+    for e in extra:
+        if e["required"]:
+            example_extra[e["key"]] = e["choices"][0] if e["choices"] else "..."
+    discriminator = spec.get("discriminator") or ""
+    if discriminator and conditional:
+        first = next(iter(conditional))
+        example_extra[discriminator] = first
+        for f in conditional[first]:
+            example_extra[f["key"]] = "..."
+    example = {
+        "title": "What is wrong, in one line",
+        "severity": "medium",
+        "confidence": "medium",
+        "summary": "The claim, and what in the cited queries supports it.",
+        "affected_objects": ["DB.SCHEMA.TABLE"],
+        "evidence": ["q_0001"],
+    }
+    if example_extra:
+        example["extra"] = example_extra
+    return {
+        "name": schema_name,
+        "known": known,
+        "base_fields": [dict(f) for f in BASE_FIELDS],
+        "required_extra": extra,
+        "discriminator": discriminator,
+        "discriminator_hint": spec.get("discriminator_hint") or "",
+        "conditional_extra": conditional,
+        "enforced": list(rubric()["enforced"]),
+        "example": example,
+    }
+
+
+def validate_finding(
+    payload: dict, schema_name: str, workflow_fields: Iterable[Any] | None = None
+) -> Finding:
+    """Structural validation. Raises pydantic ValidationError or ValueError.
+
+    `workflow_fields` are the workflow's own additions to the named schema
+    (WorkflowTemplate.findings_fields): required ones must be present, and a
+    field with `choices` must hold one of them.
+    """
     if schema_name not in FINDINGS_SCHEMAS:
         known = ", ".join(sorted(FINDINGS_SCHEMAS))
         raise ValueError(f"unknown findings schema '{schema_name}' (known: {known})")
@@ -276,13 +456,24 @@ def validate_finding(payload: dict, schema_name: str) -> Finding:
     spec = FINDINGS_SCHEMAS[schema_name]
     # the discriminator is validated before the fields it selects, so the error
     # names the real problem instead of cascading into a list of missing fields
-    required = list(spec["required_extra"]) + _resolve_conditional(finding, schema_name, spec)
+    extra = effective_extra(schema_name, workflow_fields)
+    required = [(e["key"], e["description"]) for e in extra if e["required"]]
+    required += _resolve_conditional(finding, schema_name, spec)
     missing = [f"{key} ({desc})" for key, desc in required if not finding.extra.get(key)]
     if missing:
         raise ValueError(
             f"findings schema '{schema_name}' requires these fields in `extra`: "
             + "; ".join(missing)
         )
+    off_list = [
+        f"{e['key']} must be one of {e['choices']}, got '{finding.extra[e['key']]}'"
+        for e in extra
+        if e["choices"]
+        and finding.extra.get(e["key"]) not in (None, "")
+        and str(finding.extra.get(e["key"])) not in e["choices"]
+    ]
+    if off_list:
+        raise ValueError(f"findings schema '{schema_name}': " + "; ".join(off_list))
     # calibration last: what the workflow demands is the more substantive gap, so
     # it gets reported first when a finding is missing both
     _check_calibration(finding)
