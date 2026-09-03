@@ -26,10 +26,8 @@ pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
   <div class="titles">
     <div class="titlerow"><h1>Confirm: {{ what }}</h1>
       <span class="badge attn">not saved yet</span></div>
-    <div class="lede">This is what saving writes to <span class="mono">workflows/{{ name }}.yaml</span>.
-      {% if auto_push %}The library auto-pushes, so the change reaches your team on save.
-      {% else %}It reaches your team on the next <code>grayson library push</code>.{% endif %}
-      Nothing is written until you confirm.</div>
+    <div class="lede">Nothing is written to <span class="mono">workflows/{{ name }}.yaml</span> until
+      you confirm{% if auto_push %}; saving also pushes to the team library{% endif %}.</div>
   </div>
 </div>
 
@@ -67,16 +65,13 @@ pre.preview { background: var(--panel2); border: 1px solid var(--border-soft);
     {% if diff %}
     <pre class="diff">{% for line in diff.splitlines() %}{% if line.startswith("+++") or line.startswith("---") %}<span class="meta">{{ line }}</span>{% elif line.startswith("@@") %}<span class="hunk">{{ line }}</span>{% elif line.startswith("+") %}<span class="add">{{ line }}</span>{% elif line.startswith("-") %}<span class="del">{{ line }}</span>{% else %}{{ line }}{% endif %}
 {% endfor %}</pre>
-    <div class="faint small mt-1">Saving writes the file in grayson's canonical layout; a hand-edited
-      file's comments and line breaks are normalised on the first save.</div>
+    <div class="faint small mt-1">Saved in canonical layout: a hand-edited file's comments do not survive.</div>
     {% else %}
     <div class="card empty">No line differs.</div>
     {% endif %}
   </div>
   <div>
-    <h2>As it will read</h2>
-    <div class="muted small" style="margin-bottom: 6px;">The same rendering <code>grayson workflow preview</code>
-      shows an agent's user for sign-off.</div>
+    <h2>As it will read {{ help("workflow_preview") }}</h2>
     <pre class="preview">{{ preview }}</pre>
   </div>
 </div>

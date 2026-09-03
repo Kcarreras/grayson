@@ -17,8 +17,6 @@ pre.yaml { position: relative; background: var(--panel2); border: 1px solid var(
     <div class="titlerow"><h1>{{ tpl.name }}.yaml {{ help("workflow_yaml") }}</h1>
       {% if is_core %}<span class="badge plain">core — rendered from the built-in template</span>
       {% else %}<span class="badge act">library file</span>{% endif %}</div>
-    <div class="lede">The definition as it is stored{% if is_core %} would be, were it a library file{% endif %}.
-      Copy it, download it, or {% if editable %}edit it{% else %}fork it from the workflow page{% endif %}.</div>
   </div>
   <span class="actions">
     <a class="btn ghost" href="/workflows/{{ tpl.name }}/yaml?raw=1&t={{ token }}" download="{{ tpl.name }}.yaml">Download</a>
