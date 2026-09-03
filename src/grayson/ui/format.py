@@ -246,6 +246,27 @@ GLOSSARY: dict[str, str] = {
         "The same rendering `grayson workflow preview` gives an agent to paste for "
         "sign-off, so what you confirm here is what they would be shown."
     ),
+    "schema_new": (
+        "A team schema extends a built-in: its fields and rules stay, yours are "
+        "added on top. Fork a library schema to start from a teammate's; it lands "
+        "under your id."
+    ),
+    "schema_branches": (
+        "One required field with choices can be the discriminator: its value "
+        "selects which further fields a finding needs. That is how an honest "
+        "partial result gets a shape of its own instead of being forced into a "
+        "confident one."
+    ),
+    "schema_delete": (
+        "Only the author can delete a schema, never a built-in, and never while a "
+        "workflow names it — every finding those workflows record validates "
+        "against it. The library's git history keeps the file."
+    ),
+    "schema_promote": (
+        "Lifts this workflow's own fields into a named library schema and points "
+        "the workflow at it, so other workflows can share the same contract. The "
+        "fields move; nothing a finding needs changes."
+    ),
     "workflow_confirm": (
         "Every edit — YAML or a single element — stops here first. Confirming writes "
         "the file shown; cancelling discards the draft. The library's git history "

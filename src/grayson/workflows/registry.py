@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from grayson.findings.schemas import FINDINGS_SCHEMAS
+from grayson.findings.library import known_schema, known_schema_names, schemas_dir_beside
 from grayson.workflows.models import WorkflowTemplate
 
 BUILTIN_DIR = Path(__file__).parent / "templates"
@@ -91,8 +91,8 @@ def load_override_report(
                 tpl.name,
             )
             continue
-        if tpl.findings_schema not in FINDINGS_SCHEMAS:
-            known = ", ".join(sorted(FINDINGS_SCHEMAS))
+        if not known_schema(tpl.findings_schema, schemas_dir_beside(overrides_dir)):
+            known = ", ".join(known_schema_names(schemas_dir_beside(overrides_dir)))
             problem(
                 path,
                 f"unknown findings_schema '{tpl.findings_schema}' (known: {known})",

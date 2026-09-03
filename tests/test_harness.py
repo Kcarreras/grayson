@@ -151,6 +151,9 @@ def test_workflow_author_skill_written_per_harness(tmp_path):
         # the interview covers the workflow's own findings fields and deletion
         assert "findings_fields" in text and "choices" in text
         assert "workflow delete" in text
+        # and shared schemas: extend-never-replace, branches, promotion
+        assert "Designing a shared findings schema" in text
+        assert "workflow promote" in text and "discriminator" in text
         assert (root / ".grayson" / "WORKFLOW_AUTHOR.md").is_file()
 
     codex_root = tmp_path / "codex"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -10,6 +11,8 @@ import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 
 def utcnow() -> str:
@@ -73,3 +76,58 @@ def ensure_within(root: Path, candidate: Path) -> Path:
     if not resolved.is_relative_to(root.resolve()):
         raise ValueError(f"path {candidate} escapes workspace root {root}")
     return resolved
+
+
+# -- library YAML ----------------------------------------------------------
+
+
+class _Dumper(yaml.SafeDumper):
+    """Prose as folded blocks, the way the core templates are written, instead
+    of quoted scalars with escaped newlines nobody can read in a diff."""
+
+
+def _str_presenter(dumper: yaml.SafeDumper, value: str) -> yaml.Node:
+    style = ">" if ("\n" in value or len(value) > 72) else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_Dumper.add_representer(str, _str_presenter)
+
+
+def tidy_strings(value: Any) -> Any:
+    """Trailing whitespace off every string, recursively: a YAML block scalar
+    keeps its final newline, and a save should not accumulate them."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return [tidy_strings(v) for v in value]
+    if isinstance(value, dict):
+        return {k: tidy_strings(v) for k, v in value.items()}
+    return value
+
+
+def dump_yaml(data: dict) -> str:
+    """Stable, human-editable YAML for a library file, keys in the given order."""
+    return yaml.dump(
+        tidy_strings(data), Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=88
+    )
+
+
+def order_keys(data: dict, known: tuple[str, ...]) -> dict:
+    """`data` with `known` keys first (dropping empty ones) and every other key
+    — a newer grayson's, or a hand edit's — riding along at the end rather
+    than being stripped by the rewrite."""
+    ordered = {key: data[key] for key in known if data.get(key) not in ("", [], {}, None)}
+    ordered.update({k: v for k, v in data.items() if k not in known})
+    return ordered
+
+
+def unified_diff_text(before: str, after: str, label_before: str, label_after: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=label_before,
+            tofile=label_after,
+        )
+    )

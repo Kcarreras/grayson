@@ -9,6 +9,7 @@ recorded unless it validates against its workflow's schema AND cites evidence
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -322,29 +323,85 @@ def _check_calibration(finding: Finding) -> None:
         raise ValueError(" ".join(problems))
 
 
-def _resolve_conditional(finding: Finding, schema_name: str, spec: dict) -> list[tuple[str, str]]:
-    """Extra fields selected by the schema's discriminator, if it has one."""
-    conditional = spec.get("conditional_extra") or {}
-    if not conditional:
-        return []
-    key = spec.get("discriminator") or ""
-    value = str(finding.extra.get(key) or "").strip()
-    if not value:
-        hint = spec.get("discriminator_hint") or (
-            f"one of: {', '.join(conditional)} — it selects which further fields apply"
+def _spec(schema_name: str, schemas_dir: Path | None) -> dict:
+    """The named schema as one normalised spec, built-in or library.
+
+    Keys: name, known, library (bool), base (the built-in), title,
+    description, required_extra (entries with source), discriminator,
+    discriminator_hint, conditional_extra {value: [(key, desc, choices,
+    required)]}, created_by, forked_from.
+    """
+    if schema_name in FINDINGS_SCHEMAS:
+        spec = FINDINGS_SCHEMAS[schema_name]
+        return {
+            "name": schema_name,
+            "known": True,
+            "library": False,
+            "base": schema_name,
+            "title": "",
+            "description": "",
+            "required_extra": [
+                {"key": k, "description": d, "required": True, "choices": [], "source": "schema"}
+                for k, d in spec.get("required_extra", [])
+            ],
+            "discriminator": spec.get("discriminator") or "",
+            "discriminator_hint": spec.get("discriminator_hint") or "",
+            "conditional_extra": {
+                value: [(k, d, [], True) for k, d in fields]
+                for value, fields in (spec.get("conditional_extra") or {}).items()
+            },
+            "created_by": "",
+            "forked_from": "",
+        }
+    from grayson.findings.library import SchemaNotFound, get_library_schema
+
+    try:
+        lib = get_library_schema(schema_name, schemas_dir)
+    except SchemaNotFound:
+        return {
+            "name": schema_name,
+            "known": False,
+            "library": False,
+            "base": "",
+            "title": "",
+            "description": "",
+            "required_extra": [],
+            "discriminator": "",
+            "discriminator_hint": "",
+            "conditional_extra": {},
+            "created_by": "",
+            "forked_from": "",
+        }
+    out = _spec(lib.base, None)
+    out.update(
+        name=schema_name,
+        library=True,
+        title=lib.title,
+        description=lib.description,
+        created_by=lib.created_by,
+        forked_from=lib.forked_from,
+    )
+    _layer(out["required_extra"], lib.fields, "library")
+    if lib.discriminator:
+        field = next(f for f in lib.fields if f.key == lib.discriminator)
+        out["discriminator"] = lib.discriminator
+        out["discriminator_hint"] = (
+            " ".join(field.description.split())
+            or f"one of: {' | '.join(field.choices)} — it selects which further fields apply"
         )
-        raise ValueError(f"findings schema '{schema_name}' requires extra.{key}: {hint}")
-    if value not in conditional:
-        raise ValueError(
-            f"findings schema '{schema_name}': {key} must be one of "
-            f"{list(conditional)}, got '{value}'"
-        )
-    return conditional[value]
+        out["conditional_extra"] = {
+            value: [
+                (f.key, f.description, list(f.choices), f.required)
+                for f in lib.branches.get(value, [])
+            ]
+            for value in field.choices
+        }
+    return out
 
 
 def _field(f: Any) -> dict:
-    """A workflow findings field as a plain dict, whether it arrives as a
-    WorkflowTemplate model or as the YAML's own dict."""
+    """A findings field as a plain dict, whether it arrives as a model
+    (FindingField) or as a YAML dict."""
 
     def get(k: str, d: Any = None) -> Any:
         return f.get(k, d) if isinstance(f, dict) else getattr(f, k, d)
@@ -357,23 +414,12 @@ def _field(f: Any) -> dict:
     }
 
 
-def effective_extra(schema_name: str, workflow_fields: Iterable[Any] | None = None) -> list[dict]:
-    """The unconditional `extra` fields a finding must (or may) carry under a
-    built-in schema plus a workflow's own additions, in the order an agent
-    should read them: the schema's first, then the workflow's.
-
-    Each entry: key, description, required, choices, source ('schema' or
-    'workflow'). A workflow field whose key the schema already requires
-    tightens it — description and choices are the workflow's, and it stays
-    required — rather than appearing twice.
-    """
-    spec = FINDINGS_SCHEMAS.get(schema_name, {"required_extra": []})
-    out: list[dict] = [
-        {"key": key, "description": desc, "required": True, "choices": [], "source": "schema"}
-        for key, desc in spec.get("required_extra", [])
-    ]
-    by_key = {e["key"]: e for e in out}
-    for raw in workflow_fields or []:
+def _layer(entries: list[dict], fields: Iterable[Any] | None, source: str) -> None:
+    """Add one layer's fields to the effective list: a new key appends, a key
+    an earlier layer already has tightens it (description, choices) and stays
+    required if it was."""
+    by_key = {e["key"]: e for e in entries}
+    for raw in fields or []:
         f = _field(raw)
         if not f["key"]:
             continue
@@ -381,45 +427,71 @@ def effective_extra(schema_name: str, workflow_fields: Iterable[Any] | None = No
             base = by_key[f["key"]]
             base["description"] = f["description"] or base["description"]
             base["choices"] = f["choices"]
-            base["source"] = "schema+workflow"
+            base["required"] = base["required"] or f["required"]
+            base["source"] = f"{base['source']}+{source}"
             continue
-        entry = {**f, "source": "workflow"}
-        out.append(entry)
+        entry = {**f, "source": source}
+        entries.append(entry)
         by_key[f["key"]] = entry
-    return out
 
 
-def describe_schema(schema_name: str, workflow_fields: Iterable[Any] | None = None) -> dict:
+def effective_extra(
+    schema_name: str,
+    workflow_fields: Iterable[Any] | None = None,
+    schemas_dir: Path | None = None,
+) -> list[dict]:
+    """The unconditional `extra` fields a finding must (or may) carry under a
+    schema plus a workflow's own additions, in the order an agent should
+    read them: the built-in's, then the library schema's, then the
+    workflow's.
+
+    Each entry: key, description, required, choices, source ('schema',
+    'library', 'workflow', or a '+'-joined combination where a later layer
+    tightened an earlier one's field).
+    """
+    spec = _spec(schema_name, schemas_dir)
+    entries = [dict(e) for e in spec["required_extra"]]
+    _layer(entries, workflow_fields, "workflow")
+    return entries
+
+
+def describe_schema(
+    schema_name: str,
+    workflow_fields: Iterable[Any] | None = None,
+    schemas_dir: Path | None = None,
+) -> dict:
     """Everything a finding under this schema is held to, for agents and the
     console: the base fields with their rules, the effective `extra` fields,
     the discriminator and the branches it selects, the enforced calibration
     rules, and an example payload shaped to pass.
 
     `workflow_fields` are the workflow's own additions (WorkflowTemplate
-    .findings_fields); the description is of the combined contract.
+    .findings_fields); `schemas_dir` is the library's findings_schemas/
+    directory, needed to resolve a library schema. The description is of the
+    combined contract.
     """
-    known = schema_name in FINDINGS_SCHEMAS
-    spec = FINDINGS_SCHEMAS.get(schema_name, {"required_extra": []})
-    extra = effective_extra(schema_name, workflow_fields)
+    spec = _spec(schema_name, schemas_dir)
+    extra = effective_extra(schema_name, workflow_fields, schemas_dir)
     conditional = {
-        value: [{"key": k, "description": d} for k, d in fields]
-        for value, fields in (spec.get("conditional_extra") or {}).items()
+        value: [{"key": k, "description": d, "choices": c, "required": r} for k, d, c, r in fields]
+        for value, fields in spec["conditional_extra"].items()
     }
     example_extra: dict = {}
     for e in extra:
         if e["required"]:
             example_extra[e["key"]] = e["choices"][0] if e["choices"] else "..."
-    discriminator = spec.get("discriminator") or ""
+    discriminator = spec["discriminator"]
     if discriminator and conditional:
         first = next(iter(conditional))
         example_extra[discriminator] = first
         for f in conditional[first]:
-            example_extra[f["key"]] = "..."
+            if f["required"]:
+                example_extra[f["key"]] = f["choices"][0] if f["choices"] else "..."
     example = {
-        "title": "What is wrong, in one line",
+        "title": "Short statement of the defect",
         "severity": "medium",
         "confidence": "medium",
-        "summary": "The claim, and what in the cited queries supports it.",
+        "summary": "What is wrong, and what supports the claim.",
         "affected_objects": ["DB.SCHEMA.TABLE"],
         "evidence": ["q_0001"],
     }
@@ -427,39 +499,77 @@ def describe_schema(schema_name: str, workflow_fields: Iterable[Any] | None = No
         example["extra"] = example_extra
     return {
         "name": schema_name,
-        "known": known,
+        "known": spec["known"],
+        "library": spec["library"],
+        "base": spec["base"],
+        "title": spec["title"],
+        "description": spec["description"],
+        "created_by": spec["created_by"],
+        "forked_from": spec["forked_from"],
         "base_fields": [dict(f) for f in BASE_FIELDS],
         "required_extra": extra,
         "discriminator": discriminator,
-        "discriminator_hint": spec.get("discriminator_hint") or "",
+        "discriminator_hint": spec["discriminator_hint"],
         "conditional_extra": conditional,
         "enforced": list(rubric()["enforced"]),
         "example": example,
     }
 
 
+def _resolve_conditional(finding: Finding, schema_name: str, spec: dict) -> list[dict]:
+    """Extra fields selected by the schema's discriminator, if it has one."""
+    conditional = spec["conditional_extra"]
+    if not conditional:
+        return []
+    key = spec["discriminator"]
+    value = str(finding.extra.get(key) or "").strip()
+    if not value:
+        hint = spec["discriminator_hint"] or (
+            f"one of: {', '.join(conditional)} — it selects which further fields apply"
+        )
+        raise ValueError(f"findings schema '{schema_name}' requires extra.{key}: {hint}")
+    if value not in conditional:
+        raise ValueError(
+            f"findings schema '{schema_name}': {key} must be one of "
+            f"{list(conditional)}, got '{value}'"
+        )
+    return [
+        {"key": k, "description": d, "choices": c, "required": r}
+        for k, d, c, r in conditional[value]
+    ]
+
+
 def validate_finding(
-    payload: dict, schema_name: str, workflow_fields: Iterable[Any] | None = None
+    payload: dict,
+    schema_name: str,
+    workflow_fields: Iterable[Any] | None = None,
+    schemas_dir: Path | None = None,
 ) -> Finding:
     """Structural validation. Raises pydantic ValidationError or ValueError.
 
     `workflow_fields` are the workflow's own additions to the named schema
-    (WorkflowTemplate.findings_fields): required ones must be present, and a
-    field with `choices` must hold one of them.
+    (WorkflowTemplate.findings_fields); `schemas_dir` resolves a library
+    schema. Required fields must be present, and a field with `choices` must
+    hold one of them — whichever layer declared it.
     """
-    if schema_name not in FINDINGS_SCHEMAS:
-        known = ", ".join(sorted(FINDINGS_SCHEMAS))
+    spec = _spec(schema_name, schemas_dir)
+    if not spec["known"]:
+        from grayson.findings.library import known_schema_names
+
+        known = ", ".join(known_schema_names(schemas_dir))
         raise ValueError(f"unknown findings schema '{schema_name}' (known: {known})")
     data = dict(payload)
     data["schema_name"] = schema_name
     finding = Finding.model_validate(data)
-    spec = FINDINGS_SCHEMAS[schema_name]
     # the discriminator is validated before the fields it selects, so the error
     # names the real problem instead of cascading into a list of missing fields
-    extra = effective_extra(schema_name, workflow_fields)
-    required = [(e["key"], e["description"]) for e in extra if e["required"]]
-    required += _resolve_conditional(finding, schema_name, spec)
-    missing = [f"{key} ({desc})" for key, desc in required if not finding.extra.get(key)]
+    fields = effective_extra(schema_name, workflow_fields, schemas_dir)
+    fields += _resolve_conditional(finding, schema_name, spec)
+    missing = [
+        f"{e['key']} ({e['description']})"
+        for e in fields
+        if e["required"] and not finding.extra.get(e["key"])
+    ]
     if missing:
         raise ValueError(
             f"findings schema '{schema_name}' requires these fields in `extra`: "
@@ -467,7 +577,7 @@ def validate_finding(
         )
     off_list = [
         f"{e['key']} must be one of {e['choices']}, got '{finding.extra[e['key']]}'"
-        for e in extra
+        for e in fields
         if e["choices"]
         and finding.extra.get(e["key"]) not in (None, "")
         and str(finding.extra.get(e["key"])) not in e["choices"]

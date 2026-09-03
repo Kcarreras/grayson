@@ -162,6 +162,79 @@ effective schema is the built-in plus these, in that order, and it is what
 the engine validates against, what `findings_schema_spec` describes, and
 what the preview shows at sign-off.
 
+### Shared schemas in the library
+
+When the fields one workflow needed turn out to be what the team's findings
+all need, they become a **library schema**: a file in the library's
+`findings_schemas/` directory, named, owned, and git-shared like a workflow,
+that several workflows point at with `findings_schema`.
+
+```yaml
+name: orders_triage_v1
+title: Orders triage
+description: Findings on the orders pipeline — who owns the fix, and whether it shipped.
+base: standard_v1
+fields:
+  - key: owner_team
+    description: Which team owns the fix.
+    choices: [data-platform, finance-eng]
+  - key: outcome
+    description: Whether the fix shipped, was deferred, or the finding was withdrawn.
+    choices: [fixed, deferred, withdrawn]
+discriminator: outcome
+branches:
+  fixed:
+    - key: fix_reference
+      description: The change that fixed it.
+  deferred:
+    - key: deferred_until
+      description: When it will be picked up, and by whom.
+```
+
+Two rules shape it. A library schema **extends** a built-in, never replaces
+one: `base` names the built-in, whose fields, calibration rules and required
+extras all stay, so no library schema can make a finding need less than the
+built-in it starts from and findings stay comparable across the library. A
+field named like one the base requires tightens it. And a schema may
+**branch**: one required field with `choices` is the `discriminator`, and
+each value's `branches` entry lists the further fields that value needs — a
+value with no entry needs nothing more. That is what lets an honest partial
+result (`deferred`, `inconclusive`) have a shape of its own instead of being
+forced into a confident one. One discriminator per schema, and only when the
+base does not branch already (`bug_hunter_v1` and `rule_qa_v1` do).
+
+The effective schema a finding validates against is then three layers with
+one merge rule: built-in, then library schema, then the workflow's own
+`findings_fields`.
+
+```bash
+grayson schema list                            # built-ins, library, who uses each
+grayson schema new orders_triage_v1 --base standard_v1
+grayson schema lint
+grayson schema preview orders_triage_v1        # the sign-off form
+grayson workflow promote orders-slim-health --schema orders_slim_v1
+grayson schema delete orders_triage_v1
+```
+
+`workflow promote` is how most shared schemas start: it lifts a workflow's
+`findings_fields` into a new schema and points the workflow at it, and the
+effective contract does not change. Ownership follows the workflow rules —
+built-ins are canonical, a colleague's schema forks under your id, a legacy
+file is anyone's — with one addition: a schema a workflow still names cannot
+be deleted. Lint (`schema lint`, also part of `workflow lint` and `library
+doctor`) reports unloadable files as errors and, as warnings, a missing
+description, a field without one, a name with no version suffix (findings on
+record cite the schema by name, so a tightened schema should be a new one),
+a discriminator with no branch, and a schema no workflow uses.
+
+The console's **Schemas** page (under Workflows) is the same loop without
+YAML: a filterable catalog of built-in and library schemas beside the
+workflows that use them, and for each library schema element-by-element
+editing of its header, fields, discriminator and branches, every change
+reviewed before it is saved. A workflow page's schema card offers the
+promotion, and links the schema it uses. The MCP tools `schema_list` and
+`schema_show` mirror the CLI.
+
 Severity has a published scale (`grayson finding rubric`) so findings don't
 all drift to "high". grayson never judges whether a severity is right — that
 is what accept/reject is for — but the top rungs cost the specificity a real
@@ -211,6 +284,10 @@ which is how a broken library file gets cleaned up.
 
 `tags: [orders, finance]` on a workflow are free labels; the console's
 catalog filters by them, and nothing else reads them.
+
+Findings schemas of the team's own live beside workflows in
+`findings_schemas/`, under the same ownership rules — see
+[Shared schemas in the library](#shared-schemas-in-the-library).
 
 ## Lint
 

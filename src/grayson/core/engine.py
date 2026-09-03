@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from grayson.core.session import OUTCOMES, STAGES, Session
+from grayson.findings.library import schemas_dir_beside
 from grayson.findings.schemas import validate_finding
 from grayson.workflows import WorkflowTemplate, get_workflow
 from grayson.workflows.models import CheckDef
@@ -227,7 +228,9 @@ def record_finding(
 ) -> dict:
     tpl = workflow_for(session, overrides_dir)
     try:
-        finding = validate_finding(payload, tpl.findings_schema, tpl.findings_fields)
+        finding = validate_finding(
+            payload, tpl.findings_schema, tpl.findings_fields, schemas_dir_beside(overrides_dir)
+        )
     except (ValidationError, ValueError) as e:
         raise EnforcementError(f"finding failed schema '{tpl.findings_schema}': {e}") from e
     _validate_evidence(session, finding.evidence)

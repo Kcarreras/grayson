@@ -157,9 +157,10 @@ they are equivalent. Never query Snowflake except through grayson.
    `grayson finding add <sid> --json '{...}'`. Read the schema before the first one:
    `grayson workflow show <name>` (and `session start`'s reply) carry
    `findings_schema_spec` — every base field with its rule, the `extra` fields this
-   workflow requires (the built-in schema's plus the workflow's own, some with a closed
-   list of allowed values), the discriminator and its branches, and an example payload
-   shaped to pass. Fill every required field; a closed list means one of those values,
+   workflow requires (the schema's, built in or the team's own, plus the workflow's
+   additions, some with a closed list of allowed values), the discriminator and its
+   branches, and an example payload shaped to pass (`grayson schema show <name>` gives
+   the same for any schema). Fill every required field; a closed list means one of those values,
    not a paraphrase. Calibrate severity against
    `grayson finding rubric` — critical means wrong data is already being used for
    decisions, info means it is not a defect at all. Two rungs cost specificity and
@@ -217,9 +218,10 @@ identical.
 #: no skills mechanism, gets it as an AGENTS.md section. Versioned with grayson
 #: so the interview can never drift from what `workflow lint` enforces.
 WORKFLOW_AUTHOR_DESCRIPTION = (
-    "Design a grayson workflow template interactively with the user: interview, "
-    "draft the YAML, lint, preview for sign-off, then store it in the team library. "
-    "Use when the user wants a new investigation workflow or to adapt an existing one."
+    "Design a grayson workflow template — or a shared findings schema — interactively "
+    "with the user: interview, draft the YAML, lint, preview for sign-off, then store it "
+    "in the team library. Use when the user wants a new investigation workflow, to adapt "
+    "an existing one, or to define what every finding of a kind must say."
 )
 
 WORKFLOW_AUTHOR = """\
@@ -265,18 +267,19 @@ MCP mirror), which enforces validation and ownership server-side.
   inapplicable check. A suggested check can carry a requirement too — it
   applies only when the agent does that check.
 - **Findings schema.** `standard_v1` unless the workflow's claims need more
-  structure. `grayson workflow schemas` lists every built-in schema with its
-  fields unpacked; `grayson workflow show <name>` carries the effective
-  schema of any workflow as `findings_schema_spec`. Then ask: what must every
-  finding from THIS workflow say that the schema does not already demand — an
-  owning team, a verdict, a ticket, a quantified measure? Each becomes a
-  `findings_fields` entry (`key`, `description`, `required`, `choices`).
-  Where the answer is a verdict, close the value set with `choices` so it
-  cannot be hedged; use `required: false` to document a field without gating
-  on it. A field named like one the schema already requires tightens that
-  field (its description and choices) rather than duplicating it. The gate
-  then refuses a finding without the required fields, exactly as it does for
-  the built-in ones.
+  structure. `grayson schema list` names every schema — the built-ins and the
+  team library's own — and `grayson schema show <name>` unpacks one;
+  `grayson workflow show <name>` carries a workflow's effective schema as
+  `findings_schema_spec`. Prefer a library schema the team already has over
+  new fields. Then ask: what must every finding from THIS workflow say that
+  the schema does not already demand — an owning team, a verdict, a ticket, a
+  quantified measure? Each becomes a `findings_fields` entry (`key`,
+  `description`, `required`, `choices`). Where the answer is a verdict, close
+  the value set with `choices` so it cannot be hedged; use `required: false`
+  to document a field without gating on it. A field named like one the schema
+  already requires tightens that field (its description and choices) rather
+  than duplicating it. The gate then refuses a finding without the required
+  fields, exactly as it does for the built-in ones.
 - **Tags.** `tags: [orders, finance]` — free labels the console's catalog
   filters by, so the workflow can be found once the library has grown. Ask
   for a domain and, if the team uses them, an owner or cadence.
@@ -303,6 +306,51 @@ depends_on naming a check that does not exist). Iterate the interview -> edit ->
 lint -> preview loop until the user confirms the preview; do not push before
 they do.
 
+## Designing a shared findings schema
+
+When the fields a workflow needs are what the team's findings all need — or
+when the user asks for a schema outright — make it a library schema instead
+of per-workflow fields. Same loop, one level up: interview, draft, lint,
+preview, sign-off, push.
+
+- **Start from what exists.** `grayson schema list` (built-ins, library
+  schemas, and which workflows use each). If a workflow already carries the
+  right `findings_fields`, promote them rather than retyping:
+  `grayson workflow promote <workflow> --schema <name>` creates the schema
+  from those fields and points the workflow at it. Otherwise
+  `grayson schema new <name> --base <builtin>` (or `--fork <library schema>`).
+- **Extend, never replace.** A schema names a built-in `base` and adds to it.
+  The base fields, the calibration rules, and the base's required fields stay
+  — a finding can never need less under a library schema than under the
+  built-in. Ask which built-in is closest: `bug_hunter_v1` if findings are
+  diagnoses, `parity_v1` if comparisons, `standard_v1` otherwise.
+- **Fields.** For each: is it a fact the agent can state (`description`), is
+  a finding meaningless without it (`required`), and can the answer be
+  hedged (`choices` closes it — use them for any verdict).
+- **A branch.** Ask: is there an honest partial result that needs a
+  different shape — `deferred` needs a date and an owner, `withdrawn` needs
+  nothing more, `fixed` needs the change reference? Only then set one
+  required field with `choices` as the `discriminator` and give each value
+  its `branches` entry (a value with no branch needs nothing further). One
+  discriminator per schema, and only when the base does not branch already.
+  A schema that only lists fields does not need one.
+- **Name with a version suffix** (`orders_triage_v1`): findings on record
+  cite the schema by name, so a tightened schema is a new one, never a
+  rewrite of a name in use.
+
+```
+grayson schema new <name> --base <builtin>   # or: grayson workflow promote ...
+grayson schema lint                            # repeat until clean
+grayson schema preview <name>                  # paste `text` to the user
+# set findings_schema: <name> on the workflows that should use it, then
+grayson library push
+```
+
+The console's Schemas page (under Workflows) offers the same loop without
+YAML — fields, branches and the discriminator edit one element at a time,
+each reviewed before it is saved — and a workflow page's schema card offers
+the promotion.
+
 ## Rules that are enforced, not advisory
 
 - Core templates are canonical: you cannot edit or shadow them — fork.
@@ -313,6 +361,10 @@ they do.
   or the workflow page's danger zone): only its author can, never a core
   template, and never while sessions are still open on it. Never delete one
   yourself — say which workflow is obsolete and why, and let them decide.
+- Schemas follow the same rules: built-ins are canonical, a colleague's schema
+  forks, a schema a workflow names cannot be deleted (`grayson schema delete`
+  is the user's), and a library schema cannot make a finding need less than
+  its base does.
 """
 
 HARNESSES = {"cursor", "claude-code", "codex", "copilot"}

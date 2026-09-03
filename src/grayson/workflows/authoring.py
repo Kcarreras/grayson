@@ -14,7 +14,6 @@ the same WorkflowTemplate validation the registry loads with.
 
 from __future__ import annotations
 
-import difflib
 import re
 from pathlib import Path
 from typing import Any
@@ -22,8 +21,9 @@ from typing import Any
 import yaml
 
 from grayson.charts.spec import KINDS as CHART_KINDS
-from grayson.findings.schemas import FINDINGS_SCHEMAS, effective_extra
-from grayson.util import atomic_write_text
+from grayson.findings.library import known_schema, known_schema_names, schemas_dir_beside
+from grayson.findings.schemas import effective_extra
+from grayson.util import atomic_write_text, dump_yaml, order_keys, unified_diff_text
 from grayson.workflows.models import WorkflowTemplate
 from grayson.workflows.registry import core_names, load_override_report
 
@@ -91,34 +91,8 @@ def _check_name_free(workflows_dir: Path, name: str) -> None:
         raise WorkflowAuthoringError(f"{name}.yaml already exists in the library")
 
 
-class _Dumper(yaml.SafeDumper):
-    """Prose as folded blocks, the way the core templates are written, instead
-    of quoted scalars with escaped newlines nobody can read in a diff."""
-
-
-def _str_presenter(dumper: yaml.SafeDumper, value: str) -> yaml.Node:
-    style = ">" if ("\n" in value or len(value) > 72) else None
-    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
-
-
-_Dumper.add_representer(str, _str_presenter)
-
-
-def _tidy(value: Any) -> Any:
-    """Trailing whitespace off every string, recursively: a YAML block scalar
-    keeps its final newline, and a save should not accumulate them."""
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, list):
-        return [_tidy(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _tidy(v) for k, v in value.items()}
-    return value
-
-
 def _dump(tpl: WorkflowTemplate) -> str:
     """Stable, human-editable YAML: field order matches how people read templates."""
-    data = _tidy(tpl.model_dump())
     known = (
         "name",
         "title",
@@ -134,11 +108,7 @@ def _dump(tpl: WorkflowTemplate) -> str:
         "findings_schema",
         "findings_fields",
     )
-    ordered = {key: data[key] for key in known if data.get(key) not in ("", [], None)}
-    # unknown top-level fields (a newer grayson's, or a hand edit's) ride at the
-    # end rather than being stripped by the rewrite
-    ordered.update({k: v for k, v in data.items() if k not in known})
-    return yaml.dump(ordered, Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=88)
+    return dump_yaml(order_keys(tpl.model_dump(), known))
 
 
 def create_workflow(
@@ -209,8 +179,9 @@ def validate_workflow_text(
             f"the YAML names '{tpl.name}' but you are editing '{name}' — renames are a "
             "fork (new file), not an edit"
         )
-    if tpl.findings_schema not in FINDINGS_SCHEMAS:
-        known = ", ".join(sorted(FINDINGS_SCHEMAS))
+    schemas_dir = schemas_dir_beside(workflows_dir)
+    if not known_schema(tpl.findings_schema, schemas_dir):
+        known = ", ".join(known_schema_names(schemas_dir))
         raise WorkflowAuthoringError(
             f"unknown findings_schema '{tpl.findings_schema}' (known: {known})"
         )
@@ -310,13 +281,8 @@ def open_sessions_on(workspace: Any, name: str) -> list[str]:
 def diff_yaml(before: str, after: str, name: str) -> str:
     """Unified diff of a workflow file, before and after an edit — the review
     step shows exactly what a save would change, line by line."""
-    return "".join(
-        difflib.unified_diff(
-            before.splitlines(keepends=True),
-            after.splitlines(keepends=True),
-            fromfile=f"workflows/{name}.yaml (library)",
-            tofile=f"workflows/{name}.yaml (after save)",
-        )
+    return unified_diff_text(
+        before, after, f"workflows/{name}.yaml (library)", f"workflows/{name}.yaml (after save)"
     )
 
 
@@ -405,7 +371,9 @@ def _move(items: list[dict], i: int, direction: str) -> None:
         items[i], items[j] = items[j], items[i]
 
 
-def apply_element_edit(tpl: WorkflowTemplate, op: dict) -> WorkflowTemplate:
+def apply_element_edit(
+    tpl: WorkflowTemplate, op: dict, schemas_dir: Path | None = None
+) -> WorkflowTemplate:
     """One element operation on a template, returning the edited template.
 
     `op["kind"]` is meta | input | check | field; `op["action"]` (for
@@ -419,7 +387,7 @@ def apply_element_edit(tpl: WorkflowTemplate, op: dict) -> WorkflowTemplate:
     kind = op.get("kind")
     action = op.get("action", "upsert")
     if kind == "meta":
-        _edit_meta(data, op)
+        _edit_meta(data, op, schemas_dir)
     elif kind == "input":
         _edit_listed(data, "setup_inputs", "setup input", op, action, _input_from)
     elif kind == "check":
@@ -446,7 +414,7 @@ def apply_element_edit(tpl: WorkflowTemplate, op: dict) -> WorkflowTemplate:
         raise WorkflowAuthoringError(f"the edit does not validate: {e}") from e
 
 
-def _edit_meta(data: dict, op: dict) -> None:
+def _edit_meta(data: dict, op: dict, schemas_dir: Path | None = None) -> None:
     for key in ("title", "description"):
         if key in op:
             data[key] = str(op[key] or "").strip()
@@ -464,8 +432,8 @@ def _edit_meta(data: dict, op: dict) -> None:
         )
     if "findings_schema" in op:
         schema = str(op["findings_schema"] or "").strip()
-        if schema not in FINDINGS_SCHEMAS:
-            known = ", ".join(sorted(FINDINGS_SCHEMAS))
+        if not known_schema(schema, schemas_dir):
+            known = ", ".join(known_schema_names(schemas_dir))
             raise WorkflowAuthoringError(f"unknown findings_schema '{schema}' (known: {known})")
         data["findings_schema"] = schema
 
@@ -552,7 +520,7 @@ def _field_from(op: dict, key: str) -> dict:
     }
 
 
-def render_preview(tpl: WorkflowTemplate) -> str:
+def render_preview(tpl: WorkflowTemplate, schemas_dir: Path | None = None) -> str:
     """Deterministic, human-readable rendering of a template for confirmation.
 
     The standard shape a workflow is shown in before someone commits to it —
@@ -614,7 +582,7 @@ def render_preview(tpl: WorkflowTemplate) -> str:
         lines.append(f"  - {c.key} — {c.title}{charts}")
     if not tpl.suggested_checks:
         lines.append("  (none)")
-    extra = effective_extra(tpl.findings_schema, tpl.findings_fields)
+    extra = effective_extra(tpl.findings_schema, tpl.findings_fields, schemas_dir)
     lines += [
         "",
         f"Findings — every finding validates against {tpl.findings_schema}"
@@ -626,8 +594,10 @@ def render_preview(tpl: WorkflowTemplate) -> str:
             quals.append(f"one of: {' | '.join(e['choices'])}")
         if not e["required"]:
             quals.append("optional")
-        if e["source"] != "schema":
+        if e["source"].endswith("workflow"):
             quals.append("this workflow's")
+        elif e["source"].endswith("library"):
+            quals.append("the library schema's")
         head = e["key"] + (f" ({'; '.join(quals)})" if quals else "")
         desc = " ".join(e["description"].split())
         lines.append(f"  - {head}: {desc}" if desc else f"  - {head}")
@@ -639,3 +609,85 @@ def render_preview(tpl: WorkflowTemplate) -> str:
         f"findings ({tpl.findings_schema}) -> user accepts/rejects -> fixes/verification -> close",
     ]
     return "\n".join(lines)
+
+
+# -- promoting a workflow's own fields to a shared schema -------------------------
+
+
+def plan_promotion(
+    workflows_dir: Path,
+    workflow_name: str,
+    schema_name: str,
+    user_id: str | None,
+    title: str = "",
+    description: str = "",
+) -> tuple[Any, WorkflowTemplate]:
+    """What promoting a workflow's `findings_fields` into a library schema
+    would produce: the new schema, and the workflow repointed at it with its
+    own fields cleared. Nothing is written; `promote_fields` does that after
+    the person confirms.
+
+    Only a workflow on a built-in schema promotes — one already on a library
+    schema should add its fields there, where every workflow sharing it
+    benefits.
+    """
+    from grayson.findings.authoring import (
+        SchemaAuthoringError,
+        _check_name_free,
+        _validate_name,
+    )
+    from grayson.findings.library import LibrarySchema, core_schema_names, schemas_dir_beside
+    from grayson.workflows.registry import get_workflow
+
+    tpl = get_workflow(workflow_name, workflows_dir)
+    if not can_edit(tpl, user_id):
+        raise WorkflowAuthoringError(
+            f"'{workflow_name}' is not yours to edit — fork it first, then promote its fields"
+        )
+    if tpl.findings_schema not in core_schema_names():
+        raise WorkflowAuthoringError(
+            f"'{workflow_name}' already uses the library schema '{tpl.findings_schema}' — "
+            "add the fields to that schema instead"
+        )
+    if not tpl.findings_fields:
+        raise WorkflowAuthoringError(f"'{workflow_name}' has no findings_fields to promote")
+    schemas_dir = schemas_dir_beside(workflows_dir)
+    try:
+        _validate_name(schema_name)
+        _check_name_free(schemas_dir, schema_name)
+    except SchemaAuthoringError as e:
+        raise WorkflowAuthoringError(str(e)) from e
+    schema = LibrarySchema(
+        name=schema_name,
+        title=title or f"{tpl.title or tpl.name} findings",
+        description=description
+        or f"Promoted from workflow '{tpl.name}': the fields its findings carried.",
+        base=tpl.findings_schema,
+        fields=[f.model_copy() for f in tpl.findings_fields],
+        created_by=user_id or "",
+    )
+    repointed = tpl.model_copy(update={"findings_schema": schema_name, "findings_fields": []})
+    return schema, repointed
+
+
+def promote_fields(
+    workflows_dir: Path,
+    workflow_name: str,
+    schema_name: str,
+    user_id: str | None,
+    title: str = "",
+    description: str = "",
+) -> tuple[Path, WorkflowTemplate]:
+    """Write the promotion `plan_promotion` describes: the schema file first,
+    then the workflow repointed at it (so the workflow never names a schema
+    that does not exist)."""
+    from grayson.findings.authoring import save_schema
+    from grayson.findings.library import schemas_dir_beside
+
+    schema, repointed = plan_promotion(
+        workflows_dir, workflow_name, schema_name, user_id, title, description
+    )
+    schemas_dir = schemas_dir_beside(workflows_dir)
+    save_schema(schemas_dir, schema, user_id)
+    saved = save_workflow_yaml(workflows_dir, workflow_name, _dump(repointed), user_id)
+    return schemas_dir / f"{schema_name}.yaml", saved

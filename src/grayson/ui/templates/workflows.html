@@ -152,13 +152,16 @@
 
 <details class="section" id="schemas" data-fold="schemas">
 <summary><h2>Findings schemas {{ help("findings_schema") }}
-  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ schemas | length }} built in</span></h2></summary>
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ schemas | length }}</span></h2></summary>
+<div class="row" style="margin-bottom: 10px;"><a class="btn secondary sm" href="/schemas?t={{ token }}">Open the schemas page →</a>
+  <span class="muted small">to create, fork, and edit the team's own.</span></div>
 <div class="schemagrid">
   {% for sc in schemas %}
   <details class="card foldcard" data-fold="schema-{{ sc.name }}">
     <summary class="chartsum">
-      <span class="name"><span class="c-caret">▸</span><b class="mono">{{ sc.name }}</b></span>
+      <span class="name"><span class="c-caret">▸</span><a class="mono" href="/schemas/{{ sc.name }}?t={{ token }}"><b>{{ sc.name }}</b></a></span>
       <span class="row" style="margin-left: auto;">
+        {% if sc.library %}{% if sc.mine %}<span class="badge todo">mine</span>{% else %}<span class="badge act">team</span>{% endif %}{% else %}<span class="badge plain">built in</span>{% endif %}
         <span class="badge plain">{{ sc.required_extra | length }} extra field{{ "s" if sc.required_extra | length != 1 }}</span>
         {% if sc.discriminator %}<span class="badge act" title="One field selects which further fields apply">branches on {{ sc.discriminator }}</span>{% endif %}
       </span>

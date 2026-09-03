@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% from "_macros.html" import list_tools %}
+{% block title %}grayson — findings schemas{% endblock %}
+{% block head %}
+<style>
+.scsum { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; list-style: none;
+  user-select: none; }
+.scsum::-webkit-details-marker { display: none; }
+.scsum .c-caret { margin-top: 3px; }
+.scsum .sct { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.scsum .sct .desc { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.scsum .marks { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.scbody { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.fieldrow { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px;
+  font-size: 12.5px; align-items: baseline; }
+.fieldrow .k { font-family: ui-monospace, Consolas, monospace; color: var(--ink-2); }
+.fieldrow .d { color: var(--muted); }
+.scmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 12px;
+  color: var(--muted); border-top: 1px solid var(--border-soft); padding-top: 8px; }
+.newform { display: grid; gap: 8px; grid-template-columns: minmax(200px, 1fr) minmax(180px, 1fr) max-content;
+  align-items: center; }
+@media (max-width: 720px) { .newform { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/workflows?t={{ token }}">Workflows</a><span class="sep">/</span>
+  <span>Schemas</span></nav>
+<div class="pagehead">
+  <div class="titles">
+    <div class="titlerow"><h1>Findings schemas {{ help("findings_schema") }}</h1></div>
+    <div class="lede">{{ rows | rejectattr("library") | list | length }} built in,
+      {{ rows | selectattr("library") | list | length }} in the team library.
+      {% if user_id %}Your id: <span class="chip">{{ user_id }}</span>{% endif %}</div>
+  </div>
+</div>
+
+{% if problems %}
+<div class="banner mt-3">{{ problems | length }} schema file(s) fail lint — filter <b>lint failed</b> below.</div>
+{% endif %}
+
+<details class="section" id="catalog" data-fold="catalog" open>
+<summary><h2>Catalog
+  <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ rows | length + problems | length }}</span></h2></summary>
+{{ list_tools("schemas", [
+  ("group", "asc", "Built in first, then A–Z"),
+  ("name", "asc", "Name A–Z"),
+  ("used", "desc", "Most used"),
+  ("fields", "desc", "Most fields"),
+], [
+  ("builtin", "built in"),
+  ("library", "library"),
+  ("mine", "mine"),
+  ("fork", "forks"),
+  ("branches", "branches"),
+  ("unused", "unused"),
+  ("broken", "lint failed"),
+], "Filter by name, field, workflow…") }}
+<div class="listwrap">
+<div class="grid listgrid" data-list="schemas" data-noun="schema">
+{% for sc in rows %}
+<details class="card foldcard" data-item data-fold="{{ sc.name }}" {% if rows | length <= 8 %}open{% endif %}
+  data-tags="{{ sc.tags | join(' ') }}"
+  data-s-group="{{ 1 if sc.library else 0 }}" data-s-name="{{ sc.name }}"
+  data-s-used="{{ sc.used_by | length }}" data-s-fields="{{ sc.required_extra | length }}">
+  <summary class="scsum">
+    <span class="c-caret">▸</span>
+    <span class="sct">
+      <a class="mono" href="/schemas/{{ sc.name }}?t={{ token }}"><b>{{ sc.name }}</b></a>
+      {% if sc.title or sc.description %}<span class="desc">{{ sc.title }}{% if sc.title and sc.description %} — {% endif %}{{ sc.description.strip().split("\n")[0] | truncate(140) }}</span>{% endif %}
+    </span>
+    <span class="marks">
+      {% if not sc.library %}<span class="badge plain">built in</span>
+      {% elif sc.mine %}<span class="badge todo">mine</span>
+      {% else %}<span class="badge act">team</span>{% endif %}
+    </span>
+  </summary>
+  <div class="scbody">
+    <div class="row" style="gap: 4px;">
+      {% if sc.library %}<span class="badge plain" title="The built-in this schema extends">extends {{ sc.base }}</span>{% endif %}
+      <span class="badge plain">{{ sc.required_extra | length }} extra field{{ "s" if sc.required_extra | length != 1 }}</span>
+      {% if sc.discriminator %}<span class="badge act" title="{{ sc.discriminator_hint }}">branches on {{ sc.discriminator }}</span>{% endif %}
+    </div>
+    {% if sc.required_extra %}
+    <div class="fieldrow">
+      {% for e in sc.required_extra %}<span class="k">{{ e.key }}</span><span class="d">{{ e.description }}{% if e.choices %} <span class="faint">({{ e.choices | join(" | ") }})</span>{% endif %}</span>{% endfor %}
+    </div>
+    {% else %}<div class="faint small">The base fields only.</div>{% endif %}
+    <div class="scmeta">
+      <span class="faint">used by</span>
+      {% for w in sc.used_by %}<a class="chip" href="/workflows/{{ w }}?t={{ token }}">{{ w }}</a>{% else %}<span class="faint">no workflow yet</span>{% endfor %}
+      {% if sc.created_by %}<span class="mono faint">by {{ sc.created_by }}</span>{% endif %}
+      <span class="grow"></span>
+      <a class="btn secondary sm" href="/schemas/{{ sc.name }}?t={{ token }}">Open →</a>
+    </div>
+  </div>
+</details>
+{% endfor %}
+{% for p in problems %}
+<details class="card foldcard" data-item data-fold="broken-{{ p.file }}" open
+  data-tags="library broken" data-s-group="2" data-s-name="{{ p.name or p.file }}" data-s-used="0" data-s-fields="0"
+  style="border-color: var(--bad);">
+  <summary class="scsum">
+    <span class="c-caret">▸</span>
+    <span class="sct"><b class="ink2">{{ p.name or p.file }}</b><span class="desc mono">findings_schemas/{{ p.file }}</span></span>
+    <span class="marks"><span class="badge bad">lint failed</span></span>
+  </summary>
+  <div class="scbody">
+    <div class="small muted">{{ p.problem }}</div>
+    <div class="scmeta">
+      <span class="faint">fix and push — <code>grayson schema lint</code> checks it</span>
+      <span class="grow"></span>
+      <form class="row" method="post" action="/schemas/{{ p.file[:-5] }}/delete?t={{ token }}" style="gap: 6px;">
+        <input type="text" name="confirm_name" placeholder="type {{ p.file[:-5] }} to remove" style="width: 200px;" required>
+        <button class="btn danger sm" type="submit">Remove file</button>
+      </form>
+    </div>
+  </div>
+</details>
+{% endfor %}
+</div>
+</div>
+</details>
+
+<details class="section" id="new" data-fold="new">
+<summary><h2>New schema {{ help("schema_new") }}</h2></summary>
+<div class="card">
+  <form class="newform" method="post" action="/schemas/new?t={{ token }}">
+    <input type="text" name="new_name" placeholder="name, e.g. orders_triage_v1" pattern="[a-z][a-z0-9_]*" required>
+    <select name="base" aria-label="Extend a built-in">
+      {% for b in bases %}<option value="{{ b }}" {{ "selected" if b == "standard_v1" }}>extend {{ b }}</option>{% endfor %}
+    </select>
+    <button class="btn" type="submit">Create</button>
+    {% if fork_bases %}
+    <select name="fork_of" aria-label="Or fork a library schema" style="grid-column: 1 / span 2;">
+      <option value="">…or fork a library schema instead</option>
+      {% for f in fork_bases %}<option value="{{ f }}">fork {{ f }}</option>{% endfor %}
+    </select>
+    {% endif %}
+  </form>
+</div>
+</details>
+{% endblock %}

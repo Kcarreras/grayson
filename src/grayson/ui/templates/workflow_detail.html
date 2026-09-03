@@ -292,7 +292,8 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
     <h2 id="schema">Findings schema {{ help("findings_schema") }}</h2>
     <div class="card">
       <div class="row" style="gap: 8px;">
-        <span class="chip mono">{{ schema.name }}</span>
+        <a class="chip mono" href="/schemas/{{ schema.name }}?t={{ token }}" title="Open the schema">{{ schema.name }}</a>
+        {% if schema.library %}<span class="badge act" title="A team schema in the library, extending {{ schema.base }}">library · extends {{ schema.base }}</span>{% endif %}
         {% if tpl.findings_fields %}<span class="badge todo">+{{ tpl.findings_fields | length }} of this workflow's own</span>{% endif %}
         {% if schema.discriminator %}<span class="badge act" title="{{ schema.discriminator_hint }}">branches on {{ schema.discriminator }}</span>{% endif %}
         {{ help("findings_fields") }}
@@ -309,12 +310,14 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
           <td>{{ e.description }}{% if e.choices %}<div class="row" style="gap: 4px; margin-top: 3px;">{% for ch in e.choices %}<span class="chip">{{ ch }}</span>{% endfor %}</div>{% endif %}</td>
           <td><span class="marks">
             {% if e.required %}<span class="badge attn" title="A finding without it is refused">required</span>{% else %}<span class="badge plain">optional</span>{% endif %}
-            {% if e.source == "workflow" %}<span class="badge todo" title="Declared by this workflow, not the built-in schema">this workflow</span>
-            {% elif e.source == "schema+workflow" %}<span class="badge todo" title="A schema field this workflow tightens">schema, tightened here</span>
+            {% if e.source == "workflow" %}<span class="badge todo" title="Declared by this workflow, not the schema">this workflow</span>
+            {% elif e.source.endswith("+workflow") %}<span class="badge todo" title="A schema field this workflow tightens">schema, tightened here</span>
+            {% elif e.source == "library" %}<span class="badge act" title="Declared by the library schema">library schema</span>
+            {% elif e.source == "schema+library" %}<span class="badge act" title="A built-in field the library schema tightens">built in, tightened by the library schema</span>
             {% else %}<span class="badge plain">schema</span>{% endif %}
           </span></td>
         </tr>
-        {% if editable and e.source != "schema" %}
+        {% if editable and e.source.endswith("workflow") %}
         <tr><td colspan="3" style="padding-top: 0;">
           {% set own = (tpl.findings_fields | selectattr("key", "equalto", e.key) | list)[0] %}
           <details class="editfold"><summary>Edit this field</summary>{{ field_form(own, own.key) }}</details>
@@ -347,6 +350,19 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
       <details class="editfold" style="margin-top: 12px;" data-fold="add-field"><summary>+ Add a field this workflow requires</summary>
         {{ field_form(none) }}
       </details>
+      {% if can_promote %}
+      <details class="editfold" style="margin-top: 8px;" data-fold="promote"><summary>↑ Promote this workflow's fields to a shared schema {{ help("schema_promote") }}</summary>
+        <form class="elform" method="post" action="/workflows/{{ tpl.name }}/promote?t={{ token }}">
+          <div class="two">
+            <label>schema name <input type="text" name="schema_name" value="{{ promote_name }}" pattern="[a-z][a-z0-9_]*" required></label>
+            <label>title <input type="text" name="title" placeholder="{{ tpl.title or tpl.name }} findings"></label>
+          </div>
+          <label>description — workflow authors pick a schema by it
+            <textarea name="description" rows="2"></textarea></label>
+          <div class="submit"><button class="btn secondary sm" type="submit">Review promotion…</button></div>
+        </form>
+      </details>
+      {% endif %}
       {% endif %}
 
       <details class="inlinefold" style="margin-top: 12px;" data-fold="base-fields">
