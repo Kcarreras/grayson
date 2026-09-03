@@ -124,3 +124,22 @@ def test_scrub_keeps_audit(session):
     assert session.scrub_data() == 1
     assert session.query_row("q_0001")["status"] == "executed"
     assert session.cache.artifact_tables() == set()
+
+
+def test_create_draws_a_fresh_id_on_collision(workspace, monkeypatch):
+    """Session ids carry a second-resolution stamp and two random bytes, so
+    two sessions created in the same second can draw the same id; the second
+    must get a fresh one rather than fail on the existing directory."""
+    import grayson.core.session as session_module
+    from grayson.core.session import Session
+
+    ids = iter(["20260903-113001-dead", "20260903-113001-dead", "20260903-113001-beef"])
+    monkeypatch.setattr(session_module, "new_session_id", lambda: next(ids))
+    guard = workspace.config.guard_profiles["moderate"].model_copy()
+    first = Session.create(
+        workspace, workflow="bug-hunter", targets=["DB.S.T"], guard=guard, guard_profile="moderate"
+    )
+    second = Session.create(
+        workspace, workflow="bug-hunter", targets=["DB.S.T"], guard=guard, guard_profile="moderate"
+    )
+    assert (first.id, second.id) == ("20260903-113001-dead", "20260903-113001-beef")

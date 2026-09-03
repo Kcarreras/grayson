@@ -165,9 +165,19 @@ class Session:
         connection: str | None = None,
         actor: str = "user",
     ) -> Session:
-        session_id = new_session_id()
-        sdir = workspace.session_dir(session_id)
-        sdir.mkdir(parents=True)
+        # ids are a second-resolution stamp plus two random bytes: several
+        # sessions created in one second (a test loop, a script) can collide,
+        # so the directory claim is the allocation — draw again on a clash
+        for _attempt in range(16):
+            session_id = new_session_id()
+            sdir = workspace.session_dir(session_id)
+            try:
+                sdir.mkdir(parents=True)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise RuntimeError("could not allocate an unused session id")
         for sub in ("data", "queries", "interventions", "findings", "proposals"):
             (sdir / sub).mkdir()
         con = _connect(sdir / "state.db")
