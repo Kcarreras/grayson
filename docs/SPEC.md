@@ -439,8 +439,11 @@ Structured tasks replacing the CSV round-trip:
   warning whose link to the answer that allowed it was left for a later reader to infer.
 - UI renders it as an interactive task (tabular labeling with keyboard flow, option
   pickers, text). Responses are stored as structured JSON the agent reads back.
-- CLI/MCP: `grayson intervention await` (poll/block) so agents in any harness can wait on
-  human input; parallel workers continue on other angles meanwhile.
+- CLI/MCP: `grayson intervention await` / `intervention_await` (poll/block) so agents in
+  any harness can wait on human input; parallel workers continue on other angles
+  meanwhile. Both share one wait loop. The MCP call is capped at 300s and returns
+  `waiting: true` on timeout so the agent re-calls — an agent that ends its turn to
+  "wait" is idle until the next chat message, whatever the harness.
 
 ## 11. Knowledge library
 

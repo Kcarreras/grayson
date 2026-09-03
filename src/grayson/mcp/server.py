@@ -37,8 +37,9 @@ grayson provides guarded, evidence-tracked QA over SQL tables (Snowflake).
 Protocol: check knowledge and cached data first, start a session for a workflow,
 run guarded queries (only SELECT/SHOW/DESCRIBE/EXPLAIN survive), close each required
 checkpoint citing executed query ids as evidence, record findings against the schema,
-request human interventions when judgment is needed, then propose fixes and verify them
-with before/after evidence. grayson enforces the rails; you supply the analysis.
+request human interventions when judgment is needed and wait for the answer with
+intervention_await (calling it again while it reports `waiting`), then propose fixes and
+verify them with before/after evidence. grayson enforces the rails; you supply the analysis.
 Finding nothing is a valid result: if the checks clear and nothing is worth acting on,
 ask the user to close the session as a clean result — never invent a finding, or close a
 checkpoint with a query picked to pass the evidence test, in order to clear a gate. A
@@ -78,6 +79,13 @@ deleting it or its published records have no tools here on purpose — say what 
 and ask.
 An empty knowledge library, cache, or view registry is normal in a fresh workspace.
 """
+
+
+#: intervention_await: the longest one call blocks. MCP clients time out tool calls
+#: (Cursor and Claude Code both do, at settings of their own), so a single call is kept
+#: short and the agent is told to call again while the answer is still pending.
+AWAIT_MAX_TIMEOUT = 300.0
+AWAIT_INTERVAL = 2.0
 
 
 def build_server(workspace: Workspace) -> Any:
@@ -605,8 +613,35 @@ def build_server(workspace: Workspace) -> Any:
             return _err(e)
 
     @mcp.tool(
-        description="Check an intervention's status/response (non-blocking; poll this). "
-        "The user answers via the web console."
+        description="Wait for the user to answer an intervention in the web console: blocks "
+        "up to `timeout` seconds (default 60, capped at 300 to stay inside MCP client "
+        "limits) and returns the intervention once answered or cancelled. A result "
+        "with `waiting: true` means the timeout passed with the question still open — "
+        "call this again; do not end your turn, guess, or answer it yourself. Nothing "
+        "wakes an idle agent, so this call IS how you listen for the answer. Work other "
+        "angles first if you have them, then wait."
+    )
+    async def intervention_await(session_id: str, iid: str, timeout: float = 60) -> dict:
+        import anyio
+
+        try:
+            s = _session(session_id)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        bounded = min(max(float(timeout), 0.0), AWAIT_MAX_TIMEOUT)
+        try:
+            # the poll loop sleeps; run it off the event loop so the server keeps
+            # answering pings and other requests while an agent waits
+            return await anyio.to_thread.run_sync(
+                lambda: s.await_intervention(iid, bounded, AWAIT_INTERVAL)
+            )
+        except (KeyError, FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Check an intervention's status/response once (non-blocking). To wait "
+        "for the user's answer use intervention_await. The user answers via the web "
+        "console."
     )
     def intervention_check(session_id: str, iid: str) -> dict:
         try:

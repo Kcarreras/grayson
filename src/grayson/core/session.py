@@ -7,6 +7,8 @@ import json
 import secrets
 import shutil
 import sqlite3
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from grayson.cache.store import CacheStore
@@ -879,6 +881,41 @@ class Session:
             return self._hydrate_intervention(row) if row else None
         finally:
             con.close()
+
+    def await_intervention(
+        self,
+        iid: str,
+        timeout: float = 0,
+        interval: float = 2.0,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> dict:
+        """Block until the intervention leaves `open`, or `timeout` seconds pass.
+
+        The one wait loop behind both `grayson intervention await` and the MCP
+        `intervention_await` tool, so an agent in any harness waits the same way:
+        nothing wakes an idle agent, so "listening" for a human answer is a tool
+        call that has not returned yet. Returns the intervention once answered
+        (or cancelled); on timeout returns `{"iid", "status": "open", "waiting":
+        True, "hint"}` so the caller knows to call again rather than guess.
+        Read-only — answering stays a human action (`respond_intervention`).
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            item = self.intervention(iid)
+            if item is None:
+                raise KeyError(f"no intervention '{iid}'")
+            if item["status"] != "open":
+                return item
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {
+                    "iid": iid,
+                    "status": "open",
+                    "waiting": True,
+                    "hint": "still awaiting the user's answer in the console; "
+                    "await again (do not answer it yourself or guess)",
+                }
+            sleep(min(max(interval, 0.05), remaining))
 
     def respond_intervention(self, iid: str, response: dict, actor: str = "user") -> None:
         con = self._con()
