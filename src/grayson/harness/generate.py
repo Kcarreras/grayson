@@ -116,9 +116,18 @@ they are equivalent. Never query Snowflake except through grayson.
    horizontal bars, but sixty bars is a table, not a picture. For a distribution,
    select the raw numeric column (SAMPLE if the table is large, no GROUP BY) and
    chart it as `--kind histogram -x amount` with no `-y`: grayson bins it locally,
-   `--bins N` overrides the default. The response's `text` field is a
+   `--bins N` overrides the default. To show how measures move together, `--kind
+   scatter` reports Pearson r with a fitted line, and `--kind correlation` draws a
+   matrix over the numeric columns of a sample artifact (`-c col` to choose, 2-8;
+   `--method spearman` for ranks) — both computed locally over the cached rows, so
+   say so when you cite them. The response's `text` field is a
    terminal rendering of the same chart: paste it into your chat reply, inside a
    code block, so the user sees the shape right in the conversation.
+   Some checkpoints **require** a chart: `grayson checkpoint list` shows
+   `requires_charts` (allowed kinds and what the picture should show). Build it
+   from a query you cite as evidence and close with
+   `checkpoint complete <sid> <key> --evidence q_0007 --charts c_002` (MCP: `charts`);
+   the gate refuses to close without it.
 4. Human input when needed: `grayson intervention request <sid> --kind label_sample ...`,
    then `grayson intervention await <sid> <iid> --timeout 600` (MCP: `intervention_await`,
    which blocks up to 300s per call). The user answers in the web console
@@ -237,6 +246,18 @@ MCP mirror), which enforces validation and ownership server-side.
   everywhere goes here — breadth without gates. A required check that does not
   apply to the table in front of the agent gets closed hollow, which is exactly
   the evidence-laundering the rail exists to prevent. When in doubt, suggest.
+- **Required charts.** Charting is otherwise the agent's judgment. Ask, per
+  checkpoint: is its content a *shape* — a distribution, a trend, a
+  stage-to-stage comparison, how measures move together — that a reader would
+  want to see rather than be told about, on every target this workflow runs on?
+  Only then add `charts:` to the check, with `kinds` bounding the choice
+  (`bar`, `line`, `scatter`, `histogram`, `correlation`; a list of the ones that
+  fit, or empty for any) and a `description` of what the picture should show.
+  The gate then refuses to close without such a chart built from a cited
+  query. Mandate sparingly: a required chart that cannot be drawn for a target
+  is closed with whatever chart is to hand, the same hollow close as an
+  inapplicable check. A suggested check can carry a requirement too — it
+  applies only when the agent does that check.
 - **Findings schema.** `standard_v1` unless the workflow's claims need more
   structure; name the known schemas from `grayson workflow show` on a core
   template if the user wants options.

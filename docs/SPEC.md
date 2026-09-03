@@ -294,13 +294,19 @@ Every executed query's results are stored automatically:
 ## 8a. Analysis charts
 
 Agents make their analytical process *visible* as it happens. `grayson chart add`
-(MCP: `chart_add`) builds a chart — `bar`, `line`, `scatter`, or `histogram` — from
-a cached artifact: the spec (artifact id, column mapping, title, one-line read) is
-validated against the artifact's real shape (columns exist, measures are numeric) and
-stored in the session. A histogram is the one kind that computes rather than maps:
-it bins the raw values of a numeric column locally (Sturges' default or a requested
+(MCP: `chart_add`) builds a chart — `bar`, `line`, `scatter`, `histogram`, or
+`correlation` — from a cached artifact: the spec (artifact id, column mapping, title,
+one-line read) is validated against the artifact's real shape (columns exist, measures
+are numeric) and stored in the session. Two kinds compute rather than map. A histogram
+bins the raw values of a numeric column locally (Sturges' default or a requested
 `bins`, edges rounded to 1/2/2.5/5 × 10ⁿ widths) and reports the values binned, so
-the picture still draws nothing the cited query did not return. The console renders charts server-side as dependency-free SVG on its
+the picture still draws nothing the cited query did not return. A correlation matrix
+names two to eight numeric `columns` (or takes every numeric column of the artifact)
+and draws their pairwise Pearson or Spearman coefficients as a heatmap, each cell
+numbered, pairs below the usable-row floor left empty; a scatter likewise reports
+Pearson *r* and draws the least-squares line. Both are the same local arithmetic as
+`profile correlate`, labelled `computed: local` in the data, the SVG, and the text —
+the artifact's query id is evidence, the coefficient is not. The console renders charts server-side as dependency-free SVG on its
 live-refreshing session page, so the user watches the investigation's visual
 narrative build in near real time — and because the artifact is an executed query,
 every picture is traceable evidence (chart card shows the q_XXXX chip; a "plotted
@@ -355,7 +361,12 @@ findings_schema: bug_hunter_v1   # closed-ended output structure
 Analysis is the open stage: beyond the required checks, agents are unconstrained.
 Required checks gate; **suggested checks** carry breadth without gating, so a workflow
 can name thirty fundamentals without demanding all thirty close with evidence on a
-five-column lookup table. `depends_on` expresses the rare genuine ordering.
+five-column lookup table. `depends_on` expresses the rare genuine ordering. A check
+may also require **charts** (`charts: [{kinds: [line, bar], description: ...}]`): the
+gate then refuses to close it without a chart of an allowed kind whose query is cited
+as evidence (`--charts c_002`). Charting is otherwise the agent's judgment; the
+requirement sits where a checkpoint's content is a shape on every target — the core
+set mandates a dozen such pictures (docs/WORKFLOWS.md) and leaves the rest open.
 
 v1 templates: `bug-hunter`, `pipeline-qa`, `table-health`, `semantic-rule-qa`,
 `migration-parity`, `table-onboarding`, `feature-readiness`. Each defines setup inputs, required checks, intervention patterns,

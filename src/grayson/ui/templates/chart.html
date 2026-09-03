@@ -17,7 +17,7 @@
   <span class="badge plain">{{ spec.kind }}</span>
   <a class="chip" href="/session/{{ s.id }}/query/{{ spec.qid }}?t={{ token }}"
      title="The executed query this chart is built from">{{ spec.qid }}</a>
-  <span class="faint small">{{ spec.x }} × {{ spec.y | join(", ") }}
+  <span class="faint small">{% if spec.kind == "correlation" %}{{ spec.method }} over {{ spec.columns | join(", ") }} · {{ data.rows }} rows · computed locally{% else %}{{ spec.x }} × {{ spec.y | join(", ") }}{% endif %}
     {% if data.truncated %} · first {{ data.cap }} rows plotted{% endif %}
     {% if spec.worker %} · {{ spec.worker }}{% endif %} · {{ spec.created_at }}</span>
 </div>
@@ -40,10 +40,10 @@
 <h2>Plotted data ({{ data.points | length }} rows)</h2>
 <div class="card scroll" style="max-height: 480px; overflow-y: auto;">
 <table>
-<tr><th>{{ spec.x }}</th>{% for name in spec.y %}<th class="num">{{ name }}</th>{% endfor %}</tr>
+<tr><th>{{ data.x }}</th>{% for name in data.y %}<th class="num">{{ name }}</th>{% endfor %}{% if spec.kind == "correlation" %}<th class="num">n</th>{% endif %}</tr>
 {% for p in data.points %}
 <tr><td class="small">{{ p.x }}</td>
-  {% for v in p.y %}<td class="num small">{{ v if v is not none else "—" }}</td>{% endfor %}</tr>
+  {% for v in p.y %}<td class="num small">{{ v if v is not none else "—" }}</td>{% endfor %}{% if spec.kind == "correlation" %}<td class="num small">{{ p.n }}</td>{% endif %}</tr>
 {% endfor %}
 </table>
 </div>

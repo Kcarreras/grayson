@@ -45,6 +45,9 @@ required_checks:
       the base rate is — the number every model metric has to beat.
     uses_inputs: [label_column]
     depends_on: [population_defined]
+    charts:
+      - kinds: [bar, histogram]
+        description: the label's distribution — class balance as bars, or a histogram for a continuous target
   - key: feature_profiled
     title: Profile the features
     description: >
@@ -54,6 +57,9 @@ required_checks:
       high-cardinality that they are identifiers rather than features.
     uses_inputs: [dataset]
     depends_on: [population_defined]
+    charts:
+      - kinds: [bar]
+        description: completeness (or null rate) per feature, ranked
   - key: missingness_characterized
     title: Characterize missingness, do not just count it
     description: >
@@ -63,6 +69,11 @@ required_checks:
       the label is a signal the model will learn and production will not
       reproduce. The rate alone cannot tell those apart.
     depends_on: [feature_profiled]
+    charts:
+      - kinds: [bar, line]
+        description: >
+          the null rate of the sparsest material feature by the thing it tracks —
+          period, source, segment, or label value
   - key: leakage_assessed
     title: Test for leakage and point-in-time correctness
     description: >
@@ -84,6 +95,12 @@ required_checks:
       computes this over a cached sample; say so when you cite it, since the
       statistic is computed locally rather than verified by the warehouse.
     depends_on: [feature_profiled]
+    charts:
+      - kinds: [correlation, scatter]
+        description: >
+          a correlation matrix over the numeric features (a sample artifact, up
+          to eight columns — the ones that matter), or a scatter of the pair
+          suspected of being one quantity under two names
 suggested_checks:
   - key: split_integrity
     title: Check the train/test split holds
@@ -96,6 +113,9 @@ suggested_checks:
     description: >
       Base rate by period. A target whose prevalence shifts means a model
       trained on the whole history is fitted to a world that no longer exists.
+    charts:
+      - kinds: [line]
+        description: the label's base rate by period
   - key: feature_drift
     title: Compare feature distributions across periods
     description: >
@@ -107,6 +127,9 @@ suggested_checks:
       Values outside plausible bounds, sentinel encodings (-1, 9999,
       1970-01-01) that models read as real magnitudes, and extreme tails that
       will dominate an unscaled feature.
+    charts:
+      - kinds: [histogram]
+        description: the distribution of the feature with the heaviest tail or a suspected sentinel
   - key: duplicate_rows
     title: Check for duplicated observations
     description: >

@@ -8,7 +8,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from conftest import FakeExecutor
+from conftest import FakeExecutor, close_checkpoint
 from grayson.cli import app
 
 runner = CliRunner()
@@ -116,7 +116,7 @@ def test_report_distinguishes_a_clean_run_from_an_empty_one(workspace):
     qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
     keys = engine.workflow_for(s).required_check_keys()
     for key in keys[:-1]:
-        engine.complete_checkpoint(s, key, [qid], "checked")
+        close_checkpoint(s, key, [qid], "checked")
     engine.waive_checkpoint(s, keys[-1], "static reference table")
     engine.close_session(s, "user", "everything came back sound")
 
@@ -153,7 +153,7 @@ def _session_with_work(workspace):
     engine.seed_from_workflow(s)
     qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
     for key in engine.workflow_for(s).required_check_keys():
-        engine.complete_checkpoint(s, key, [qid], "checked")
+        close_checkpoint(s, key, [qid], "checked")
     return s, qid
 
 
@@ -256,3 +256,95 @@ def test_narrate_refused_after_close(workspace):
     result = runner.invoke(app, ["session", "narrate", s.id, "--text", f"late thoughts {qid}"])
     assert result.exit_code == 1
     assert "closed" in (result.stderr or result.output)
+
+
+# -- charts in the published report: text by default, SVG files on request --
+
+
+def _closed_session_with_a_chart(workspace):
+    from conftest import CHART_ROWS
+    from grayson.charts import add_chart
+    from grayson.config import GuardSettings
+    from grayson.core import engine
+    from grayson.core.run import run_statement
+    from grayson.core.session import Session
+
+    s = Session.create(
+        workspace,
+        workflow="table-health",
+        targets=["DB.S.T1"],
+        guard=GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0),
+        guard_profile="moderate",
+    )
+    qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=CHART_ROWS))["qid"]
+    add_chart(s, qid, "bar", "K", ["V"], "V by K", note="the shape")
+    for key in engine.workflow_for(s).required_check_keys():
+        close_checkpoint(s, key, [qid], "done")
+    return s
+
+
+def test_report_carries_text_charts_by_default(workspace):
+    from grayson.core import engine
+
+    s = _closed_session_with_a_chart(workspace)
+    engine.close_session(s, actor="user", note="fine", overrides_dir=workspace.workflows_dir)
+    folder = workspace.records_dir / s.id
+    md = (folder / "report.md").read_text()
+    assert "```text" in md and "V by K  [bar" in md
+    assert "![" not in md and not (folder / "charts").exists()
+
+
+def test_profile_svg_publishes_chart_files_beside_the_report(workspace):
+    from grayson.report import ReportProfile, load_profile
+
+    workspace.reports_dir.mkdir(parents=True, exist_ok=True)
+    (workspace.reports_dir / "default.yaml").write_text("charts: svg\n")
+    assert load_profile(workspace.reports_dir).charts == "svg"
+    assert ReportProfile().charts == "text"
+    from grayson.core import engine
+
+    s = _closed_session_with_a_chart(workspace)
+    engine.close_session(s, actor="user", note="fine", overrides_dir=workspace.workflows_dir)
+    folder = workspace.records_dir / s.id
+    md = (folder / "report.md").read_text()
+    files = sorted(p.name for p in (folder / "charts").glob("*.svg"))
+    assert files  # one per chart the session drew
+    assert f"![V by K](charts/{files[0]})" in md and "```text" not in md
+    svg = (folder / "charts" / files[0]).read_text()
+    assert svg.startswith("<svg") and "gray" in svg  # the export mark, like a download
+    # the console serves the published file on the record page
+    from fastapi.testclient import TestClient
+
+    from grayson.ui.server import build_app
+
+    client = TestClient(build_app(workspace, token="tok"), base_url="http://127.0.0.1")
+    page = client.get(f"/records/{s.id}/report/report?t=tok")
+    assert page.status_code == 200 and f"/records/{s.id}/charts/{files[0]}" in page.text
+    img = client.get(f"/records/{s.id}/charts/{files[0]}?t=tok")
+    assert img.status_code == 200 and img.headers["content-type"].startswith("image/svg+xml")
+    assert client.get(f"/records/{s.id}/charts/../report.md?t=tok").status_code == 404
+    assert client.get(f"/records/{s.id}/charts/c_999.svg?t=tok").status_code == 404
+
+
+def test_session_report_out_writes_svgs_when_asked(workspace, fake_snow_env, tmp_path):
+    s = _closed_session_with_a_chart(workspace)
+    dest = tmp_path / "out" / "report.md"
+    dest.parent.mkdir()
+    result = CliRunner().invoke(
+        app, ["session", "report", s.id, "--out", str(dest), "--charts", "both"]
+    )
+    assert result.exit_code == 0, result.output
+    out = json.loads(result.output)
+    # the session's own chart plus the three table-health's gates required
+    assert len(out["chart_files"]) == 4
+    assert str(dest.parent / "charts" / "c_001.svg") in out["chart_files"]
+    md = dest.read_text()
+    assert "![V by K](charts/c_001.svg)" in md and "```text" in md  # both
+    assert (dest.parent / "charts" / "c_001.svg").is_file()
+    # the default (profile: text) writes no files
+    plain = tmp_path / "plain.md"
+    result = CliRunner().invoke(app, ["session", "report", s.id, "--out", str(plain)])
+    assert json.loads(result.output)["chart_files"] == []
+    assert "![" not in plain.read_text() and not (tmp_path / "charts").exists()
+    bad = CliRunner().invoke(app, ["session", "report", s.id, "--charts", "png"])
+    assert bad.exit_code == 1

@@ -532,24 +532,42 @@ def build_server(workspace: Workspace) -> Any:
 
     # -- checkpoints & findings ---------------------------------------
 
-    @mcp.tool(description="List the session's checkpoints and their status.")
+    @mcp.tool(
+        description="List the session's checkpoints and their status. `requires_charts` "
+        "names the charts the workflow demands to close a checkpoint (kinds and what "
+        "the picture should show) — build them with chart_add before completing it."
+    )
     def checkpoint_list(session_id: str) -> list[dict]:
         try:
-            return _session(session_id).checkpoints()
+            return engine.checkpoints_view(_session(session_id), workspace.workflows_dir)
         except (FileNotFoundError, ValueError) as e:
             return [_err(e)]
 
     @mcp.tool(
         description="Complete a checkpoint. Requires evidence: executed query ids that "
-        "exist and succeeded. If a required checkpoint genuinely does not apply to this "
+        "exist and succeeded. Where the workflow requires charts of it (checkpoint_list "
+        "shows requires_charts), pass their ids in `charts`; each chart's query must be "
+        "among the evidence. If a required checkpoint genuinely does not apply to this "
         "target (freshness on a static dimension table, say), do NOT satisfy it with a "
         "query chosen to pass the scope test — file an intervention asking the user to "
         "waive it, and say why."
     )
-    def checkpoint_complete(session_id: str, key: str, evidence: list[str], note: str = "") -> dict:
+    def checkpoint_complete(
+        session_id: str,
+        key: str,
+        evidence: list[str],
+        note: str = "",
+        charts: list[str] | None = None,
+    ) -> dict:
         try:
             return engine.complete_checkpoint(
-                _session(session_id), key, evidence, note, "agent", workspace.workflows_dir
+                _session(session_id),
+                key,
+                evidence,
+                note,
+                "agent",
+                workspace.workflows_dir,
+                list(charts or []),
             )
         except (EnforcementError, FileNotFoundError, ValueError) as e:
             return _err(e)
@@ -898,12 +916,18 @@ def build_server(workspace: Workspace) -> Any:
         return {"views_in_scope": resolved, "scope": sorted(s.scope_tables)}
 
     @mcp.tool(
-        description="Build a chart (bar|line|scatter|histogram) from a cached artifact; it "
-        "renders live in the user's console, traceable to the executed query. Aggregate/order "
-        "with SQL first, then chart the artifact. Up to 3 y columns (line/scatter); "
-        "bar takes one; histogram takes none — it bins the raw values of the numeric x "
-        "column locally (select the column, optionally SAMPLE, no GROUP BY; `bins` "
-        "overrides the default count). Bars lay themselves out: many categories or long "
+        description="Build a chart (bar|line|scatter|histogram|correlation) from a cached "
+        "artifact; it renders live in the user's console, traceable to the executed query. "
+        "Aggregate/order with SQL first, then chart the artifact. Up to 3 y columns "
+        "(line/scatter); bar takes one; histogram takes none — it bins the raw values of "
+        "the numeric x column locally (select the column, optionally SAMPLE, no GROUP BY; "
+        "`bins` overrides the default count). A correlation matrix takes no x/y: pass the "
+        "numeric columns to compare as `columns` (2-8; omit to compare every numeric "
+        "column of a sample artifact), `method` pearson or spearman; a scatter reports "
+        "Pearson r and draws the fitted line. Both are computed locally over the cached "
+        "rows and say so — the query id is evidence, the coefficient is arithmetic on it; "
+        "confirm anything decisive with a warehouse query. Bars lay themselves out: many "
+        "categories or long "
         "names render horizontally (orientation=auto; vertical|horizontal forces it), and dates or "
         "numbers stay vertical — but keep bars to a ranked top-N in SQL, since sixty "
         "bars is a table. Use charts to narrate the investigation visually. The response's "
@@ -914,19 +938,34 @@ def build_server(workspace: Workspace) -> Any:
         session_id: str,
         qid: str,
         kind: str,
-        x: str,
         title: str,
+        x: str = "",
         y: list[str] | None = None,
         note: str = "",
         worker: str | None = None,
         orientation: str = "auto",
         bins: int | None = None,
+        columns: list[str] | None = None,
+        method: str = "pearson",
     ) -> dict:
         from grayson.charts import ChartError, add_chart, chart_data, render_text
 
         try:
             s = _session(session_id)
-            spec = add_chart(s, qid, kind, x, list(y or []), title, note, worker, orientation, bins)
+            spec = add_chart(
+                s,
+                qid,
+                kind,
+                x,
+                list(y or []),
+                title,
+                note,
+                worker,
+                orientation,
+                bins,
+                list(columns or []),
+                method,
+            )
             return {**spec, "text": render_text(spec, chart_data(s, spec))}
         except (ChartError, FileNotFoundError, ValueError) as e:
             return _err(e)

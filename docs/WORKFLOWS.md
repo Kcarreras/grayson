@@ -19,6 +19,54 @@ Checkpoints come in two kinds, with an escape hatch for the third case:
   front of it. This is how a workflow names thirty fundamentals without
   demanding all thirty on a five-column lookup table.
 
+## Required charts
+
+Whether an agent charts is otherwise its own judgment, prompted by the
+protocol's prose. Where a checkpoint's content *is* a shape — a distribution,
+a trend, a stage-to-stage comparison, how measures move together — the
+workflow can require the picture:
+
+```yaml
+required_checks:
+  - key: null_completeness
+    title: Check nulls and completeness
+    charts:
+      - kinds: [bar]
+        description: null rate per column, ranked, so the sparse columns stand out
+```
+
+Each entry is one required chart. `kinds` bounds the choice (`bar`, `line`,
+`scatter`, `histogram`, `correlation`; empty means any) and `description`
+says what the picture should show, the way a check's description says what
+the evidence should show. The gate then refuses to close the checkpoint
+without a chart of an allowed kind whose query is cited as evidence
+(`checkpoint complete ... --evidence q_0007 --charts c_002`; MCP: `charts`).
+`checkpoint list` shows the requirement as `requires_charts`; the console
+marks the open checkpoint "needs chart" and links the charts it closed with;
+the brief and the report carry them.
+
+A suggested check can carry a requirement too — it applies only when the
+agent takes the check up. Waiving still works: a required chart that cannot
+be drawn for a target is a check that does not apply, and the honest exit is
+the user's waiver, not whatever chart is to hand. So mandate sparingly. In
+the core set the requirement sits where the shape is universal — nulls per
+column, the label's distribution, row counts per pipeline stage, keys only
+in old/new/both, redundancy as a correlation matrix — and nowhere else:
+
+| Workflow | Checkpoints that require a chart |
+|---|---|
+| `bug-hunter` | `scope_blast_radius` (line or bar) |
+| `table-health` | `null_completeness` (bar), `distributions` (histogram or bar), `freshness` (line or bar) |
+| `pipeline-qa` | `rowcount_reconciliation`, `measure_conservation` (bar) |
+| `migration-parity` | `rowcount_parity`, `value_parity`, `aggregate_parity` (bar) |
+| `feature-readiness` | `label_profiled` (bar or histogram), `feature_profiled` (bar), `missingness_characterized` (bar or line), `redundancy_assessed` (correlation or scatter) |
+| `semantic-rule-qa` | `rule_coverage`, `accuracy_estimate` (bar) |
+| `table-onboarding` | `structure_profiled` (bar) |
+
+Several suggested checks carry one as well (onset dating as a line, load lag
+as a histogram, the outlier scan as a histogram). The workflow-author skill
+asks the question per checkpoint during the interview.
+
 A setup input can declare `adds_scope: true`: the tables the human names in
 its answer join the session's readable scope at start. That is how a
 strict-scoped workflow gets deliberate context — table-onboarding's
@@ -122,11 +170,13 @@ save stamps the editor's id. Renames are forks, never in-place edits.
 grayson workflow lint    # non-zero exit on errors; CI-friendly
 ```
 
-Errors: YAML that does not parse or validate, core-name shadowing, duplicate
-workflow names or checkpoint keys, unknown findings schemas. Warnings:
-missing descriptions (agents pick workflows by description), no checkpoints,
-file/name mismatches, `depends_on` naming an undefined check, `uses_inputs`
-naming a missing input, a required input no checkpoint reads.
+Errors: YAML that does not parse or validate (a required chart of an unknown
+kind is one — a session could never satisfy it), core-name shadowing,
+duplicate workflow names or checkpoint keys, unknown findings schemas.
+Warnings: missing descriptions (agents pick workflows by description), no
+checkpoints, file/name mismatches, `depends_on` naming an undefined check,
+`uses_inputs` naming a missing input, a required input no checkpoint reads,
+a required chart that does not say what it should show.
 
 A file that fails to load is reported everywhere workflows are listed — CLI,
 MCP (`workflow_list.library_problems`), red-badged in the console — never

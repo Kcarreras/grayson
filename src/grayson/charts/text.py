@@ -119,11 +119,40 @@ def _text_scatter(
     return lines
 
 
+def _text_correlation(data: dict) -> list[str]:
+    names = data.get("columns") or []
+    matrix = data.get("matrix") or []
+    w = max(6, min(10, max((len(n) for n in names), default=6)))
+    head = " " * (w + 1) + " ".join(_clip(n, w).rjust(w) for n in names)
+    lines = [head]
+    for i, name in enumerate(names):
+        cells = []
+        for j in range(len(names)):
+            r = matrix[i][j] if i < len(matrix) and j < len(matrix[i]) else None
+            cells.append(("·" if i == j else "—" if r is None else f"{r:+.2f}").rjust(w))
+        lines.append(f"{_clip(name, w).rjust(w)} " + " ".join(cells))
+    notable = data.get("notable") or []
+    if notable:
+        lines.append(
+            "notable: "
+            + "; ".join(f"{p['a']} × {p['b']} r={p['y'][0]:+.2f} (n={p['n']})" for p in notable)
+        )
+    lines.append(
+        f"{data.get('method', 'pearson')} · {data.get('rows', 0)} rows · computed locally "
+        "over the cached artifact, not by the warehouse"
+    )
+    return lines
+
+
 def render_text(spec: dict, data: dict) -> str:
     """Terminal rendering of a chart — paste-ready for an agent's chat reply."""
     points = data["points"]
     y_names = data["y"]
     header = f"{spec['title']}  [{spec['kind']} · {spec['qid']}]"
+    if spec["kind"] == "correlation":
+        if len(data.get("columns") or []) < 2 or not points:
+            return f"{header}\n(too few usable rows to correlate)"
+        return "\n".join([header, *_text_correlation(data)])
     if not points or not any(v is not None for p in points for v in p["y"]):
         return f"{header}\n(no plottable rows)"
     if spec["kind"] == "bar":
@@ -143,6 +172,12 @@ def render_text(spec: dict, data: dict) -> str:
         body = _text_line(points, y_names)
     else:
         body = _text_scatter(points, y_names)
+        for fit in data.get("fit") or []:
+            if fit:
+                body.append(
+                    f"{fit['series']}: r = {fit['r']:+.2f} · n = {fit['n']} "
+                    "(Pearson, computed locally over the cached artifact)"
+                )
     footer = []
     if data.get("truncated"):
         footer.append(f"(first {data['cap']} rows)")

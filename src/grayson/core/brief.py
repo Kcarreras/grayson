@@ -59,7 +59,7 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
     stats = session.query_stats()
     executed = session.query_log(limit=RECENT_QUERIES, status="executed")
     interventions = session.interventions()
-    checkpoints = session.checkpoints()
+    checkpoints = engine.checkpoints_view(session, workflows_dir)
     findings = session.findings()
 
     return {
@@ -91,6 +91,8 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
                 "status": c["status"],
                 "evidence": c["evidence"],
                 "evidence_off_scope": c["evidence_off_scope"],
+                "charts": c.get("charts") or [],
+                "requires_charts": c.get("requires_charts") or [],
                 "note": c["note"] or "",
                 "by": c["completed_by"],
             }
@@ -224,6 +226,10 @@ def render_brief(brief: dict) -> str:
             detail += f" ({', '.join(c['evidence'])})"
         if c["evidence_off_scope"]:
             detail += f" off-scope: {', '.join(c['evidence_off_scope'])}"
+        if c.get("charts"):
+            detail += f" charts: {', '.join(c['charts'])}"
+        if c["status"] == "open" and c.get("requires_charts"):
+            detail += " — requires chart(s): " + "; ".join(c["requires_charts"])
         if c["note"]:
             detail += f" — {_compact(c['note'], 200)}"
         lines.append(f"- {mark} {c['key']}: {detail}")

@@ -38,6 +38,9 @@ required_checks:
       DESCRIBE is the evidence) rather than typing it: the warehouse owns
       names and types, humans own what they mean.
     uses_inputs: [table, prior_context]
+    charts:
+      - kinds: [bar]
+        description: null rate or cardinality per column, ranked — the table's shape at a glance
   - key: grain_established
     title: Establish the grain
     description: >
@@ -99,6 +102,9 @@ suggested_checks:
       Rows per day/partition and the gap to the newest row, so the descriptor's
       freshness expectation is measured rather than assumed — later health
       checks are judged against it.
+    charts:
+      - kinds: [line, bar]
+        description: rows per day or partition over the recent window
   - key: column_semantics_sampled
     title: Pin down ambiguous columns
     description: >

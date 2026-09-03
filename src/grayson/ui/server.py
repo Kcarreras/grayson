@@ -749,6 +749,32 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             for c in chain
         ]
 
+    @app.get("/records/{sid}/charts/{name}")
+    def record_chart(request: Request, sid: str, name: str) -> Any:
+        """A chart file published beside a session's report (records/<sid>/charts/),
+        so the record page of a teammate's session shows the pictures the
+        report embeds. Declared before the generic record route, which would
+        otherwise read `charts` as a record kind."""
+        from grayson.charts.spec import CHART_ID_RE
+        from grayson.util import ensure_within
+
+        _check(request)
+        if not (name.endswith(".svg") and CHART_ID_RE.match(name[:-4])):
+            raise HTTPException(status_code=404, detail="no such chart file")
+        try:
+            path = ensure_within(
+                workspace.records_dir, workspace.records_dir / sid / "charts" / name
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail="no such chart file") from e
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no such chart file")
+        return Response(path.read_text(encoding="utf-8"), media_type="image/svg+xml")
+
+    def _published_chart_files(sid: str) -> list[str]:
+        folder = workspace.records_dir / sid / "charts"
+        return sorted(p.name for p in folder.glob("c_*.svg")) if folder.is_dir() else []
+
     @app.get("/records/{sid}/{kind}/{rid}", response_class=HTMLResponse)
     def record_view(request: Request, sid: str, kind: str, rid: str) -> Any:
         _check(request)
@@ -781,6 +807,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "author": item.get("author"),
                 "evidence_queries": item.get("evidence_queries") or [],
                 "removal": _removal(sid),
+                "chart_files": _published_chart_files(sid) if kind == "report" else [],
             },
         )
 
@@ -908,7 +935,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "s": s.summary(),
             "setup_inputs": s.setup_inputs(),
             "readiness": engine.readiness(s, workspace.workflows_dir),
-            "checkpoints": s.checkpoints(),
+            "checkpoints": engine.checkpoints_view(s, workspace.workflows_dir),
             "findings": s.findings(),
             "interventions": s.interventions(),
             "proposals": s.proposals(),

@@ -115,6 +115,16 @@
   {{ agent_text(record.narrative) }}
 </div>
 {% endif %}
+{% if chart_files %}
+<h2>Charts</h2>
+{# the SVGs the report publishes beside itself (profile `charts: svg|both`) —
+   the session that drew them may be on another machine #}
+<div class="chartgrid">
+  {% for name in chart_files %}
+  <div class="card"><img src="/records/{{ session_id }}/charts/{{ name }}?t={{ token }}" alt="{{ name }}" style="width: 100%; height: auto; display: block;"></div>
+  {% endfor %}
+</div>
+{% endif %}
 {% if record.checkpoints %}
 <h2>Checkpoints</h2>
 <div class="card">

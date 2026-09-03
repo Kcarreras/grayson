@@ -89,7 +89,15 @@ by hand can use `--interactive` prompts instead (terminal only).
 
 **Reports** have two layers. Facts — checkpoints with evidence, findings,
 proposals, charts, query stats — render deterministically; every figure
-cites a query id. Presentation is a *report profile* in the library
+cites a query id. Charts travel with the report as their terminal rendering
+by default; a profile's `charts: svg` (or `both`) writes each chart as an
+SVG beside the report — `records/<sid>/charts/<id>.svg` when the close
+publishes it, `charts/` beside the file for `session report --out`
+(`--charts svg|both` overrides the profile) — and embeds it as an image, so
+a teammate reading the library on the git host sees the picture. The
+session that drew it stays local to the workspace that ran it, which is why
+the option exists; on the machine that ran the session, the console's
+download already has it. Presentation is a *report profile* in the library
 (`--profile <name>`; see [LIBRARY.md](LIBRARY.md)). The agent's `narrate`
 text renders in its own labeled section above the facts. On close, the full
 report publishes into the library's `records/`.
@@ -204,9 +212,39 @@ null_rate ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁████�
        x: 08-01 → 08-24
 ```
 
-Kinds: `bar`, `line`, `scatter`, `histogram`; up to three series (the
-palette is validated colorblind-safe at three — more dimensions means more
-charts). `grayson chart render --out chart.svg` exports SVGs.
+Kinds: `bar`, `line`, `scatter`, `histogram`, `correlation`; up to three
+series (the palette is validated colorblind-safe at three — more dimensions
+means more charts). `grayson chart render --out chart.svg` exports SVGs.
+
+**Correlation.** A **scatter** reports Pearson *r* over every row of the
+artifact and draws the least-squares line, dashed, with `r = 0.83 · n = 1200`
+in the corner; below thirty usable pairs it draws the dots and no line. A
+**correlation** matrix takes the numeric columns to compare (`-c col`,
+repeated, two to eight; omit it to compare every numeric column of the
+artifact, which is the usual shape over a `SAMPLE` artifact) and draws the
+pairwise coefficients as a heatmap — hue for the sign, saturation for |r|,
+the number in every cell — with `--method spearman` for ranks when outliers
+or a curved relationship would fool Pearson. Both are computed locally over
+the cached rows, the same trade `profile correlate` makes: the artifact's
+query id is evidence, the coefficient is arithmetic grayson did on it
+afterwards, and every rendering says so. The terminal form is the matrix as
+a table, notable pairs called out:
+
+```
+How the measures move together  [correlation · q_0009]
+              amount   quantity  discount
+      amount       ·      +0.91     -0.12
+    quantity   +0.91         ·     -0.08
+    discount   -0.12     -0.08         ·
+notable: amount × quantity r=+0.91 (n=1999)
+pearson · 1999 rows · computed locally over the cached artifact, not by the warehouse
+```
+
+**Required charts.** Charting is the agent's call except where the workflow
+says otherwise: a checkpoint whose content is a shape can require a chart of
+given kinds ([WORKFLOWS.md](WORKFLOWS.md#required-charts)). `checkpoint list`
+shows it as `requires_charts`, the console marks the open checkpoint "needs
+chart", and the gate refuses to close without one built from a cited query.
 
 A **histogram** takes the raw values of one numeric column and bins them
 locally — no `GROUP BY`, no `--y`: `chart add <sid> --artifact q_0009 --kind

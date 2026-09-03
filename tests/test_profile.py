@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import FakeExecutor
+from conftest import FakeExecutor, close_checkpoint
 from grayson.config import GuardSettings
 from grayson.core import engine
 from grayson.core.session import Session
@@ -86,7 +86,7 @@ def test_profile_runs_few_queries_and_returns_citable_ids(session):
     executed = session.executed_qids()
     assert set(doc["evidence"]) <= executed, "every profile query must be real evidence"
     # and they close checkpoints like any other query
-    engine.complete_checkpoint(session, "null_completeness", doc["evidence"], "profiled")
+    close_checkpoint(session, "null_completeness", doc["evidence"], "profiled")
     assert session.checkpoint("null_completeness")["status"] == "complete"
 
 

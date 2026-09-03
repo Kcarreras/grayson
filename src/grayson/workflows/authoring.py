@@ -43,6 +43,12 @@ required_checks:
       can advance. Write the intent down — agents close checkpoints better
       when it is explicit.
     uses_inputs: [target_description]
+    # Where the checkpoint's content IS a shape, require the picture — the
+    # gate then refuses to close without a chart of an allowed kind built
+    # from a cited query. Leave it out to keep charting the agent's call.
+    # charts:
+    #   - kinds: [line, bar]
+    #     description: the measure over time, so the onset is visible
 suggested_checks:
   - key: a_fundamental
     title: Something worth checking where it applies
@@ -255,11 +261,14 @@ def render_preview(tpl: WorkflowTemplate) -> str:
         lines.append(f"  {n}. {c.key} — {c.title}{suffix}")
         if c.description.strip():
             lines.append(f"       {' '.join(c.description.split())}")
+        for r in c.charts:
+            lines.append(f"       requires chart — {r.label()}")
     if not tpl.required_checks:
         lines.append("  (none — nothing will gate; sessions can close without evidence of work)")
     lines += ["", "Suggested checks — breadth; never gate, done where they apply"]
     for c in tpl.suggested_checks:
-        lines.append(f"  - {c.key} — {c.title}")
+        charts = f"  [chart: {'; '.join(r.label() for r in c.charts)}]" if c.charts else ""
+        lines.append(f"  - {c.key} — {c.title}{charts}")
     if not tpl.suggested_checks:
         lines.append("  (none)")
     lines += [

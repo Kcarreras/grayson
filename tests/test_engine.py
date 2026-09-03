@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import FakeExecutor
+from conftest import FakeExecutor, close_checkpoint
 from grayson.config import GuardSettings
 from grayson.core import engine
 from grayson.core.engine import EnforcementError
@@ -39,12 +39,12 @@ def test_checkpoints_seeded(session):
 
 def test_checkpoint_requires_evidence(session):
     with pytest.raises(EnforcementError, match="evidence required"):
-        engine.complete_checkpoint(session, "replicate_anomaly", [], "note")
+        close_checkpoint(session, "replicate_anomaly", [], "note")
 
 
 def test_checkpoint_rejects_nonexistent_evidence(session):
     with pytest.raises(EnforcementError, match="not executed"):
-        engine.complete_checkpoint(session, "replicate_anomaly", ["q_9999"], "note")
+        close_checkpoint(session, "replicate_anomaly", ["q_9999"], "note")
 
 
 def test_checkpoint_rejects_rejected_query_as_evidence(session):
@@ -52,12 +52,12 @@ def test_checkpoint_rejects_rejected_query_as_evidence(session):
     out = run_statement(session, "DROP TABLE DB.S.T1", executor=FakeExecutor())
     assert out["status"] == "rejected"
     with pytest.raises(EnforcementError, match="not executed"):
-        engine.complete_checkpoint(session, "replicate_anomaly", [out["qid"]], "note")
+        close_checkpoint(session, "replicate_anomaly", [out["qid"]], "note")
 
 
 def test_checkpoint_completes_with_real_evidence(session):
     qids = _run(session, 1)
-    cp = engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    cp = close_checkpoint(session, "replicate_anomaly", qids, "reproduced")
     assert cp["status"] == "complete"
     assert cp["evidence"] == qids
 
@@ -65,7 +65,7 @@ def test_checkpoint_completes_with_real_evidence(session):
 def test_unknown_checkpoint(session):
     qids = _run(session, 1)
     with pytest.raises(EnforcementError, match="unknown checkpoint"):
-        engine.complete_checkpoint(session, "not_a_check", qids, "x")
+        close_checkpoint(session, "not_a_check", qids, "x")
 
 
 def test_finding_requires_valid_schema_and_evidence(session):
@@ -116,7 +116,7 @@ def test_stage_gate_blocks_review_until_checks_complete(session):
         engine.advance_stage(session, "review")
     # complete all checks
     for c in session.checkpoints():
-        engine.complete_checkpoint(session, c["key"], qids, "done")
+        close_checkpoint(session, c["key"], qids, "done")
     result = engine.advance_stage(session, "review")
     assert session.stage == "review"
     assert result["checks_complete"]
@@ -133,7 +133,7 @@ def test_fixes_gate_requires_accepted_finding(session):
     # complete checks first so the cumulative gate reaches the findings requirement
     qids = _run(session, 1)
     for c in session.checkpoints():
-        engine.complete_checkpoint(session, c["key"], qids, "done")
+        close_checkpoint(session, c["key"], qids, "done")
     with pytest.raises(EnforcementError, match="no user-accepted finding"):
         engine.advance_stage(session, "fixes")
 
@@ -152,7 +152,7 @@ def _clear_all_checks(session, waive_last=False):
     qids = _run(session, 1)
     keys = engine.workflow_for(session).required_check_keys()
     for key in keys[:-1] if waive_last else keys:
-        engine.complete_checkpoint(session, key, qids, "done")
+        close_checkpoint(session, key, qids, "done")
     if waive_last:
         engine.waive_checkpoint(session, keys[-1], "no lineage upstream of this table")
     return qids
@@ -290,22 +290,22 @@ def test_dependency_blocks_out_of_order_closure(session):
     qids = _run(session, 1)
     # bug-hunter: no cause-hunting until the anomaly reproduces
     with pytest.raises(EnforcementError, match="depends on"):
-        engine.complete_checkpoint(session, "upstream_trace", qids, "traced")
-    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
-    engine.complete_checkpoint(session, "upstream_trace", qids, "traced")
+        close_checkpoint(session, "upstream_trace", qids, "traced")
+    close_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    close_checkpoint(session, "upstream_trace", qids, "traced")
     assert session.checkpoint("upstream_trace")["status"] == "complete"
 
 
 def test_a_waived_prerequisite_still_unblocks(session):
     qids = _run(session, 1)
     engine.waive_checkpoint(session, "replicate_anomaly", "user supplied the failing rows")
-    engine.complete_checkpoint(session, "upstream_trace", qids, "traced")
+    close_checkpoint(session, "upstream_trace", qids, "traced")
     assert session.checkpoint("upstream_trace")["status"] == "complete"
 
 
 def test_suggested_check_can_be_closed_but_never_gates(session):
     qids = _run(session, 1)
-    engine.complete_checkpoint(session, "onset_dating", qids, "first appears 08-14")
+    close_checkpoint(session, "onset_dating", qids, "first appears 08-14")
     ready = engine.readiness(session)
     assert "onset_dating" not in ready["required_checks"]
     assert next(c for c in ready["suggested_checks"] if c["key"] == "onset_dating")["done"]
@@ -318,10 +318,8 @@ def test_off_scope_evidence_is_reported_not_rejected(session):
     would just teach agents to staple a target table onto each one."""
     in_scope = _run(session, 1)
     out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
-    engine.complete_checkpoint(session, "replicate_anomaly", in_scope, "reproduced")
-    cp = engine.complete_checkpoint(
-        session, "upstream_trace", in_scope + [out["qid"]], "walked upstream"
-    )
+    close_checkpoint(session, "replicate_anomaly", in_scope, "reproduced")
+    cp = close_checkpoint(session, "upstream_trace", in_scope + [out["qid"]], "walked upstream")
     assert cp["status"] == "complete"
     assert cp["evidence_off_scope"] == [out["qid"]]
     assert any(e["type"] == "evidence_off_scope" for e in session.events(20))
@@ -330,7 +328,7 @@ def test_off_scope_evidence_is_reported_not_rejected(session):
 def test_wholly_off_scope_evidence_is_still_refused(session):
     out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
     with pytest.raises(EnforcementError, match="does not touch any table"):
-        engine.complete_checkpoint(session, "replicate_anomaly", [out["qid"]], "n/a")
+        close_checkpoint(session, "replicate_anomaly", [out["qid"]], "n/a")
 
 
 # -- honest-outcome hardening (post-review fixes) --------------------------
@@ -353,7 +351,7 @@ def test_waive_unknown_checkpoint_names_both_pools(session):
 def test_waiving_a_completed_checkpoint_is_refused(session):
     """A waive over a completed check would silently discard its evidence."""
     qids = _run(session, 1)
-    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    close_checkpoint(session, "replicate_anomaly", qids, "reproduced")
     with pytest.raises(EnforcementError, match="already complete"):
         engine.waive_checkpoint(session, "replicate_anomaly", "second thoughts")
     cp = session.checkpoint("replicate_anomaly")
@@ -376,7 +374,7 @@ def test_forced_close_with_accepted_findings_earns_no_outcome(session):
     """A forced close skips the gates that make an outcome label mean something,
     so it earns neither label — 'findings' included."""
     qids = _run(session, 1)
-    engine.complete_checkpoint(session, "replicate_anomaly", qids, "reproduced")
+    close_checkpoint(session, "replicate_anomaly", qids, "reproduced")
     got = engine.record_finding(session, _finding(qids))
     session.accept_finding(got["fid"])
     # other required checks still open: only force gets this to closed
@@ -399,10 +397,8 @@ def test_off_scope_evidence_is_persisted_on_the_checkpoint(session):
     render, not only in the transient return and the event log."""
     in_scope = _run(session, 1)
     out = run_statement(session, "SELECT * FROM DB.S.OTHER", executor=FakeExecutor())
-    engine.complete_checkpoint(session, "replicate_anomaly", in_scope, "reproduced")
-    engine.complete_checkpoint(
-        session, "upstream_trace", in_scope + [out["qid"]], "walked upstream"
-    )
+    close_checkpoint(session, "replicate_anomaly", in_scope, "reproduced")
+    close_checkpoint(session, "upstream_trace", in_scope + [out["qid"]], "walked upstream")
     cp = session.checkpoint("upstream_trace")
     assert cp["evidence_off_scope"] == [out["qid"]]
     listed = {c["key"]: c for c in session.checkpoints()}
@@ -418,7 +414,7 @@ def test_describe_counts_as_evidence_touching_scope(session):
 
     out = run_statement(session, "DESCRIBE TABLE DB.S.T1", executor=FakeExecutor())
     assert out["tables"] == ["DB.S.T1"]
-    cp = engine.complete_checkpoint(session, "replicate_anomaly", [out["qid"]], "profiled")
+    cp = close_checkpoint(session, "replicate_anomaly", [out["qid"]], "profiled")
     assert cp["status"] == "complete"
     assert not cp.get("evidence_off_scope")
 

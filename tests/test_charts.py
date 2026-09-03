@@ -9,7 +9,15 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from conftest import FakeExecutor
-from grayson.charts import ChartError, add_chart, chart_data, get_chart, list_charts, render_svg
+from grayson.charts import (
+    ChartError,
+    add_chart,
+    chart_data,
+    get_chart,
+    list_charts,
+    render_svg,
+    render_text,
+)
 from grayson.cli import app as cli_app
 from grayson.config import GuardSettings
 from grayson.core.run import run_statement
@@ -613,3 +621,165 @@ def test_sandbox_init_lists_every_seeded_table(tmp_path, monkeypatch):
     monkeypatch.setenv("GRAYSON_SANDBOX_DIR", str(tmp_path / "wh"))
     out = invoke("sandbox", "init", str(tmp_path / "demo"))
     assert "SANDBOX.SHOP.ORDERS_DAILY" in out["tables"] and len(out["tables"]) == 7
+
+
+# -- correlation: scatter fit and the correlation matrix ---------------------
+
+SAMPLE = [
+    {
+        "A": i,
+        "B": 2 * i + (i % 5) - 2,  # near-linear in A
+        "C": 100 - i,  # exactly anti-linear in A
+        "D": (i * 7919) % 61,  # hashed: unrelated to A
+        "NAME": f"row{i}",
+    }
+    for i in range(60)
+]
+
+
+@pytest.fixture
+def sample_qid(session) -> str:
+    out = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=SAMPLE))
+    assert out["status"] == "executed"
+    return out["qid"]
+
+
+def test_scatter_reports_pearson_r_and_a_fitted_line(session, sample_qid):
+    spec = add_chart(session, sample_qid, "scatter", "a", ["b", "c"], "B and C against A")
+    data = chart_data(session, spec)
+    fits = data["fit"]
+    assert fits[0]["series"] == "B" and fits[0]["r"] > 0.99 and fits[0]["n"] == 60
+    assert fits[1]["series"] == "C" and fits[1]["r"] == -1.0
+    assert fits[1]["slope"] == pytest.approx(-1.0) and fits[1]["intercept"] == pytest.approx(100)
+    assert fits[0]["computed"] == "local"
+    svg = render_svg(spec, data)
+    assert svg.count('stroke-dasharray="5 4"') == 2  # one fitted line per series
+    assert "r = 1.00" in svg and "r = -1.00" in svg
+    text = render_text(spec, data)
+    assert "C: r = -1.00 · n = 60 (Pearson, computed locally" in text
+
+
+def test_scatter_fit_needs_enough_rows(session, qid):
+    spec = add_chart(session, qid, "scatter", "row_count", ["null_rate"], "ten rows")
+    data = chart_data(session, spec)
+    assert data["fit"] == [None]  # ten pairs is noise wearing a number
+    assert "stroke-dasharray" not in render_svg(spec, data)
+
+
+def test_correlation_matrix_over_named_columns(session, sample_qid):
+    spec = add_chart(
+        session,
+        sample_qid,
+        "correlation",
+        "",
+        [],
+        "How the measures move together",
+        columns=["a", "b", "c", "d"],
+    )
+    assert spec["kind"] == "correlation" and spec["columns"] == ["A", "B", "C", "D"]
+    assert spec["x"] == "" and spec["y"] == [] and spec["method"] == "pearson"
+    data = chart_data(session, spec)
+    m = data["matrix"]
+    assert m[0][0] == 1.0 and m[0][2] == -1.0 and m[2][0] == -1.0
+    assert m[0][1] > 0.99 and abs(m[0][3]) < 0.5
+    assert data["points"][0]["a"] == "A" and data["points"][0]["y"] == [-1.0]  # strongest first
+    assert data["rows"] == 60 and data["computed"] == "local"
+    assert {tuple(p["columns"]) for p in data["skipped"]} == set()
+    assert [p["a"] + "×" + p["b"] for p in data["notable"]] == ["A×C", "A×B", "B×C"]
+
+    svg = render_svg(spec, data)
+    assert svg.count("<rect") == 16 and "computed locally" in svg
+    assert "A × C: r = -1.000 (n = 60)" in svg
+    text = render_text(spec, data)
+    assert "[correlation ·" in text and "+1.00" in text and "-1.00" in text
+    assert "notable: A × C r=-1.00 (n=60)" in text
+    assert "pearson · 60 rows · computed locally" in text
+
+
+def test_correlation_defaults_to_every_numeric_column_and_spearman_ranks(session, sample_qid):
+    spec = add_chart(session, sample_qid, "correlation", "", [], "all", method="spearman")
+    assert spec["columns"] == ["A", "B", "C", "D"]  # NAME is text
+    data = chart_data(session, spec)
+    assert data["method"] == "spearman"
+    assert data["matrix"][0][1] == pytest.approx(1.0, abs=0.02)  # monotone: rank-perfect
+
+
+def test_correlation_validation(session, sample_qid, qid):
+    with pytest.raises(ChartError, match="at least 2 numeric columns"):
+        add_chart(session, sample_qid, "correlation", "", [], "t", columns=["a"])
+    with pytest.raises(ChartError, match="no numeric values"):
+        add_chart(session, sample_qid, "correlation", "", [], "t", columns=["a", "name"])
+    with pytest.raises(ChartError, match="takes no x or y"):
+        add_chart(session, sample_qid, "correlation", "a", [], "t", columns=["a", "b"])
+    with pytest.raises(ChartError, match="must be distinct"):
+        add_chart(session, sample_qid, "correlation", "", [], "t", columns=["a", "A"])
+    with pytest.raises(ChartError, match="method must be one of"):
+        add_chart(session, sample_qid, "correlation", "", [], "t", method="kendall")
+    with pytest.raises(ChartError, match="correlation matrices only"):
+        add_chart(session, qid, "line", "day", ["null_rate"], "t", columns=["a", "b"])
+    with pytest.raises(ChartError, match="correlation matrices only"):
+        add_chart(session, qid, "line", "day", ["null_rate"], "t", method="spearman")
+    with pytest.raises(ChartError, match="need an x column"):
+        add_chart(session, qid, "line", "", ["null_rate"], "t")
+    # too few rows: the matrix exists but every off-diagonal cell is empty
+    spec = add_chart(session, qid, "correlation", "", [], "ten rows")
+    data = chart_data(session, spec)
+    assert data["points"] == [] and all(p["usable_pairs"] == 10 for p in data["skipped"])
+    assert "too few usable rows" in render_svg(spec, data)
+    assert "too few usable rows" in render_text(spec, data)
+
+
+def test_correlation_refuses_too_many_columns(session):
+    wide = [{f"C{k}": (i * (k + 1)) % 17 for k in range(9)} for i in range(40)]
+    out = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=wide))
+    with pytest.raises(ChartError, match="holds at most 8"):
+        add_chart(session, out["qid"], "correlation", "", [], "wide")
+    spec = add_chart(session, out["qid"], "correlation", "", [], "narrow", columns=["c0", "c1"])
+    assert spec["columns"] == ["C0", "C1"]
+
+
+def test_correlation_cli_and_mcp(workspace, fake_snow_env):
+    import asyncio
+
+    from grayson.mcp.server import build_server
+
+    started = invoke("session", "start", "--workflow", "table-health", "--table", "DB.S.T1")
+    sid = started["session"]["id"]
+    s = Session(workspace, sid)
+    out = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=SAMPLE))
+    chart = invoke(
+        "chart",
+        "add",
+        sid,
+        "--artifact",
+        out["qid"],
+        "--kind",
+        "correlation",
+        "--title",
+        "matrix",
+        "-c",
+        "a",
+        "-c",
+        "c",
+        "--method",
+        "spearman",
+    )
+    assert chart["kind"] == "correlation" and chart["columns"] == ["A", "C"]
+    assert "computed locally" in chart["text"]
+
+    server = build_server(workspace)
+    result = asyncio.run(
+        server.call_tool(
+            "chart_add",
+            {"session_id": sid, "qid": out["qid"], "kind": "correlation", "title": "all"},
+        )
+    )
+    payload = json.loads(result.content[0].text)
+    assert payload["columns"] == ["A", "B", "C", "D"] and "matrix" not in payload
+    assert "notable:" in payload["text"]
+
+    page = TestClient(build_app(workspace, token=TOKEN), base_url="http://127.0.0.1").get(
+        f"/session/{sid}/chart/{payload['chart_id']}?t={TOKEN}"
+    )
+    assert page.status_code == 200
+    assert "pearson over A, B, C, D" in page.text and "<th>pair</th>" in page.text

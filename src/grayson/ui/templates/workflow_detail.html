@@ -93,7 +93,7 @@
       <div class="fold-body">
         {% if c.description %}<div class="ink2 small mt-2">{{ c.description.strip() }}</div>
         {% else %}<div class="faint small mt-2">No description recorded.</div>{% endif %}
-        {% if c.depends_on or c.uses_inputs %}
+        {% if c.depends_on or c.uses_inputs or c.charts %}
         <div class="kv" style="margin-top: 9px;">
           {% if c.depends_on %}
           <span class="item"><b>after</b><span class="mono">{{ c.depends_on | join(", ") }}</span></span>
@@ -101,6 +101,9 @@
           {% if c.uses_inputs %}
           <span class="item"><b>works from</b><span class="mono">{{ c.uses_inputs | join(", ") }}</span></span>
           {% endif %}
+          {% for r in c.charts %}
+          <span class="item" title="Closes only with a chart of this kind, built from a cited query"><b>chart</b><span>{{ r.label() }}</span></span>
+          {% endfor %}
         </div>
         {% endif %}
       </div>

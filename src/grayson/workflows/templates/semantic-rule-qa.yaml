@@ -22,6 +22,9 @@ required_checks:
       Distribution of assigned categories, including the fallback/"other"
       bucket; flag if coverage deviates from expectation.
     uses_inputs: [rule_description, rule_location]
+    charts:
+      - kinds: [bar]
+        description: share of rows per assigned category, the fallback bucket included
   - key: sample_design
     title: State the sampling design before drawing
     description: >
@@ -48,6 +51,9 @@ required_checks:
       overall accuracy and is not one.
     depends_on: [sample_for_review]
     uses_inputs: [correctness_criteria]
+    charts:
+      - kinds: [bar]
+        description: accuracy (or error count) per assigned category from the returned labels
   - key: error_pattern_analysis
     title: Analyze error patterns
     description: >
@@ -68,6 +74,9 @@ suggested_checks:
       Compare category assignment over time. A rule that was right when written
       degrades as the inputs change — new URL shapes, new product lines — and
       the drift shows up before the complaints do.
+    charts:
+      - kinds: [line]
+        description: the fallback bucket's share (or the top categories' shares) over time
   - key: unreachable_rules
     title: Look for rules that never fire
     description: >

@@ -512,7 +512,9 @@ def _line(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
                 )
 
 
-def _scatter(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
+def _scatter(
+    plot: _Plot, points: list[dict], y_names: list[str], fits: list[dict | None] | None = None
+) -> None:
     pairs = [(_num(p["x"]), p) for p in points]
     pairs = [(xv, p) for xv, p in pairs if xv is not None]
     if not pairs:
@@ -523,8 +525,21 @@ def _scatter(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
     for t in _nice_ticks(xlo, xhi, 6):
         px = plot.x0 + (t - xlo) / (xhi - xlo) * (plot.x1 - plot.x0)
         plot.x_label(px, _fmt(t))  # numeric ticks: short, never shortened
+    fits = fits or []
     for si in range(len(y_names)):
         color = SERIES_COLORS[si]
+        fit = fits[si] if si < len(fits) else None
+        if fit:
+            # the least-squares line, clipped to the plot's y range, and the
+            # coefficient it summarises: dashed, so it reads as a summary of
+            # the dots rather than as data
+            _fit_line(plot, fit, xlo, xhi, color)
+            plot.parts.append(
+                f'<text x="{plot.x1}" y="{plot.y1 + 12 + 13 * si}" text-anchor="end" {_FONT} '
+                f'fill="{color}"><title>Pearson r over {fit["n"]} rows, computed locally '
+                f"from the cached artifact — the query id is evidence, this number is "
+                f"arithmetic on it</title>r = {fit['r']:.2f} · n = {fit['n']}</text>"
+            )
         for xv, p in pairs:
             v = p["y"][si]
             if v is None:
@@ -535,6 +550,32 @@ def _scatter(plot: _Plot, points: list[dict], y_names: list[str]) -> None:
                 f'fill-opacity="0.85" stroke="{_SURFACE}" stroke-width="1.5">'
                 f"<title>{_fmt(xv)} · {escape(y_names[si])}: {_fmt(v)}</title></circle>"
             )
+
+
+def _fit_line(plot: _Plot, fit: dict, xlo: float, xhi: float, color: str) -> None:
+    """The least-squares line over the plotted x range, clipped to the y domain.
+    The visible part is one interval of x (the line is monotone), so clipping
+    is an intersection of intervals, not a segment walk."""
+    slope, intercept = fit["slope"], fit["intercept"]
+    lo, hi = plot.lo, plot.hi
+    if slope == 0:
+        if not lo <= intercept <= hi:
+            return
+        xa, xb = xlo, xhi
+    else:
+        x1, x2 = sorted(((lo - intercept) / slope, (hi - intercept) / slope))
+        xa, xb = max(xlo, x1), min(xhi, x2)
+        if xa >= xb:
+            return
+
+    def px(xv: float) -> float:
+        return round(plot.x0 + (xv - xlo) / (xhi - xlo) * (plot.x1 - plot.x0), 2)
+
+    ya, yb = intercept + slope * xa, intercept + slope * xb
+    plot.parts.append(
+        f'<line x1="{px(xa)}" y1="{plot.sy(ya)}" x2="{px(xb)}" y2="{plot.sy(yb)}" '
+        f'stroke="{color}" stroke-width="1.5" stroke-dasharray="5 4" stroke-opacity="0.8"/>'
+    )
 
 
 def _bar_path(x0: float, x1: float, y: float, h: float, r: float) -> str:
@@ -659,6 +700,8 @@ def render_svg(spec: dict, data: dict, detail: bool = False) -> str:
     twice the labels at twice the length are still legible.
     """
     layout = DETAIL if detail else TILE
+    if spec["kind"] == "correlation":
+        return _correlation_svg(data, layout)
     points = data["points"]
     y_names = data["y"]
     values = [v for p in points for v in p["y"] if v is not None]
@@ -682,8 +725,99 @@ def render_svg(spec: dict, data: dict, detail: bool = False) -> str:
     elif spec["kind"] == "line":
         _line(plot, points, y_names)
     else:
-        _scatter(plot, points, y_names)
+        _scatter(plot, points, y_names, data.get("fit"))
     return plot.svg()
+
+
+#: correlation cells: positive in the first series slot, negative in the
+#: second — the two are validated apart on both console surfaces, and the
+#: saturation carries |r|
+_CORR_POS = SERIES_COLORS[0]
+_CORR_NEG = SERIES_COLORS[1]
+_CORR_LABEL_CHARS = 14
+
+
+def _correlation_svg(data: dict, layout: Layout) -> str:
+    """An N×N heatmap of the pairwise coefficients: hue is the sign, saturation
+    is |r|, and every cell prints its number, since a color alone cannot be
+    read to two decimals. Empty cells are pairs with too few usable rows."""
+    names = data.get("columns") or []
+    matrix = data.get("matrix") or []
+    if len(names) < 2 or not data.get("points"):  # every pair below the usable-row floor
+        return (
+            f'<svg viewBox="0 0 {layout.width} 80" role="img" '
+            'style="width:100%;height:auto;display:block" '
+            'xmlns="http://www.w3.org/2000/svg">'
+            f'<text x="{layout.width / 2}" y="45" text-anchor="middle" {_FONT}>'
+            "too few usable rows to correlate</text></svg>"
+        )
+    n = len(names)
+    chars = min(layout.max_chars, _CORR_LABEL_CHARS)
+    label_w = int(chars * layout.char_px) + 10
+    top = 16 + int(chars * layout.char_px * 0.72)  # rotated labels lean into the top margin
+    avail = min(layout.width - label_w - 16, layout.height - top - 8)
+    cell = max(18.0, min(56.0, avail / n)) if layout.grow else max(14.0, avail / n)
+    width = max(layout.width, int(label_w + cell * n + 16))
+    height = int(top + cell * n + 20)  # a footer line for the method and row count
+    parts = []
+    x0, y0 = label_w, top
+    shown = {name: (_tail_label(name, chars) or name[:chars]) for name in names}
+    for i, name in enumerate(names):
+        cx = x0 + cell * i + cell / 2
+        cy = y0 + cell * i + cell / 2
+        parts.append(_label_text(x0 - 6, cy + 3.5, "end", shown[name], name))
+        parts.append(
+            f'<text transform="translate({round(cx + 3, 2)},{y0 - 6}) rotate(-45)" '
+            f"{_FONT} data-full={quoteattr(name)}><title>{escape(name)}</title>"
+            f"{escape(shown[name])}</text>"
+        )
+    counts = data.get("counts") or []
+    for i in range(n):
+        for j in range(n):
+            r = matrix[i][j]
+            x, y = round(x0 + cell * j, 2), round(y0 + cell * i, 2)
+            if i == j:
+                parts.append(
+                    f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" fill="{_GRID}" '
+                    f'stroke="{_SURFACE}" stroke-width="1"/>'
+                )
+                continue
+            if r is None:
+                usable = counts[i][j] if counts else 0
+                parts.append(
+                    f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" fill="none" '
+                    f'stroke="{_AXIS}" stroke-width="1" stroke-dasharray="3 2">'
+                    f"<title>{escape(names[i])} × {escape(names[j])}: not computed "
+                    f"({usable} usable rows)</title></rect>"
+                )
+                continue
+            color = _CORR_POS if r >= 0 else _CORR_NEG
+            opacity = round(0.08 + 0.87 * min(1.0, abs(r)), 3)
+            parts.append(
+                f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" fill="{color}" '
+                f'fill-opacity="{opacity}" stroke="{_SURFACE}" stroke-width="1">'
+                f"<title>{escape(names[i])} × {escape(names[j])}: r = {r:.3f} "
+                f"(n = {counts[i][j] if counts else '?'})</title></rect>"
+            )
+            if cell >= 26:
+                ink = "#ffffff" if abs(r) >= 0.6 else _TEXT
+                parts.append(
+                    f'<text x="{round(x + cell / 2, 2)}" y="{round(y + cell / 2 + 3.5, 2)}" '
+                    f'text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" '
+                    f'font-size="10" fill="{ink}" pointer-events="none">{r:.2f}</text>'
+                )
+    method = data.get("method") or "pearson"
+    rows = data.get("rows") or 0
+    parts.append(
+        f'<text x="{x0}" y="{height - 5}" {_FONT} font-size="10" fill="{_FAINT}">'
+        "<title>the coefficients are grayson's arithmetic over the cached artifact, not a "
+        f"warehouse result</title>{method} · {rows} rows · computed locally</text>"
+    )
+    return (
+        f'<svg viewBox="0 0 {width} {height}" role="img" '
+        'style="width:100%;height:auto;display:block" '
+        'xmlns="http://www.w3.org/2000/svg">' + "".join(parts) + "</svg>"
+    )
 
 
 def brand_export(svg: str) -> str:

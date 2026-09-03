@@ -93,7 +93,10 @@ human-approved moments, is the distilled result:
 - `<session-id>/<record-id>.json` — an accepted finding, or a fix with its
   verification, stamped with author and the queries it cites as evidence.
 - `<session-id>/report.md` and `report.json` — the session's full report,
-  written when the session closes.
+  written when the session closes; `<session-id>/charts/<chart-id>.svg`
+  beside it when the report profile says `charts: svg` or `both` (the
+  session that drew them stays local, so the pictures travel with the
+  report or not at all).
 
 `grayson records search` and the console's Records page read this folder
 across everyone's sessions. Records are removed as a unit by their author or
@@ -109,9 +112,10 @@ Report **profiles**, not reports. Rendered reports live in
 `records/<session-id>/report.md`.
 
 Each `*.yaml` here is a presentation preference for session reports: section
-order and inclusion, `engineering` or `stakeholder` audience, a header and
-footer. `default.yaml` is used when a session closes; pick another with
-`grayson session report --profile <name>`.
+order and inclusion, `engineering` or `stakeholder` audience, how charts are
+carried (`text` renderings inline, `svg` files embedded as images, or `both`),
+a header and footer. `default.yaml` is used when a session closes; pick
+another with `grayson session report --profile <name>`.
 
 Report *facts* — checkpoints, findings, evidence, query statistics — are
 built deterministically from the session record and are not configurable
