@@ -216,6 +216,12 @@
       <div class="attn-text small">{{ (c.evidence | length) - (c.evidence_off_scope | length) }}
         of {{ c.evidence | length }} cited queries touched the tables under investigation
         (off-scope: {{ c.evidence_off_scope | join(", ") }})</div>
+      {% endif %}
+      {% if c.charts %}
+      <div class="small">charts: {% for cid in c.charts %}<a class="chip" href="/session/{{ s.id }}/chart/{{ cid }}?t={{ token }}" title="A chart this checkpoint closed with">{{ cid }}</a> {% endfor %}</div>
+      {% elif c.status == "open" and c.requires_charts %}
+      {# the workflow wants a picture here: say so where the human watches the gate #}
+      <div class="faint small" title="This checkpoint closes only with a chart of this kind, built from a cited query">needs chart: {{ c.requires_charts | join("; ") }}</div>
       {% endif %}{% endif %}</td>
   <td class="muted small">
     {{ c.note or "" }}

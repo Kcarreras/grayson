@@ -2,8 +2,10 @@ from grayson.charts.render import SERIES_COLORS, brand_export, render_svg
 from grayson.charts.spec import (
     KINDS,
     MAX_BINS,
+    MAX_CORR_COLUMNS,
     MAX_POINTS,
     MAX_SERIES,
+    METHODS,
     ChartError,
     ChartSpec,
     add_chart,
@@ -18,6 +20,8 @@ from grayson.charts.text import render_text
 __all__ = [
     "KINDS",
     "MAX_BINS",
+    "MAX_CORR_COLUMNS",
+    "METHODS",
     "MAX_POINTS",
     "MAX_SERIES",
     "SERIES_COLORS",

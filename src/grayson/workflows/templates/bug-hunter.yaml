@@ -42,6 +42,12 @@ required_checks:
       over what time range, since when. Distinguishes a one-off from systemic.
       This is the `blast_radius` your finding must carry.
     depends_on: [replicate_anomaly]
+    charts:
+      - kinds: [line, bar]
+        description: >
+          the extent of the anomaly — affected rows or keys over time, or by the
+          partition/dimension that bounds it — so one-off and systemic are told
+          apart by eye
   - key: upstream_trace
     title: Trace toward the source
     description: >
@@ -63,11 +69,17 @@ suggested_checks:
     description: >
       Find when the anomaly first appears. A sharp start date usually names the
       change that caused it; a gradual ramp usually means something else.
+    charts:
+      - kinds: [line]
+        description: the anomaly's rate over time, so the onset and its shape are visible
   - key: correlate_dimensions
     title: Correlate against dimensions
     description: >
       Check whether affected rows cluster by source system, region, ingest
       batch, or any other dimension. A clean split is often the cause itself.
+    charts:
+      - kinds: [bar]
+        description: affected share by the dimension that splits cleanest
   - key: recurrence_check
     title: Check whether this has happened before
     description: >

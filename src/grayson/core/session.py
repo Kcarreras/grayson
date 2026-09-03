@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS queries(
 CREATE TABLE IF NOT EXISTS checkpoints(
     key TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
     evidence TEXT, note TEXT, completed_by TEXT, completed_at TEXT,
-    evidence_off_scope TEXT
+    evidence_off_scope TEXT, charts TEXT
 );
 CREATE TABLE IF NOT EXISTS findings(
     fid TEXT PRIMARY KEY, ts TEXT NOT NULL, worker TEXT,
@@ -135,6 +135,7 @@ class Session:
         "ALTER TABLE findings ADD COLUMN rejected_reason TEXT",
         "ALTER TABLE findings ADD COLUMN rejected_at TEXT",
         "ALTER TABLE checkpoints ADD COLUMN evidence_off_scope TEXT",
+        "ALTER TABLE checkpoints ADD COLUMN charts TEXT",
     )
 
     def _migrate(self) -> None:
@@ -570,17 +571,9 @@ class Session:
             con.row_factory = sqlite3.Row
             rows = con.execute(
                 "SELECT key, title, status, evidence, note, completed_by, completed_at, "
-                "evidence_off_scope FROM checkpoints ORDER BY rowid"
+                "evidence_off_scope, charts FROM checkpoints ORDER BY rowid"
             ).fetchall()
-            out = []
-            for r in rows:
-                d = dict(r)
-                d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
-                d["evidence_off_scope"] = (
-                    json.loads(d["evidence_off_scope"]) if d["evidence_off_scope"] else []
-                )
-                out.append(d)
-            return out
+            return [self._hydrate_checkpoint(r) for r in rows]
         finally:
             con.close()
 
@@ -590,18 +583,21 @@ class Session:
             con.row_factory = sqlite3.Row
             row = con.execute(
                 "SELECT key, title, status, evidence, note, completed_by, completed_at, "
-                "evidence_off_scope FROM checkpoints WHERE key = ?",
+                "evidence_off_scope, charts FROM checkpoints WHERE key = ?",
                 (key,),
             ).fetchone()
         finally:
             con.close()
-        if row is None:
-            return None
+        return self._hydrate_checkpoint(row) if row is not None else None
+
+    @staticmethod
+    def _hydrate_checkpoint(row: sqlite3.Row) -> dict:
         d = dict(row)
         d["evidence"] = json.loads(d["evidence"]) if d["evidence"] else []
         d["evidence_off_scope"] = (
             json.loads(d["evidence_off_scope"]) if d["evidence_off_scope"] else []
         )
+        d["charts"] = json.loads(d["charts"]) if d.get("charts") else []
         return d
 
     def complete_checkpoint(
@@ -611,18 +607,20 @@ class Session:
         note: str,
         actor: str,
         off_scope: list[str] | None = None,
+        charts: list[str] | None = None,
     ) -> None:
         con = self._con()
         try:
             cur = con.execute(
                 "UPDATE checkpoints SET status='complete', evidence=?, note=?, "
-                "completed_by=?, completed_at=?, evidence_off_scope=? WHERE key=?",
+                "completed_by=?, completed_at=?, evidence_off_scope=?, charts=? WHERE key=?",
                 (
                     json.dumps(evidence),
                     note,
                     actor,
                     utcnow(),
                     json.dumps(off_scope) if off_scope else None,
+                    json.dumps(charts) if charts else None,
                     key,
                 ),
             )
@@ -631,7 +629,11 @@ class Session:
                 raise KeyError(f"no checkpoint '{key}'")
         finally:
             con.close()
-        self.log_event(actor, "checkpoint_completed", {"key": key, "evidence": evidence})
+        self.log_event(
+            actor,
+            "checkpoint_completed",
+            {"key": key, "evidence": evidence, **({"charts": charts} if charts else {})},
+        )
 
     def waive_checkpoint(self, key: str, reason: str, actor: str = "user") -> None:
         """Mark a checkpoint not-applicable, with the reason on the record.

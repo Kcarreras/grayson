@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from grayson.core.session import OUTCOMES, STAGES, Session
 from grayson.findings.schemas import validate_finding
 from grayson.workflows import WorkflowTemplate, get_workflow
+from grayson.workflows.models import CheckDef
 
 
 class EnforcementError(ValueError):
@@ -29,6 +30,20 @@ def seed_from_workflow(session: Session, overrides_dir: Path | None = None) -> l
     tpl = workflow_for(session, overrides_dir)
     session.seed_checkpoints([(c.key, c.title) for c in tpl.required_checks])
     return session.checkpoints()
+
+
+def checkpoints_view(session: Session, overrides_dir: Path | None = None) -> list[dict]:
+    """The session's checkpoints, each carrying the workflow's chart
+    requirement for it (`requires_charts`, one label per required chart) so
+    an agent reading the list knows a gate wants a picture before it tries
+    to close it with a sentence."""
+    tpl = workflow_for(session, overrides_dir)
+    out = []
+    for cp in session.checkpoints():
+        check = tpl.check(cp["key"])
+        cp["requires_charts"] = [r.label() for r in check.charts] if check else []
+        out.append(cp)
+    return out
 
 
 def _validate_evidence(session: Session, evidence: list[str]) -> list[str]:
@@ -68,6 +83,58 @@ def _validate_evidence(session: Session, evidence: list[str]) -> list[str]:
     return [q for q in evidence if q not in in_scope]
 
 
+def _validate_charts(
+    session: Session, check: CheckDef | None, key: str, charts: list[str], evidence: list[str]
+) -> None:
+    """Cited charts must exist and be built from cited evidence; where the
+    workflow requires charts of given kinds, each requirement must be met by
+    a distinct cited chart. A checkpoint whose content is a shape closes
+    with the picture, not a sentence saying there is one."""
+    from grayson.charts import get_chart
+
+    if len(set(charts)) != len(charts):
+        raise EnforcementError(f"charts cites the same chart twice: {charts}")
+    cited = []
+    for cid in charts:
+        spec = get_chart(session, cid)
+        if spec is None:
+            raise EnforcementError(
+                f"charts cites '{cid}', which is not a chart of this session (chart list)"
+            )
+        if spec["qid"] not in evidence:
+            raise EnforcementError(
+                f"chart {cid} is built from {spec['qid']}, which is not cited as evidence — "
+                "a chart closes a checkpoint only through the query behind it; add "
+                f"{spec['qid']} to the evidence"
+            )
+        cited.append(spec)
+    requirements = list(check.charts) if check is not None else []
+    if not requirements:
+        return
+
+    # each requirement is met by a distinct chart of an allowed kind — a
+    # bipartite match, small enough to search outright
+    def match(remaining: list, free: list[dict]) -> bool:
+        if not remaining:
+            return True
+        req, rest = remaining[0], remaining[1:]
+        for i, spec in enumerate(free):
+            if req.allows(spec["kind"]) and match(rest, free[:i] + free[i + 1 :]):
+                return True
+        return False
+
+    if not match(requirements, cited):
+        wanted = "; ".join(f"#{n} {r.label()}" for n, r in enumerate(requirements, 1))
+        have = ", ".join(f"{s['chart_id']} ({s['kind']})" for s in cited) or "none"
+        raise EnforcementError(
+            f"'{key}' requires {len(requirements)} chart(s) — {wanted}. Cited: {have}. "
+            "Build the missing chart with `chart add` from a query you cite as evidence "
+            "and pass its id in `charts`; if the picture genuinely cannot be drawn for "
+            "this target, ask the user to waive the checkpoint (an intervention saying "
+            "why) — agents cannot waive their own gates."
+        )
+
+
 def complete_checkpoint(
     session: Session,
     key: str,
@@ -75,6 +142,7 @@ def complete_checkpoint(
     note: str = "",
     actor: str = "agent",
     overrides_dir: Path | None = None,
+    charts: list[str] | None = None,
 ) -> dict:
     tpl = workflow_for(session, overrides_dir)
     if tpl.check(key) is None and session.checkpoint(key) is None:
@@ -93,6 +161,8 @@ def complete_checkpoint(
             "part of the method, not bookkeeping."
         )
     off_scope = _validate_evidence(session, evidence)
+    charts = list(charts or [])
+    _validate_charts(session, tpl.check(key), key, charts, evidence)
     if session.checkpoint(key) is None:
         # a suggested check is not seeded up front (it would read as an open gate);
         # it materializes the moment an agent decides to do it
@@ -102,7 +172,7 @@ def complete_checkpoint(
     # probes, and persisted so the human reading the checkpoint (console, report)
     # can tell the difference between walking upstream and padding the citation
     # list, not just someone combing the event log
-    session.complete_checkpoint(key, evidence, note, actor, off_scope=off_scope)
+    session.complete_checkpoint(key, evidence, note, actor, off_scope=off_scope, charts=charts)
     if off_scope:
         session.log_event(
             actor, "evidence_off_scope", {"key": key, "qids": off_scope, "cited": len(evidence)}

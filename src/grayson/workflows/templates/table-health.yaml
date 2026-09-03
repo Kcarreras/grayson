@@ -30,12 +30,20 @@ required_checks:
       check whether it correlates with a date, source, or segment — a null rate
       that starts on a particular day is a regression, not a property.
     uses_inputs: [table]
+    charts:
+      - kinds: [bar]
+        description: null rate per column, ranked, so the sparse columns stand out
   - key: distributions
     title: Profile distributions
     description: >
       Cardinality and value distribution of key dimensions; surface outliers,
       unexpected categories, and suspicious spikes.
     uses_inputs: [table]
+    charts:
+      - kinds: [histogram, bar]
+        description: >
+          the distribution of the measure or dimension that matters most — a
+          histogram of a numeric column, or the ranked top-N of a categorical one
   - key: domain_validity
     title: Check values against their domain
     description: >
@@ -51,6 +59,9 @@ required_checks:
       gaps or stale partitions. Waive this where the table has no cadence to
       hold to (a static reference table) rather than closing it hollow.
     uses_inputs: [table]
+    charts:
+      - kinds: [line, bar]
+        description: rows per day or partition over the recent window, gaps included
 suggested_checks:
   - key: referential_integrity
     title: Check keys against their parents
@@ -68,4 +79,7 @@ suggested_checks:
     description: >
       Rows per day/partition against recent history. A collapse or a doubling is
       usually an upstream incident, and it shows here before it shows anywhere else.
+    charts:
+      - kinds: [line]
+        description: row volume over time
 findings_schema: standard_v1

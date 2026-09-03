@@ -25,8 +25,11 @@ from grayson.util import read_json, utcnow, write_json
 if TYPE_CHECKING:
     from grayson.core.session import Session
 
-ChartKind = Literal["bar", "line", "scatter", "histogram"]
-KINDS = ("bar", "line", "scatter", "histogram")
+ChartKind = Literal["bar", "line", "scatter", "histogram", "correlation"]
+KINDS = ("bar", "line", "scatter", "histogram", "correlation")
+#: correlation matrices: pearson on the values, spearman on their ranks
+CorrelationMethod = Literal["pearson", "spearman"]
+METHODS = ("pearson", "spearman")
 #: bar charts only — `auto` renders many categories or long names as horizontal
 #: bars (one row per category, labels on the y axis where they have room) and
 #: ordered scales (dates, numbers) as vertical ones; the others force it
@@ -40,10 +43,19 @@ MAX_SERIES = 3
 
 #: row caps per kind, so a chart of a million-row artifact stays a chart.
 #: A histogram's points are its bins; the rows it bins are capped separately.
-MAX_POINTS = {"bar": 60, "line": 300, "scatter": 1000, "histogram": 40}
+#: A correlation matrix's points are its column pairs; its cap is the column
+#: count below.
+MAX_POINTS = {"bar": 60, "line": 300, "scatter": 1000, "histogram": 40, "correlation": 28}
 #: rows a histogram reads from its artifact — binning is O(n) and local, so
 #: the cap is a courtesy to the console's refresh, not a plotting limit
 HISTOGRAM_ROW_CAP = 50_000
+#: columns a correlation matrix compares — eight is 28 pairs, the most a
+#: reader can take in as one picture; past that, name the columns that matter
+MAX_CORR_COLUMNS = 8
+MIN_CORR_COLUMNS = 2
+#: rows a correlation matrix or a scatter's fit statistic reads — local
+#: arithmetic, like a histogram's binning
+CORRELATION_ROW_CAP = HISTOGRAM_ROW_CAP
 MAX_BINS = MAX_POINTS["histogram"]
 MIN_BINS = 2
 
@@ -56,9 +68,17 @@ class ChartSpec(BaseModel):
     chart_id: str
     qid: str
     kind: ChartKind
-    x: str
-    #: measures; empty for a histogram, which bins `x` itself and counts rows
+    #: empty for a correlation matrix, which has no axis — its `columns` are
+    #: both axes
+    x: str = ""
+    #: measures; empty for a histogram, which bins `x` itself and counts rows,
+    #: and for a correlation matrix
     y: list[str] = Field(default_factory=list, max_length=MAX_SERIES)
+    #: correlation only: the numeric columns compared pairwise
+    columns: list[str] = Field(default_factory=list, max_length=MAX_CORR_COLUMNS)
+    #: correlation only: pearson (linear, on the values) or spearman (monotone,
+    #: on the ranks — robust to outliers and to a curved relationship)
+    method: CorrelationMethod = "pearson"
     title: str
     note: str = ""
     orientation: Orientation = "auto"
@@ -71,7 +91,22 @@ class ChartSpec(BaseModel):
 
     @model_validator(mode="after")
     def _y_matches_kind(self) -> ChartSpec:
-        if self.kind == "histogram":
+        if self.kind == "correlation":
+            if self.y or self.x:
+                raise ValueError(
+                    "a correlation matrix takes no x or y — pass the numeric columns to "
+                    "compare as `columns`; every pair among them is plotted"
+                )
+            if len(self.columns) < MIN_CORR_COLUMNS:
+                raise ValueError(
+                    f"a correlation matrix needs at least {MIN_CORR_COLUMNS} numeric columns "
+                    "(omit `columns` to compare every numeric column of the artifact)"
+                )
+        elif self.columns:
+            raise ValueError("columns applies to correlation matrices only")
+        elif not self.x:
+            raise ValueError(f"{self.kind} charts need an x column")
+        elif self.kind == "histogram":
             if self.y:
                 raise ValueError(
                     "a histogram takes no y column — it bins the numeric x column and counts "
@@ -81,6 +116,8 @@ class ChartSpec(BaseModel):
             raise ValueError(f"{self.kind} charts need at least one y column (a measure)")
         if self.bins is not None and self.kind != "histogram":
             raise ValueError("bins applies to histograms only")
+        if self.method != "pearson" and self.kind != "correlation":
+            raise ValueError("method applies to correlation matrices only")
         return self
 
     @field_validator("bins")
@@ -147,14 +184,41 @@ def add_chart(
     worker: str | None = None,
     orientation: str = "auto",
     bins: int | None = None,
+    columns: list[str] | None = None,
+    method: str = "pearson",
 ) -> dict:
-    """Validate a chart against the cached artifact and persist it."""
+    """Validate a chart against the cached artifact and persist it.
+
+    A correlation matrix names its `columns` instead of x/y; left empty, every
+    numeric column of the artifact is compared (up to MAX_CORR_COLUMNS — past
+    that the caller must choose, since a 20-column matrix is not a picture).
+    """
     if kind not in KINDS:
         raise ChartError(f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
+    if method not in METHODS:
+        raise ChartError(f"method must be one of {', '.join(METHODS)}, got {method!r}")
+    columns = list(columns or [])
+    if kind == "correlation":
+        if x or y:
+            raise ChartError(
+                "a correlation matrix takes no x or y — pass the numeric columns to "
+                "compare as `columns`; every pair among them is plotted"
+            )
+        return _add_correlation(session, qid, columns, method, title, note, worker)
     # kind-specific shape rules (y per kind, bins) live on ChartSpec and are
     # checked first, before the artifact is read
     try:
-        ChartSpec(chart_id="c_000", qid="q_0000", kind=kind, x=x, y=y, title="_", bins=bins)
+        ChartSpec(
+            chart_id="c_000",
+            qid="q_0000",
+            kind=kind,
+            x=x,
+            y=y,
+            title="_",
+            bins=bins,
+            columns=columns,
+            method=method,
+        )
     except PydanticValidationError as e:
         first = e.errors()[0]
         raise ChartError(str(first.get("ctx", {}).get("error") or first["msg"])) from e
@@ -214,14 +278,73 @@ def add_chart(
         first = e.errors()[0]
         msg = str(first.get("ctx", {}).get("error") or first["msg"])
         raise ChartError(msg) from e
+    return _store(session, spec, worker)
+
+
+def _store(session: Session, spec: ChartSpec, worker: str | None) -> dict:
     spec = spec.model_copy(update={"chart_id": _allocate_id(session)})
     write_json(_charts_dir(session) / f"{spec.chart_id}.json", spec.model_dump())
     session.log_event(
         worker or "agent",
         "chart_added",
-        {"chart_id": spec.chart_id, "qid": qid, "kind": kind, "title": title},
+        {"chart_id": spec.chart_id, "qid": spec.qid, "kind": spec.kind, "title": spec.title},
     )
     return spec.model_dump()
+
+
+def _add_correlation(
+    session: Session,
+    qid: str,
+    columns: list[str],
+    method: str,
+    title: str,
+    note: str,
+    worker: str | None,
+) -> dict:
+    sidecar = session.cache.get(qid)
+    if sidecar is None:
+        raise ChartError(f"no cached artifact '{qid}' in this session")
+    available = sidecar.get("columns") or []
+    if not available or not sidecar.get("row_count"):
+        raise ChartError(f"artifact '{qid}' has no rows to plot")
+    sample = session.cache.preview(qid, limit=50)
+
+    def numeric(col: str) -> bool:
+        return any(_num(row.get(col)) is not None for row in sample)
+
+    if columns:
+        resolved = [_resolve_column(c, available) for c in columns]
+        if len(set(resolved)) != len(resolved):
+            raise ChartError("columns must be distinct")
+        for c in resolved:
+            if not numeric(c):
+                raise ChartError(
+                    f"column {c!r} has no numeric values in the artifact's first rows — a "
+                    "correlation matrix compares numeric columns"
+                )
+    else:
+        resolved = [c for c in available if numeric(c)]
+        if len(resolved) > MAX_CORR_COLUMNS:
+            raise ChartError(
+                f"the artifact has {len(resolved)} numeric columns; a matrix holds at most "
+                f"{MAX_CORR_COLUMNS} — name the ones that matter with `columns` "
+                f"(numeric: {', '.join(resolved)})"
+            )
+    try:
+        spec = ChartSpec(
+            chart_id="c_000",
+            qid=qid,
+            kind="correlation",
+            columns=resolved,
+            method=method,  # type: ignore[arg-type]
+            title=title,
+            note=note,
+            worker=worker,
+        )
+    except PydanticValidationError as e:
+        first = e.errors()[0]
+        raise ChartError(str(first.get("ctx", {}).get("error") or first["msg"])) from e
+    return _store(session, spec, worker)
 
 
 def _allocate_id(session: Session) -> str:
@@ -269,6 +392,8 @@ def chart_data(session: Session, spec: dict) -> dict:
     """
     if spec["kind"] == "histogram":
         return _histogram_data(session, spec)
+    if spec["kind"] == "correlation":
+        return _correlation_data(session, spec)
     cap = MAX_POINTS[spec["kind"]]
     columns, rows = session.cache.rows(spec["qid"], limit=cap + 1)
     truncated = len(rows) > cap
@@ -284,7 +409,7 @@ def chart_data(session: Session, spec: dict) -> dict:
             skipped += 1
             continue
         points.append({"x": x_raw, "y": ys})
-    return {
+    out = {
         "x": x_col,
         "y": y_cols,
         "points": points,
@@ -292,6 +417,51 @@ def chart_data(session: Session, spec: dict) -> dict:
         "cap": cap,
         "skipped": skipped,
     }
+    if spec["kind"] == "scatter":
+        # the relationship the picture is there to show, stated as a number:
+        # Pearson r and a least-squares line per series, over every row of the
+        # artifact (not only the plotted cap), computed locally like a
+        # histogram's bins — so labelled `computed: local`, and never a
+        # substitute for a warehouse query when the finding rests on it
+        out["fit"] = _scatter_fit(session, spec, y_cols)
+    return out
+
+
+def _scatter_fit(session: Session, spec: dict, y_cols: list[str]) -> list[dict | None]:
+    from grayson.profile.stats import MIN_PAIRS_FOR_CORRELATION, pearson
+
+    columns, rows = session.cache.rows(spec["qid"], limit=CORRELATION_ROW_CAP)
+    idx = {c: i for i, c in enumerate(columns)}
+    xi = idx.get(spec["x"])
+    fits: list[dict | None] = []
+    for c in y_cols:
+        yi = idx.get(c)
+        xs: list[float] = []
+        ys: list[float] = []
+        if xi is not None and yi is not None:
+            for row in rows:
+                xv, yv = _num(row[xi]), _num(row[yi])
+                if xv is not None and yv is not None:
+                    xs.append(xv)
+                    ys.append(yv)
+        r = pearson(xs, ys) if len(xs) >= MIN_PAIRS_FOR_CORRELATION else None
+        if r is None:
+            fits.append(None)
+            continue
+        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+        sxx = sum((x - mx) ** 2 for x in xs)
+        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True)) / sxx
+        fits.append(
+            {
+                "series": c,
+                "r": round(r, 4),
+                "n": len(xs),
+                "slope": slope,
+                "intercept": my - slope * mx,
+                "computed": "local",
+            }
+        )
+    return fits
 
 
 # -- histograms -------------------------------------------------------------
@@ -391,4 +561,75 @@ def _histogram_data(session: Session, spec: dict) -> dict:
         "width": width,
         "edges": edges,
         "stats": {"min": lo, "max": hi, "mean": mean, "median": median},
+    }
+
+
+# -- correlation matrices ---------------------------------------------------
+
+
+def _correlation_data(session: Session, spec: dict) -> dict:
+    """Pairwise correlation of the spec's columns over the artifact's rows.
+
+    The same arithmetic as `profile correlate` (grayson.profile.stats), on the
+    columns the chart names: listwise deletion per pair, a minimum pair count
+    below which a cell is left empty rather than shown as noise wearing a
+    number, and `computed: local` on the result — the artifact's query id is
+    evidence, the coefficients are grayson's arithmetic on it afterwards.
+    `points` lists the pairs strongest first, so the generic data fold and the
+    report read the matrix as a ranked table.
+    """
+    from grayson.profile.stats import MIN_PAIRS_FOR_CORRELATION, NOTABLE_CORRELATION, _ranked
+    from grayson.profile.stats import pearson as _pearson
+
+    cap = CORRELATION_ROW_CAP
+    columns, rows = session.cache.rows(spec["qid"], limit=cap + 1)
+    truncated = len(rows) > cap
+    rows = rows[:cap]
+    names = list(spec.get("columns") or [])
+    method = spec.get("method") or "pearson"
+    idx = {c: i for i, c in enumerate(columns)}
+    parsed = {c: [_num(row[idx[c]]) if c in idx else None for row in rows] for c in names}
+    size = len(names)
+    matrix: list[list[float | None]] = [[None] * size for _ in range(size)]
+    counts: list[list[int]] = [[0] * size for _ in range(size)]
+    pairs: list[dict] = []
+    skipped: list[dict] = []
+    for i, a in enumerate(names):
+        matrix[i][i] = 1.0
+        counts[i][i] = sum(1 for v in parsed[a] if v is not None)
+        for j in range(i + 1, size):
+            b = names[j]
+            xs, ys = [], []
+            for x, y in zip(parsed[a], parsed[b], strict=True):
+                if x is not None and y is not None:
+                    xs.append(x)
+                    ys.append(y)
+            counts[i][j] = counts[j][i] = len(xs)
+            if len(xs) < MIN_PAIRS_FOR_CORRELATION:
+                skipped.append({"columns": [a, b], "usable_pairs": len(xs)})
+                continue
+            if method == "spearman":
+                xs, ys = _ranked(xs), _ranked(ys)
+            r = _pearson(xs, ys)
+            if r is None:
+                skipped.append({"columns": [a, b], "reason": "a column is constant"})
+                continue
+            r = round(r, 4)
+            matrix[i][j] = matrix[j][i] = r
+            pairs.append({"x": f"{a} × {b}", "a": a, "b": b, "y": [r], "n": len(xs)})
+    pairs.sort(key=lambda p: abs(p["y"][0]), reverse=True)
+    return {
+        "x": "pair",
+        "y": ["r"],
+        "columns": names,
+        "method": method,
+        "matrix": matrix,
+        "counts": counts,
+        "points": pairs,
+        "notable": [p for p in pairs if abs(p["y"][0]) >= NOTABLE_CORRELATION],
+        "skipped": skipped,
+        "rows": len(rows),
+        "truncated": truncated,
+        "cap": cap,
+        "computed": "local",
     }

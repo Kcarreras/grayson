@@ -235,10 +235,18 @@ def publish_report(session: Session) -> None:
     findings), so publication rides on it. Best-effort like every publication:
     it must never fail the close itself. Writes records/<sid>/report.json (the
     searchable row + full report) and report.md (the rendered document, using
-    the library's default profile).
+    the library's default profile) — plus records/<sid>/charts/<id>.svg when
+    the profile asks for pictures (`charts: svg|both`), since the session that
+    could render them stays local and the report is what the team has.
     """
     try:
-        from grayson.report import ReportError, ReportProfile, build_report, load_profile
+        from grayson.report import (
+            ReportError,
+            ReportProfile,
+            build_report,
+            export_chart_svgs,
+            load_profile,
+        )
         from grayson.report import render_markdown as _render
 
         ws = session.workspace
@@ -252,8 +260,9 @@ def publish_report(session: Session) -> None:
         summary = _outcome_summary(meta, ready)
         from grayson.util import atomic_write_text
 
-        md_path = ws.records_dir / session.id / "report.md"
-        atomic_write_text(md_path, _render(report, profile))
+        folder = ws.records_dir / session.id
+        chart_files = export_chart_svgs(session, folder) if profile.charts != "text" else {}
+        atomic_write_text(folder / "report.md", _render(report, profile, chart_files))
         row = {
             **_session_base(session.id, meta),
             "kind": "report",

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from grayson.charts.spec import KINDS as CHART_KINDS
 
 #: every template model tolerates and round-trips unknown fields: a newer
 #: grayson's additions survive an older one's edit-and-save (the round-trip
@@ -23,12 +25,53 @@ class SetupInput(BaseModel):
     adds_scope: bool = False
 
 
+class ChartRequirement(BaseModel):
+    """A picture a checkpoint must close with.
+
+    Whether an agent charts is otherwise its own judgment, prompted by prose.
+    Where the checkpoint's content IS a shape — a distribution, a trend, a
+    stage-to-stage comparison — the workflow can say so, and the gate then
+    refuses to close without a chart of an allowed kind whose query is cited
+    as evidence. `kinds` bounds the choice (empty = any kind); `description`
+    says what the picture should show, the way a check's description says
+    what the evidence should show.
+    """
+
+    model_config = _ROUND_TRIP
+
+    kinds: list[str] = Field(default_factory=list)
+    description: str = ""
+
+    @field_validator("kinds")
+    @classmethod
+    def _known_kinds(cls, v: list[str]) -> list[str]:
+        unknown = [k for k in v if k not in CHART_KINDS]
+        if unknown:
+            raise ValueError(
+                f"unknown chart kind(s) {', '.join(unknown)} — a session could never "
+                f"satisfy this requirement (kinds: {', '.join(CHART_KINDS)})"
+            )
+        return v
+
+    def allows(self, kind: str) -> bool:
+        return not self.kinds or kind in self.kinds
+
+    def label(self) -> str:
+        """One line for previews, errors, and the console."""
+        kinds = "|".join(self.kinds) if self.kinds else "any kind"
+        return f"{kinds}: {' '.join(self.description.split())}" if self.description else kinds
+
+
 class CheckDef(BaseModel):
     model_config = _ROUND_TRIP
 
     key: str
     title: str
     description: str = ""
+    #: charts this checkpoint must cite to close (each entry is one required
+    #: chart; a cited chart satisfies at most one). Empty leaves charting to
+    #: the agent's judgment, which is the default and the common case.
+    charts: list[ChartRequirement] = Field(default_factory=list)
     #: checkpoints that must close before this one can. The one genuinely
     #: sequential dependency in the core set — you cannot hunt a cause before
     #: the anomaly reproduces — was prose in a description until now.

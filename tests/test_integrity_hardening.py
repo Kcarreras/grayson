@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import FakeExecutor
+from conftest import FakeExecutor, close_checkpoint
 from grayson.config import GuardSettings
 from grayson.core import engine, proposals
 from grayson.core.engine import EnforcementError
@@ -35,7 +35,7 @@ def _evidence(session):
 def _complete_all(session):
     qid = _evidence(session)
     for c in session.checkpoints():
-        engine.complete_checkpoint(session, c["key"], [qid], "done")
+        close_checkpoint(session, c["key"], [qid], "done")
     return qid
 
 
@@ -84,12 +84,12 @@ def test_irrelevant_evidence_rejected(session):
     # SELECT 1 touches no target table
     qid = run_statement(session, "SELECT 1", executor=FakeExecutor())["qid"]
     with pytest.raises(EnforcementError, match="does not touch any table"):
-        engine.complete_checkpoint(session, "replicate_anomaly", [qid], "note")
+        close_checkpoint(session, "replicate_anomaly", [qid], "note")
 
 
 def test_relevant_evidence_accepted(session):
     qid = _evidence(session)  # SELECT * FROM DB.S.T1 touches the target
-    cp = engine.complete_checkpoint(session, "replicate_anomaly", [qid], "note")
+    cp = close_checkpoint(session, "replicate_anomaly", [qid], "note")
     assert cp["status"] == "complete"
 
 

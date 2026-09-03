@@ -102,8 +102,9 @@ GLOSSARY: dict[str, str] = {
     ),
     "checkpoints": (
         "The workflow's required steps. Each closes only by citing queries that "
-        "really executed and touched the target tables — or is waived by you, "
-        "with a reason, when it does not apply."
+        "really executed and touched the target tables — and, where the workflow "
+        "asks for one, a chart of the required kind built from a cited query — or is "
+        "waived by you, with a reason, when it does not apply."
     ),
     "evidence": (
         "Ids of queries that actually ran (q_0001, ...). Checkpoints, findings, "

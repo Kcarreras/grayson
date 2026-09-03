@@ -70,3 +70,48 @@ def _isolated_user_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.fixture
 def fake_snow_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(SNOW_CMD_ENV, json.dumps([sys.executable, str(FAKE_SNOW)]))
+
+
+#: rows any required chart can be drawn from: a category, two measures, and
+#: enough of them for a correlation (MIN_PAIRS_FOR_CORRELATION)
+CHART_ROWS = [{"K": f"k{i:02d}", "V": i * 3 % 17, "W": (i * 7) % 11} for i in range(40)]
+
+
+def close_checkpoint(
+    session,
+    key: str,
+    evidence: list[str],
+    note: str = "",
+    actor: str = "agent",
+    overrides_dir=None,
+):
+    """`engine.complete_checkpoint`, satisfying the workflow's chart
+    requirements the way an agent would: a chart of the first allowed kind per
+    requirement, built from a query over the session's target and cited as
+    evidence. Checkpoints with no requirement pass straight through."""
+    from grayson.charts import add_chart
+    from grayson.core import engine
+    from grayson.core.run import run_statement
+
+    check = engine.workflow_for(session, overrides_dir).check(key)
+    charts: list[str] = []
+    if check is not None and check.charts:
+        target = (session.targets or ["DB.S.T1"])[0]
+        out = run_statement(
+            session, f"SELECT * FROM {target}", executor=FakeExecutor(rows=CHART_ROWS)
+        )
+        evidence = [*evidence, out["qid"]]
+        for n, req in enumerate(check.charts, 1):
+            kind = next(
+                k for k in ("bar", "line", "histogram", "scatter", "correlation") if req.allows(k)
+            )
+            args = {
+                "bar": dict(x="K", y=["V"]),
+                "line": dict(x="K", y=["V"]),
+                "histogram": dict(x="V", y=[]),
+                "scatter": dict(x="V", y=["W"]),
+                "correlation": dict(x="", y=[], columns=["V", "W"]),
+            }[kind]
+            spec = add_chart(session, out["qid"], kind, title=f"{key} chart {n}", **args)
+            charts.append(spec["chart_id"])
+    return engine.complete_checkpoint(session, key, evidence, note, actor, overrides_dir, charts)

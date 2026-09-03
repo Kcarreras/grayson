@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from grayson.core import engine
 from grayson.core.session import Session
-from grayson.util import utcnow
+from grayson.util import atomic_write_text, utcnow
 
 
 class ReportError(ValueError):
@@ -47,6 +47,14 @@ REPORT_SECTIONS = (
 )
 
 
+#: how a report carries its charts. `text` is the Unicode rendering inline —
+#: greppable, diffable, readable in any viewer; `svg` writes each chart as a
+#: file beside the report (`charts/<chart_id>.svg`, the same export the
+#: console downloads) and embeds it as an image, so a report read on the git
+#: host or in a slide shows the picture; `both` does both.
+ChartMode = Literal["text", "svg", "both"]
+
+
 class ReportProfile(BaseModel):
     """How reports render for a team. Additive-only, like every library format:
     unknown fields are tolerated (a newer grayson's profile still loads here)."""
@@ -57,6 +65,7 @@ class ReportProfile(BaseModel):
     #: engineering keeps full evidence detail inline; stakeholder keeps every
     #: number but summarizes query-id noise (ids stay in the JSON report)
     audience: Literal["engineering", "stakeholder"] = "engineering"
+    charts: ChartMode = "text"
     sections: list[str] = Field(default_factory=lambda: list(REPORT_SECTIONS))
     header: str = ""  #: markdown prepended above the title (branding, routing)
     footer: str = ""  #: markdown appended after the standard provenance line
@@ -111,8 +120,14 @@ DEFAULT_PROFILE_YAML = """\
 # sections render in this order — remove one to drop it. Known sections:
 #   narrative, setup_inputs, queries, charts, checkpoints, findings,
 #   proposals, interventions.
+# charts: text embeds each chart's terminal rendering (greppable, diffable);
+#   svg writes charts/<chart_id>.svg beside the report and embeds it as an
+#   image, so the published report shows the picture on the git host; both
+#   does both. The session itself is local to the workspace that ran it — a
+#   teammate reading the library has only what the report carries.
 # header/footer: markdown placed above the title / after the provenance line.
 audience: engineering
+charts: text
 sections:
   - narrative
   - setup_inputs
@@ -173,7 +188,35 @@ def _collect_charts(session: Session) -> list[dict]:
 # -- markdown rendering ---------------------------------------------------
 
 
-def render_markdown(report: dict, profile: ReportProfile | None = None) -> str:
+def export_chart_svgs(session: Session, dest: Path) -> dict[str, str]:
+    """Write every chart of the session as `<dest>/charts/<chart_id>.svg` — the
+    detail-size, export-marked rendering the console downloads — and return
+    chart id -> path relative to `dest`, for a report written beside them.
+    A chart that no longer renders from its artifact is skipped (the report's
+    text entry says why)."""
+    from grayson.charts import brand_export, chart_data, list_charts, render_svg
+
+    out: dict[str, str] = {}
+    for spec in list_charts(session):
+        try:
+            svg = brand_export(render_svg(spec, chart_data(session, spec), detail=True))
+        except (KeyError, ValueError, OSError):
+            continue
+        rel = f"charts/{spec['chart_id']}.svg"
+        atomic_write_text(dest / rel, svg)
+        out[spec["chart_id"]] = rel
+    return out
+
+
+def render_markdown(
+    report: dict,
+    profile: ReportProfile | None = None,
+    chart_files: dict[str, str] | None = None,
+) -> str:
+    """`chart_files` (chart id -> relative path, from export_chart_svgs) lets a
+    profile's `svg`/`both` mode embed the pictures; without it the charts
+    section falls back to text, since an image link to nothing is worse than
+    the Unicode rendering."""
     profile = profile or ReportProfile()
     lines: list[str] = []
     if profile.header.strip():
@@ -181,7 +224,11 @@ def render_markdown(report: dict, profile: ReportProfile | None = None) -> str:
     lines += _identity_block(report)
     for section in profile.sections:
         renderer = _SECTION_RENDERERS.get(section)
-        if renderer is not None:  # unknown sections skip — see unknown_sections()
+        if renderer is None:  # unknown sections skip — see unknown_sections()
+            continue
+        if section == "charts":
+            lines += _sec_charts(report, profile, chart_files or {})
+        else:
             lines += renderer(report, profile)
     ready = report["readiness"]
     lines += [
@@ -249,10 +296,13 @@ def _sec_queries(report: dict, profile: ReportProfile) -> list[str]:
     ]
 
 
-def _sec_charts(report: dict, profile: ReportProfile) -> list[str]:
+def _sec_charts(
+    report: dict, profile: ReportProfile, chart_files: dict[str, str] | None = None
+) -> list[str]:
     charts = report.get("charts") or []
     if not charts:
         return []
+    files = chart_files or {}
     lines = ["## Charts", ""]
     for c in charts:
         if c.get("error"):
@@ -261,7 +311,11 @@ def _sec_charts(report: dict, profile: ReportProfile) -> list[str]:
         lines += [f"### {c['title']}  ({c['id']} · from {c['qid']})", ""]
         if c.get("note"):
             lines += [c["note"], ""]
-        lines += ["```text", c["text"], "```", ""]
+        path = files.get(c["id"])
+        if path and profile.charts in ("svg", "both"):
+            lines += [f"![{c['title']}]({path})", ""]
+        if not path or profile.charts in ("text", "both"):
+            lines += ["```text", c["text"], "```", ""]
     return lines
 
 
@@ -294,6 +348,8 @@ def _sec_checkpoints(report: dict, profile: ReportProfile) -> list[str]:
             )
             evidence += f" ({in_scope} of {len(c['evidence'])} touched scope; {detail})"
         note = f" ({c['note']})" if c.get("note") else ""
+        if c.get("charts"):
+            evidence += f"; charts: {', '.join(c['charts'])}"
         suffix = f" — **waived**{note}" if waived else f"{evidence}{note}"
         lines.append(f"- [{mark}] **{c['key']}** — {c['title']}{suffix}")
     if not report["checkpoints"]:

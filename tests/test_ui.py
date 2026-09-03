@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import FakeExecutor
+from conftest import FakeExecutor, close_checkpoint
 from grayson.config import GuardSettings
 from grayson.core import engine
 from grayson.core.run import run_statement
@@ -265,7 +265,7 @@ def _clear_checks(session, waive: str | None = None) -> list[str]:
     for key in keys:
         if key == waive:
             continue
-        engine.complete_checkpoint(session, key, [out["qid"]], "done")
+        close_checkpoint(session, key, [out["qid"]], "done")
     return [out["qid"]]
 
 
@@ -332,7 +332,7 @@ def test_suggested_checks_show_as_breadth_not_gates(client, session):
 
 def test_taking_up_a_suggested_check_records_it_as_a_checkpoint(client, session):
     out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
-    engine.complete_checkpoint(session, "rule_drift", [out["qid"]], "accuracy is flat")
+    close_checkpoint(session, "rule_drift", [out["qid"]], "accuracy is flat")
     assert session.checkpoint("rule_drift")["status"] == "complete"
     ready = engine.readiness(session)
     # closed, but it never becomes a gate
@@ -353,7 +353,7 @@ def test_closed_sessions_list_shows_the_outcome(client, session):
 
     out = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())
     for key in engine.workflow_for(session).required_check_keys():
-        engine.complete_checkpoint(session, key, [out["qid"]], "checked")
+        close_checkpoint(session, key, [out["qid"]], "checked")
     engine.close_session(session, "user", "nothing to act on")
     page = client.get(f"/?t={TOKEN}").text
     assert "Closed sessions" in page
@@ -535,7 +535,7 @@ def test_knowledge_page_descriptor_and_column_edits(client, workspace):
 def _close_with_report(session, workspace):
     qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
     for key in engine.workflow_for(session).required_check_keys():
-        engine.complete_checkpoint(session, key, [qid], "done")
+        close_checkpoint(session, key, [qid], "done")
     engine.close_session(
         session, actor="user", note="looked sound", overrides_dir=workspace.workflows_dir
     )

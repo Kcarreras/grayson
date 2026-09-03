@@ -243,7 +243,7 @@ def test_checkpoint_and_findings_flow(workspace, fake_snow_env, at_a_terminal):
 
     # complete every checkpoint with evidence
     for c in cps:
-        invoke("checkpoint", "complete", sid, c["key"], "-e", qid, "--note", "done")
+        _complete(sid, c["key"], qid, "--note", "done")
 
     ready = invoke("session", "readiness", sid)
     assert ready["checks_complete"]
@@ -331,10 +331,35 @@ def test_upgrade_without_uv_fails(monkeypatch):
 # -- user-only actions are gated on an interactive terminal ---------------
 
 
+def _complete(sid_, key, qid, *extra):
+    """`checkpoint complete` as an agent does it: with the bar chart(s) the
+    workflow requires of the checkpoint, built from the cited query."""
+    cp = next(c for c in invoke("checkpoint", "list", sid_) if c["key"] == key)
+    charts = []
+    for n, _req in enumerate(cp["requires_charts"], 1):
+        ch = invoke(
+            "chart",
+            "add",
+            sid_,
+            "--artifact",
+            qid,
+            "--kind",
+            "bar",
+            "-x",
+            "VAL",
+            "-y",
+            "ID",
+            "--title",
+            f"{key} chart {n}",
+        )
+        charts += ["-c", ch["chart_id"]]
+    return invoke("checkpoint", "complete", sid_, key, "-e", qid, *charts, *extra)
+
+
 def _clear_checks(sid_) -> list[str]:
     run = invoke("query", "run", sid_, "-q", "SELECT * FROM DB.S.T1")
     for key in invoke("workflow", "show", "table-health")["required_checks"]:
-        invoke("checkpoint", "complete", sid_, key["key"], "-e", run["qid"])
+        _complete(sid_, key["key"], run["qid"])
     return [run["qid"]]
 
 
@@ -395,7 +420,7 @@ def test_waive_is_recorded_with_its_reason(workspace, fake_snow_env, sid, at_a_t
     run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
     for key in invoke("workflow", "show", "table-health")["required_checks"]:
         if key["key"] != "freshness":
-            invoke("checkpoint", "complete", sid, key["key"], "-e", run["qid"])
+            _complete(sid, key["key"], run["qid"])
     cp = invoke("checkpoint", "waive", sid, "freshness", "--reason", "static reference table")
     assert cp["status"] == "waived"
     assert cp["note"] == "static reference table"
@@ -418,9 +443,26 @@ def test_profile_command_returns_citable_evidence(workspace, fake_snow_env, sid)
     log = {e["qid"] for e in invoke("query", "log", sid)}
     assert set(doc["evidence"]) <= log
     # the profile's own ids close a checkpoint — no hand-rolled battery needed
-    args = [a for q in doc["evidence"] for a in ("-e", q)]
-    cp = invoke("checkpoint", "complete", sid, "null_completeness", *args)
-    assert cp["status"] == "complete"
+    # (plus the chart the workflow requires of null_completeness, from a cited query)
+    run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
+    chart = invoke(
+        "chart",
+        "add",
+        sid,
+        "--artifact",
+        run["qid"],
+        "--kind",
+        "bar",
+        "-x",
+        "VAL",
+        "-y",
+        "ID",
+        "--title",
+        "null rate per column",
+    )
+    args = [a for q in [*doc["evidence"], run["qid"]] for a in ("-e", q)]
+    cp = invoke("checkpoint", "complete", sid, "null_completeness", *args, "-c", chart["chart_id"])
+    assert cp["status"] == "complete" and cp["charts"] == [chart["chart_id"]]
 
 
 def test_profile_stats_and_correlate_over_the_sample(workspace, fake_snow_env, sid):

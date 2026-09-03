@@ -25,6 +25,9 @@ required_checks:
       Every drop or gain must be explained by a known filter/join/dedup, not
       left as a mystery.
     uses_inputs: [pipeline_stages, transform_intent]
+    charts:
+      - kinds: [bar]
+        description: row count per stage, in pipeline order, so every step shows its delta
   - key: key_integrity
     title: Check key integrity
     description: >
@@ -40,6 +43,9 @@ required_checks:
       should have carried through. This is the check that catches silent
       corruption of the numbers people actually use.
     uses_inputs: [pipeline_stages, transform_intent]
+    charts:
+      - kinds: [bar]
+        description: the key measure summed per stage, in pipeline order
   - key: transform_logic
     title: Validate transform logic
     description: >
@@ -69,6 +75,9 @@ suggested_checks:
       Compare event time against load time. Records arriving after their
       partition closed are either reprocessed into the right partition, wrongly
       filed in the current one, or dropped — establish which.
+    charts:
+      - kinds: [histogram, bar]
+        description: the distribution of load lag (load time minus event time)
   - key: watermark_completeness
     title: Check the incremental boundary
     description: >

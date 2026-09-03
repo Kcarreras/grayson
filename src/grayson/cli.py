@@ -1069,19 +1069,37 @@ def session_report(
     markdown: bool = typer.Option(
         False, "--markdown", "-m", help="Include the rendered markdown in the JSON output."
     ),
+    charts: str = typer.Option(
+        None,
+        "--charts",
+        help="text | svg | both — how --out carries charts (default: the profile's "
+        "setting). svg/both write charts/<id>.svg beside the file and embed them.",
+    ),
 ) -> None:
     """Build a full session report: checkpoints, findings, proposals, charts,
     narrative, query stats. Facts are deterministic; the profile controls
-    presentation (sections, audience, header/footer)."""
-    from grayson.report import ReportError, build_report, load_profile, render_markdown
+    presentation (sections, audience, charts, header/footer)."""
+    from grayson.report import (
+        ReportError,
+        build_report,
+        export_chart_svgs,
+        load_profile,
+        render_markdown,
+    )
 
     ws = _workspace()
-    report = build_report(_session(session_id), ws.workflows_dir)
+    s = _session(session_id)
+    report = build_report(s, ws.workflows_dir)
     try:
         prof = load_profile(ws.reports_dir, profile)
     except ReportError as e:
         fail(str(e))
         return
+    if charts is not None:
+        if charts not in ("text", "svg", "both"):
+            fail("--charts must be text, svg, or both")
+            return
+        prof = prof.model_copy(update={"charts": charts})
     ignored = prof.unknown_sections()
     if ignored:
         report["profile_warnings"] = [
@@ -1089,12 +1107,21 @@ def session_report(
             f"{', '.join(ignored)}"
         ]
     if markdown or out is not None:
-        text = render_markdown(report, prof)
+        chart_files = {}
+        if out is not None and prof.charts != "text":
+            chart_files = export_chart_svgs(s, out.parent)
+        text = render_markdown(report, prof, chart_files)
         if markdown:
             report["markdown"] = text
         if out is not None:
             out.write_text(text, encoding="utf-8")
-            emit({"written": str(out), "report": report})
+            emit(
+                {
+                    "written": str(out),
+                    "chart_files": [str(out.parent / rel) for rel in chart_files.values()],
+                    "report": report,
+                }
+            )
             return
     emit(report)
 
@@ -1278,9 +1305,15 @@ def cache_query(
 def chart_add(
     session_id: str,
     artifact: str = typer.Option(..., "--artifact", "-a", help="Cached artifact id (q_XXXX)."),
-    kind: str = typer.Option(..., "--kind", "-k", help="bar | line | scatter | histogram"),
+    kind: str = typer.Option(
+        ..., "--kind", "-k", help="bar | line | scatter | histogram | correlation"
+    ),
     x: str = typer.Option(
-        ..., "--x", "-x", help="Column for the x axis (histogram: the numeric column to bin)."
+        None,
+        "--x",
+        "-x",
+        help="Column for the x axis (histogram: the numeric column to bin). "
+        "Not for correlation matrices.",
     ),
     y: list[str] = typer.Option(
         None, "--y", "-y", help="Measure column(s); up to 3. Not for histograms."
@@ -1300,6 +1333,18 @@ def chart_add(
         help="histogram only: how many bins (2-40). Default: chosen from the row count; "
         "edges are rounded, so the count is approximate either way.",
     ),
+    columns: list[str] = typer.Option(
+        None,
+        "--column",
+        "-c",
+        help="correlation only: a numeric column to compare (repeat; 2-8). Omit to "
+        "compare every numeric column of the artifact.",
+    ),
+    method: str = typer.Option(
+        "pearson",
+        "--method",
+        help="correlation only: pearson (linear) | spearman (rank; robust to outliers).",
+    ),
 ) -> None:
     """Build a chart from a cached artifact — it appears live in the console.
 
@@ -1309,14 +1354,30 @@ def chart_add(
     render as horizontal bars, but sixty bars is a table, not a picture.
     A histogram takes the raw values of one numeric column (select the column,
     optionally SAMPLE, no GROUP BY) and bins them locally; it takes no --y.
-    The response includes `text`, a terminal rendering — paste it into your
-    chat reply so the user sees the shape without leaving the conversation."""
+    A correlation matrix compares numeric columns pairwise (--column, or every
+    numeric column when omitted) over a sample artifact and takes no --x/--y;
+    a scatter reports Pearson r and draws the fitted line. Both are computed
+    locally over the cached rows — the query id is evidence, the coefficient
+    is arithmetic on it. The response includes `text`, a terminal rendering —
+    paste it into your chat reply so the user sees the shape without leaving
+    the conversation."""
     from grayson.charts import ChartError, add_chart, chart_data, render_text
 
     s = _session(session_id)
     try:
         spec = add_chart(
-            s, artifact, kind, x, list(y or []), title, note, worker, orientation, bins
+            s,
+            artifact,
+            kind,
+            x or "",
+            list(y or []),
+            title,
+            note,
+            worker,
+            orientation,
+            bins,
+            list(columns or []),
+            method,
         )
     except ChartError as e:
         fail(str(e))
@@ -1524,7 +1585,7 @@ def workflow_lint() -> None:
 
 @checkpoint_app.command("list")
 def checkpoint_list(session_id: str) -> None:
-    emit(_session(session_id).checkpoints())
+    emit(engine.checkpoints_view(_session(session_id), _workspace().workflows_dir))
 
 
 @checkpoint_app.command("complete")
@@ -1533,13 +1594,22 @@ def checkpoint_complete(
     key: str,
     evidence: list[str] = typer.Option([], "--evidence", "-e", help="Executed query ids."),
     note: str = typer.Option("", "--note"),
+    charts: list[str] = typer.Option(
+        [],
+        "--charts",
+        "-c",
+        help="Chart ids (c_XXX) this checkpoint closes with; each chart's query must be "
+        "cited as evidence. Required where the workflow says so (`checkpoint list` "
+        "shows requires_charts).",
+    ),
     actor: str = typer.Option(None, "--actor", help="Defaults to the caller (TTY = user)."),
 ) -> None:
-    """Close a checkpoint — requires evidence (executed query ids) that exist."""
+    """Close a checkpoint — requires evidence (executed query ids) that exist,
+    and the charts the workflow requires of it, if any."""
     s = _session(session_id)
     try:
         cp = engine.complete_checkpoint(
-            s, key, evidence, note, resolve_actor(actor), _workspace().workflows_dir
+            s, key, evidence, note, resolve_actor(actor), _workspace().workflows_dir, charts
         )
     except EnforcementError as e:
         fail(str(e))

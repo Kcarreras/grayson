@@ -102,6 +102,15 @@ def _lint_template(tpl: WorkflowTemplate, file: str, warn: Callable[..., None]) 
                 f"checkpoint '{check.key}' has no description — agents close "
                 "checkpoints better when the intent is written down",
             )
+        for n, req in enumerate(check.charts, 1):
+            if not req.description.strip():
+                warn(
+                    file,
+                    tpl.name,
+                    f"checkpoint '{check.key}' requires chart #{n} without saying what it "
+                    "should show — a required picture with no intent gets closed with "
+                    "whatever chart is to hand",
+                )
         for dep in check.depends_on:
             if dep not in keys:
                 warn(
