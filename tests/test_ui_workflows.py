@@ -114,7 +114,7 @@ def test_detail_shows_charts_inputs_and_schema(client):
     assert "blast_radius" in page and "alternatives_tested" in page
     assert "branches on resolution" in page
     assert "remaining_hypotheses" in page
-    assert "Base fields every finding carries" in page
+    assert "Base fields" in page
     assert "Example payload" in page and "&#34;evidence&#34;" in page or '"evidence"' in page
 
 

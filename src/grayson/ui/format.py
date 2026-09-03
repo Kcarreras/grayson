@@ -216,8 +216,40 @@ GLOSSARY: dict[str, str] = {
         "blocks a stage; those the agent takes up become ordinary checkpoints."
     ),
     "findings_schema": (
-        "The shape every finding must validate against, plus at least one "
-        "executed query as evidence. Extra required keys are the workflow's own."
+        "The shape every finding must validate against. Every finding carries the "
+        "base fields (title, severity, confidence, summary, evidence); the named "
+        "schema and the workflow's own fields add the rest under `extra`. Agents "
+        "read the same contract from `workflow show`."
+    ),
+    "findings_fields": (
+        "Fields this workflow requires in every finding's `extra`, on top of the "
+        "schema's. A closed choice list keeps a verdict from being hedged; an "
+        "optional field is documented for the agent without gating. Naming a field "
+        "the schema already requires tightens it instead of adding a second."
+    ),
+    "required_checks": (
+        "Gates: review opens only once each is closed with evidence, or waived by "
+        "you with a reason. Keep them to what the investigation is meaningless "
+        "without — a gate that does not apply gets closed hollow."
+    ),
+    "workflow_new": (
+        "Blank from a scaffold, or a fork of any workflow with its lineage recorded. "
+        "It lands in the team library under your id; edit it element by element on "
+        "its page, or as YAML."
+    ),
+    "workflow_delete": (
+        "Only the author can delete a workflow, never a core template, and never "
+        "while a session is open on it. The library's git history keeps the file; "
+        "push propagates the removal."
+    ),
+    "workflow_preview": (
+        "The same rendering `grayson workflow preview` gives an agent to paste for "
+        "sign-off, so what you confirm here is what they would be shown."
+    ),
+    "workflow_confirm": (
+        "Every edit — YAML or a single element — stops here first. Confirming writes "
+        "the file shown; cancelling discards the draft. The library's git history "
+        "keeps every earlier version."
     ),
     "setup_inputs": (
         "What the human supplied when the session started. Checkpoints that "

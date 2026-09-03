@@ -173,12 +173,12 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
 </div>
 
 <div class="tiles">
-  <a class="tile" href="#inputs"><span class="num">{{ tpl.setup_inputs | length }}</span><span class="lbl">setup inputs</span></a>
-  <a class="tile" href="#checkpoints"><span class="num">{{ tpl.required_checks | length }}</span><span class="lbl">gating checks</span></a>
-  <a class="tile" href="#checkpoints"><span class="num">{{ tpl.suggested_checks | length }}</span><span class="lbl">suggested</span></a>
-  <a class="tile" href="#checkpoints"><span class="num">{{ tpl.chart_requirements() }}</span><span class="lbl">require a chart</span></a>
-  <a class="tile" href="#schema"><span class="num">{{ schema.required_extra | length }}</span><span class="lbl">extra finding fields</span></a>
-  <a class="tile" href="#usage"><span class="num {{ 'ok' if usage.open }}">{{ usage.count }}</span><span class="lbl">session{{ "s" if usage.count != 1 }}{% if usage.open %} · {{ usage.open }} open{% endif %}</span></a>
+  <a class="tile" href="#inputs"><div class="num">{{ tpl.setup_inputs | length }}</div><div class="lbl">setup inputs</div></a>
+  <a class="tile" href="#checkpoints"><div class="num">{{ tpl.required_checks | length }}</div><div class="lbl">gating checks</div></a>
+  <a class="tile" href="#checkpoints"><div class="num">{{ tpl.suggested_checks | length }}</div><div class="lbl">suggested</div></a>
+  <a class="tile" href="#checkpoints"><div class="num">{{ tpl.chart_requirements() }}</div><div class="lbl">require a chart</div></a>
+  <a class="tile" href="#schema"><div class="num">{{ schema.required_extra | length }}</div><div class="lbl">extra finding fields</div></a>
+  <a class="tile" href="#usage"><div class="num {{ 'ok' if usage.open }}">{{ usage.count }}</div><div class="lbl">session{{ "s" if usage.count != 1 }}{% if usage.open %} · {{ usage.open }} open{% endif %}</div></a>
 </div>
 
 <div class="card">
@@ -254,7 +254,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
         </span></summary>
       <div class="fold-body">
         {% if c.description %}<div class="ink2 small mt-2">{{ c.description.strip() }}</div>
-        {% else %}<div class="faint small mt-2">No description recorded — lint asks for one.</div>{% endif %}
+        {% else %}<div class="faint small mt-2">No description.</div>{% endif %}
         {% if c.depends_on or c.uses_inputs or c.charts %}
         <div class="kv" style="margin-top: 9px;">
           {% if c.depends_on %}
@@ -282,12 +282,9 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
     {% endif %}
     {% if editable %}
     <details class="card editfold" data-fold="add-check"><summary>+ Add a checkpoint</summary>
-      <div class="muted small mt-2">Required checks gate review until closed with evidence;
-        suggested ones carry breadth and gate nothing. Ask: is the investigation meaningless
-        without it? Only then make it required.</div>
       <div class="row mt-2" style="gap: 12px; align-items: flex-start;">
-        <div style="flex: 1 1 320px;"><div class="overline">Required (gates)</div>{{ check_form(none, "required") }}</div>
-        <div style="flex: 1 1 320px;"><div class="overline">Suggested (breadth)</div>{{ check_form(none, "suggested") }}</div>
+        <div style="flex: 1 1 320px;"><div class="overline">Required {{ help("required_checks") }}</div>{{ check_form(none, "required") }}</div>
+        <div style="flex: 1 1 320px;"><div class="overline">Suggested {{ help("suggested_checks") }}</div>{{ check_form(none, "suggested") }}</div>
       </div>
     </details>
     {% endif %}
@@ -298,12 +295,10 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
         <span class="chip mono">{{ schema.name }}</span>
         {% if tpl.findings_fields %}<span class="badge todo">+{{ tpl.findings_fields | length }} of this workflow's own</span>{% endif %}
         {% if schema.discriminator %}<span class="badge act" title="{{ schema.discriminator_hint }}">branches on {{ schema.discriminator }}</span>{% endif %}
+        {{ help("findings_fields") }}
         <span class="grow"></span>
         <span class="faint small">{{ schema.required_extra | selectattr("required") | list | length }} required in <span class="mono">extra</span></span>
       </div>
-      <div class="muted small" style="margin-top: 8px;">Every finding carries the base fields; the
-        schema and this workflow add the rest under <span class="mono">extra</span>. An agent reads
-        the same contract from <code>grayson workflow show {{ tpl.name }}</code>.</div>
 
       <table class="fieldtable" style="margin-top: 10px;">
         <thead><tr><th>field</th><th>holds</th><th></th></tr></thead>
@@ -338,8 +333,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
 
       {% if schema.conditional_extra %}
       <div style="margin-top: 12px;">
-        <div class="overline">Branches on <span class="mono">{{ schema.discriminator }}</span></div>
-        <div class="muted small" style="margin: 3px 0 6px;">{{ schema.discriminator_hint }}</div>
+        <div class="overline" title="{{ schema.discriminator_hint }}">Branches on <span class="mono">{{ schema.discriminator }}</span></div>
         {% for value, fields in schema.conditional_extra.items() %}
         <div class="kv" style="margin-top: 6px;">
           <span class="item"><b>{{ schema.discriminator }} = {{ value }}</b><span>needs</span></span>
@@ -351,15 +345,12 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
 
       {% if editable %}
       <details class="editfold" style="margin-top: 12px;" data-fold="add-field"><summary>+ Add a field this workflow requires</summary>
-        <div class="muted small mt-2">Fields go under <span class="mono">extra</span> in every
-          finding. Use a closed choice list where the answer is a verdict, so it cannot be hedged.
-          Naming a field the schema already requires tightens it instead of adding a second.</div>
         {{ field_form(none) }}
       </details>
       {% endif %}
 
       <details class="inlinefold" style="margin-top: 12px;" data-fold="base-fields">
-        <summary>Base fields every finding carries, and the rules they are held to</summary>
+        <summary>Base fields</summary>
         <table class="fieldtable" style="margin-top: 6px;">
           <tbody>
           {% for b in schema.base_fields %}
@@ -374,7 +365,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
         </ul>
       </details>
       <details class="inlinefold" style="margin-top: 8px;" data-fold="example">
-        <summary>Example payload shaped to pass</summary>
+        <summary>Example payload</summary>
         <pre class="example mt-2">{{ schema.example | tojson(indent=2) }}</pre>
       </details>
     </div>
@@ -405,7 +396,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
           </div>
           <label>findings schema <select name="findings_schema">
             {% for sn in schema_names %}<option value="{{ sn }}" {{ "selected" if sn == tpl.findings_schema }}>{{ sn }}</option>{% endfor %}
-          </select><span class="hint">the built-in base; this workflow's own fields stay</span></label>
+          </select><span class="hint">this workflow's own fields stay</span></label>
           <div class="submit"><button class="btn secondary sm" type="submit">Review change…</button></div>
         </form>
       </details>
@@ -424,8 +415,7 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
         {% set used = inputs_used.get(i.key, []) %}
         <div class="faint small" style="margin-top: 2px;">
           {% if used %}read by <span class="mono">{{ used | join(", ") }}</span>
-          {% elif i.required %}<span class="attn-text">no checkpoint declares it works from this answer</span>
-          {% else %}no checkpoint declares it{% endif %}</div>
+          {% else %}<span class="badge {{ 'attn' if i.required else 'plain' }}" title="No checkpoint declares (uses_inputs) that it works from this answer{% if i.required %} — a required question nothing reads{% endif %}">unread</span>{% endif %}</div>
         {% if editable %}
         <details class="editfold"><summary>Edit</summary>{{ input_form(i, i.key) }}</details>
         {{ el_tools("input", i.key, "", loop.first, loop.last) }}
@@ -469,9 +459,9 @@ pre.example { background: var(--panel2); border: 1px solid var(--border-soft);
     <div class="card danger-zone">
       <details class="editfold" data-fold="delete"><summary>Delete this workflow</summary>
         <div class="muted small mt-2">Removes <span class="mono">workflows/{{ tpl.name }}.yaml</span>
-          from the library{% if auto_push %} and pushes the removal{% endif %}. The library's git
-          history keeps the file. Refused while sessions are open on it{% if usage.open %} —
-          <b class="attn-text">{{ usage.open }} open now</b>{% endif %}.</div>
+          from the library{% if auto_push %} and pushes{% endif %}.{% if usage.open %}
+          <b class="attn-text">{{ usage.open }} open now</b> — refused until closed.{% endif %}
+          {{ help("workflow_delete") }}</div>
         <form class="row mt-2" method="post" action="/workflows/{{ tpl.name }}/delete?t={{ token }}"
           onsubmit="return confirm('Delete workflow {{ tpl.name }} from the library?');">
           <input type="text" name="confirm_name" placeholder="type {{ tpl.name }} to confirm"

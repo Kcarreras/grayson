@@ -136,11 +136,8 @@
 </details>
 
 <details class="section" id="new" data-fold="new">
-<summary><h2>New workflow</h2></summary>
+<summary><h2>New workflow {{ help("workflow_new") }}</h2></summary>
 <div class="card">
-  <div class="muted small" style="margin-bottom: 10px;">Blank from a scaffold, or a fork of any
-    workflow with its lineage recorded. It lands in the team library under your id; you edit it
-    element by element on its page, or as YAML.</div>
   <form class="newform" method="post" action="/workflows/new?t={{ token }}">
     <input type="text" name="new_name" placeholder="name, e.g. orders-slim-health"
       pattern="[a-z0-9][a-z0-9-]*" required>
@@ -156,10 +153,6 @@
 <details class="section" id="schemas" data-fold="schemas">
 <summary><h2>Findings schemas {{ help("findings_schema") }}
   <span class="faint" style="font-weight: 500; margin-left: 8px; text-transform: none; letter-spacing: 0;">{{ schemas | length }} built in</span></h2></summary>
-<div class="muted small" style="margin-bottom: 10px;">Every finding carries the base fields
-  (title, severity, confidence, summary, evidence, and the optional ones). A workflow names one
-  of these schemas for the rest, and can add its own fields on top — open a workflow to see its
-  effective schema and edit its fields.</div>
 <div class="schemagrid">
   {% for sc in schemas %}
   <details class="card foldcard" data-fold="schema-{{ sc.name }}">

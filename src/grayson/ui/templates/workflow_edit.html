@@ -19,9 +19,8 @@
 <div class="pagehead">
   <div class="titles">
     <div class="titlerow"><h1>Edit {{ name }} as YAML {{ help("workflow_yaml") }}</h1></div>
-    <div class="lede">The whole file at once. For one checkpoint, input or findings field at a time,
-      use the forms on <a href="/workflows/{{ name }}?t={{ token }}">the workflow page</a> — either
-      way you review the exact change before it is saved.</div>
+    <div class="lede">The whole file at once; single elements edit on
+      <a href="/workflows/{{ name }}?t={{ token }}">the workflow page</a>.</div>
   </div>
 </div>
 
@@ -32,7 +31,7 @@
     <div class="row" style="margin-top: 10px;">
       <button class="btn" type="submit" name="action" value="review">Review changes…</button>
       <a class="btn ghost" href="/workflows/{{ name }}?t={{ token }}">Cancel</a>
-      <span class="muted small">Validates, then shows the diff and preview for confirmation.</span>
+
     </div>
   </form>
   <div class="card ref">
