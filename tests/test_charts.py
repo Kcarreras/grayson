@@ -594,3 +594,22 @@ def test_session_page_shows_histogram(workspace):
     assert "Amounts, binned" in page and "<rect" in page
     chart_page = client.get(f"/session/{s.id}/chart/c_001?t={TOKEN}").text
     assert "histogram" in chart_page and "<rect" in chart_page
+
+
+def test_histogram_edges_are_exact_and_values_on_edges_bin_correctly(session):
+    from grayson.charts import bin_edges
+
+    assert bin_edges(0.0, 1.0, 10) == [round(i / 10, 10) for i in range(11)]  # no 1.1 phantom
+    rows = [{"R": i / 10} for i in range(11)]
+    q = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=rows))["qid"]
+    spec = add_chart(session, q, "histogram", "R", [], "rates", bins=10)
+    data = chart_data(session, spec)
+    assert data["bins"] == 10 and data["edges"][-1] == 1.0
+    # each value opens its own bin; the top value belongs to the last bin
+    assert [p["y"][0] for p in data["points"]] == [1, 1, 1, 1, 1, 1, 1, 1, 1, 2]
+
+
+def test_sandbox_init_lists_every_seeded_table(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRAYSON_SANDBOX_DIR", str(tmp_path / "wh"))
+    out = invoke("sandbox", "init", str(tmp_path / "demo"))
+    assert "SANDBOX.SHOP.ORDERS_DAILY" in out["tables"] and len(out["tables"]) == 7

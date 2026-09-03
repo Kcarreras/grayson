@@ -57,8 +57,7 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
     guard = summary["guard"]
     consumed = session.budget_consumed_count()
     stats = session.query_stats()
-    log = session.query_log(limit=RECENT_QUERIES + stats["total"])
-    executed = [q for q in log if q["status"] == "executed"]
+    executed = session.query_log(limit=RECENT_QUERIES, status="executed")
     interventions = session.interventions()
     checkpoints = session.checkpoints()
     findings = session.findings()
@@ -202,7 +201,8 @@ def render_brief(brief: dict) -> str:
         budget += f" (warn at {g['budget_warn']})"
     lines.append(
         f"guard: profile {g['profile'] or '-'} · auto-limit {g['auto_limit'] or 'off'} · "
-        f"timeout {g['timeout_seconds'] or 'off'}s · budget {budget}"
+        f"timeout {str(g['timeout_seconds']) + 's' if g['timeout_seconds'] else 'off'} · "
+        f"budget {budget}"
     )
     if brief["workers"]:
         lines.append(

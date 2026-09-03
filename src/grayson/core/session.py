@@ -446,16 +446,19 @@ class Session:
         finally:
             con.close()
 
-    def query_log(self, limit: int = 200) -> list[dict]:
+    def query_log(self, limit: int = 200, status: str | None = None) -> list[dict]:
+        """Newest first; `status` narrows to one outcome (executed, rejected, …)."""
         con = self._con()
         try:
             con.row_factory = sqlite3.Row
+            where = "WHERE status = ? " if status else ""
+            params: tuple = (status, limit) if status else (limit,)
             rows = con.execute(
                 "SELECT qid, worker, ts, status, guard_rule, reason, duration_ms, "
                 "row_count, truncated, label, tables_json, "
-                "substr(sql_raw, 1, 300) AS sql_raw FROM queries "
+                f"substr(sql_raw, 1, 300) AS sql_raw FROM queries {where}"
                 "ORDER BY rowid DESC LIMIT ?",
-                (limit,),
+                params,
             ).fetchall()
             return [dict(r) for r in rows]
         finally:
