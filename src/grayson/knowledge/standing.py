@@ -44,10 +44,17 @@ LIFECYCLE_KEYS: tuple[str, ...] = (
     "retired_at",
     "restored_by",
     "restored_at",
+    "anchored_by",
+    "anchored_at",
     "kind",
     "compatible_with",
     "verified_at",
 )
+
+#: the id `_record_verified_fix` gives a fix fact: the proposal and the session
+#: it came from, slugged. An upgrade pass reads the record back out of it for
+#: facts written before anchors existed.
+_LEGACY_FIX_ID = re.compile(r"^verified_fix_(p_\d+)_(\d{8})_(\d{6})_([0-9a-f]{4})$")
 
 #: contested-pair kinds, from strongest signal to weakest
 CONTEST_SUPERSESSION = "supersession"  # a fact proposes to supersede another; pending
@@ -126,6 +133,31 @@ def derive_anchors(text: str, doc: dict, keep: list[dict] | None = None) -> list
         if key and d.get("hash"):
             _add({"kind": "definition", "key": str(key), "hash": str(d["hash"])})
     return out
+
+
+def legacy_fix_record(fact_id: str) -> tuple[str, str] | None:
+    """(session_id, proposal_id) encoded in an old verified-fix fact's id, or
+    None when the id is not one."""
+    m = _LEGACY_FIX_ID.match(fact_id or "")
+    if not m:
+        return None
+    return f"{m.group(2)}-{m.group(3)}-{m.group(4)}", m.group(1)
+
+
+def confirmed_successor(fact: dict, doc: dict) -> dict | None:
+    """A fact in the doc that names this one in `supersedes` and is already
+    user-confirmed but never executed — a confirm done by an older grayson or
+    by hand. The human vouched, so the supersession reads as done; the
+    reconcile pass materializes it."""
+    for other in doc.get("facts") or []:
+        if (
+            other.get("supersedes") == fact.get("id")
+            and other.get("status") == "user_confirmed"
+            and other.get("standing") != "retired"
+            and other.get("id") != fact.get("id")
+        ):
+            return other
+    return None
 
 
 def _anchor_key(anchor: dict) -> str:
@@ -209,6 +241,9 @@ def effective_standing(fact: dict, doc: dict, ctx: StandingContext) -> tuple[str
             f"superseded by {fact['superseded_by']}" if fact.get("superseded_by") else "retired"
         )
         return "retired", str(reason)
+    successor = confirmed_successor(fact, doc)
+    if successor is not None:
+        return "retired", f"superseded by {successor['id']}"
     if fact.get("standing") == "unverified" and fact.get("standing_by") == "verify":
         # a re-run that disagreed with the record is an observation, not a rule:
         # it stands until the next verify agrees or someone restores the fact

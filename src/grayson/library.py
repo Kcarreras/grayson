@@ -856,6 +856,7 @@ def reconcile_root(
     policy: KnowledgePolicy | EffectivePolicy | None = None,
     dry_run: bool = False,
     push: bool = False,
+    anchor_missing: bool = False,
 ) -> dict:
     """The reconcile pass over a library directory — a workspace's linked
     clone or a bare checkout in CI. Rules only (knowledge/reconcile.py); the
@@ -875,7 +876,13 @@ def reconcile_root(
             "library working tree is dirty — commit or stash first, so the reconcile "
             "lands as one revertible commit and nothing else rides along with it"
         )
-    report = reconcile_docs(KnowledgeStore(root / "knowledge"), root / "records", policy, dry_run)
+    report = reconcile_docs(
+        KnowledgeStore(root / "knowledge"),
+        root / "records",
+        policy,
+        dry_run,
+        anchor_missing=anchor_missing,
+    )
     out = {"library": str(root), "is_git": is_git, "policy": policy.summary(), **report}
     if dry_run or not report["touched"]:
         out["committed"] = False
@@ -887,11 +894,16 @@ def reconcile_root(
             "`git init` the library (or `grayson library link`) before the next one"
         )
         return out
-    label = (
-        f"{len(report['materialized'])} standing change(s), "
-        f"{len(report['questions_folded'])} question(s) folded, "
-        f"{len(report['questions_retired'])} question(s) retired"
-    )
+    parts = [
+        f"{len(report['materialized'])} standing change(s)",
+        f"{len(report['questions_folded'])} question(s) folded",
+        f"{len(report['questions_retired'])} question(s) retired",
+    ]
+    if report["supersessions_executed"]:
+        parts.append(f"{len(report['supersessions_executed'])} confirmed supersession(s) executed")
+    if report["anchored"]:
+        parts.append(f"{len(report['anchored'])} fact(s) anchored")
+    label = ", ".join(parts)
     _git(root, "add", "-A", "--", *report["touched"])
     commit = _git(
         root,
@@ -907,7 +919,9 @@ def reconcile_root(
     return out
 
 
-def reconcile_library(workspace: Workspace, dry_run: bool = False) -> dict:
+def reconcile_library(
+    workspace: Workspace, dry_run: bool = False, anchor_missing: bool = False
+) -> dict:
     """Reconcile the workspace's library (or, in solo mode, its own knowledge
     directory) under the effective policy; pushes when the workspace auto-pushes."""
     root = workspace.config.library_path or workspace.root
@@ -916,6 +930,7 @@ def reconcile_library(workspace: Workspace, dry_run: bool = False) -> dict:
         policy=effective_policy(workspace),
         dry_run=dry_run,
         push=bool(workspace.config.library_path) and workspace.config.library_auto_push,
+        anchor_missing=anchor_missing,
     )
 
 
@@ -931,19 +946,49 @@ def standing_report(workspace: Workspace) -> dict:
         effective_policy(workspace),
         dry_run=True,
     )
+    unanchored = _unanchored_count(workspace)
     return {
         "counts": report["counts"],
         "would_materialize": len(report["materialized"]),
         "would_fold_questions": len(report["questions_folded"]),
         "would_retire_questions": len(report["questions_retired"]),
+        "would_execute_supersessions": len(report["supersessions_executed"]),
+        "unanchored_facts": unanchored,
         "needs_human": report["needs_human"],
         "agent_actions": report["agent_actions"],
         "hint": (
             "`grayson library reconcile` materializes standing onto the docs as one commit; "
             "needs_human lists what no rule decides — contested pairs, unverified and "
             "stale facts — for the console's Knowledge tab or an agent the policy permits"
+            + (
+                f". {unanchored} live fact(s) carry no anchors (written before standing "
+                "existed): `grayson library reconcile --anchor-missing` baselines them"
+                if unanchored
+                else ""
+            )
         ),
     }
+
+
+def _unanchored_count(workspace: Workspace) -> int:
+    """Live facts with no anchors — the upgrade signal."""
+    from grayson.knowledge import KnowledgeDocError, KnowledgeStore
+
+    store = KnowledgeStore(workspace.knowledge_dir)
+    total = 0
+    for fqn in store.all_tables():
+        try:
+            doc = store.read(fqn)
+        except (KnowledgeDocError, ValueError):
+            continue
+        total += sum(
+            1
+            for f in doc["facts"]
+            if not f.get("anchors")
+            and not f.get("superseded_by")
+            and f.get("standing") != "retired"
+        )
+    return total
 
 
 def migrate_library(workspace: Workspace) -> dict:

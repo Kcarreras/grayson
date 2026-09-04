@@ -155,6 +155,11 @@ class Fact(BaseModel):
     retired_at: str | None = None
     restored_by: str | None = None
     restored_at: str | None = None
+    #: when anchors were (re)derived by a bulk pass rather than at write time —
+    #: a re-anchor by a person, or the upgrade pass over facts written before
+    #: anchors existed
+    anchored_by: str | None = None
+    anchored_at: str | None = None
     #: e.g. `verified_fix` — a briefing folds these into one line per table
     kind: str | None = None
     #: contested pairs a human (or a permitted agent) judged to both hold
@@ -410,15 +415,7 @@ class KnowledgeStore:
                     f"under trust '{trust}' — the pair stays contested until a human "
                     f"confirms '{new_id}' (or the policy's trust admits {new.get('status')})"
                 )
-        now = utcnow()
-        old["superseded_by"] = new_id
-        if old.get("standing") != "retired":
-            old["standing"] = "retired"
-            old["standing_reason"] = f"superseded by {new_id}"
-            old["standing_at"] = now
-            old["standing_by"] = by
-            old["retired_by"] = by
-            old["retired_at"] = now
+        apply_supersession(old, new_id, by)
         self._write(fqn, doc)
         return {"fact": dict(new), "superseded": dict(old)}
 
@@ -529,12 +526,13 @@ class KnowledgeStore:
         self._write(fqn, doc)
         return entry
 
-    def reanchor(self, fqn: str, fact_id: str | None = None) -> dict:
+    def reanchor(self, fqn: str, fact_id: str | None = None, by: str = "user") -> dict:
         """Re-derive anchors from the doc as it stands, for one fact or all —
         the step after a definition was re-recorded on purpose (a human saying
         'the facts still hold'). Retired facts are left alone."""
         doc = self.read(fqn)
         touched: list[str] = []
+        stamp = utcnow()
         for f in doc["facts"]:
             if fact_id and f["id"] != fact_id:
                 continue
@@ -544,6 +542,8 @@ class KnowledgeStore:
             f["anchors"] = derive_anchors(str(f.get("fact", "")), doc, keep=keep)
             for key in ("standing", "standing_reason", "standing_at", "standing_by"):
                 f[key] = None
+            f["anchored_by"] = by
+            f["anchored_at"] = stamp
             touched.append(f["id"])
         if fact_id and not touched:
             self._fact_in(doc, fact_id)  # raises when unknown; retired is a no-op
@@ -1231,6 +1231,21 @@ def _merge_definitions(current: list[dict], incoming: list[dict]) -> list[dict]:
     for d in incoming:
         merged[_key(d)] = d
     return list(merged.values())
+
+
+def apply_supersession(old: dict, new_id: str, by: str, stamp: str | None = None) -> None:
+    """Mark `old` superseded by `new_id`, in place: retired with the successor
+    named, unless it was retired already (then only the pointer is set).
+    Shared by the store's execute path and the reconcile pass."""
+    now = stamp or utcnow()
+    old["superseded_by"] = new_id
+    if old.get("standing") != "retired":
+        old["standing"] = "retired"
+        old["standing_reason"] = f"superseded by {new_id}"
+        old["standing_at"] = now
+        old["standing_by"] = by
+        old["retired_by"] = by
+        old["retired_at"] = now
 
 
 def _match_question(doc: dict, question: str) -> str:

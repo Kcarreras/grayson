@@ -226,7 +226,7 @@ def reanchor(
     the human saying 'these still hold'. Same permission as restore."""
     require(workspace, "restore", actor)
     store = KnowledgeStore(workspace.knowledge_dir)
-    out = store.reanchor(table, fact_id)
+    out = store.reanchor(table, fact_id, by=actor)
     what = fact_id or "all facts"
     sync = _commit(
         workspace,
@@ -289,6 +289,7 @@ def reconcile(
     actor: Actor = "agent",
     surface: Surface = "mcp",
     dry_run: bool = False,
+    anchor_missing: bool = False,
 ) -> dict:
     """The reconcile pass, from a surface: a dry run is always allowed (it
     writes nothing); the real pass is policy-gated for agents."""
@@ -296,4 +297,4 @@ def reconcile(
 
     if not dry_run:
         require(workspace, "reconcile", actor)
-    return reconcile_library(workspace, dry_run=dry_run)
+    return reconcile_library(workspace, dry_run=dry_run, anchor_missing=anchor_missing)

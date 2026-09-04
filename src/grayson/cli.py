@@ -3378,25 +3378,48 @@ def library_reconcile_cmd(
         help="A library checkout to reconcile directly (CI); no workspace needed.",
     ),
     push: bool = typer.Option(False, "--push", help="With --library: push the commit."),
+    anchor_missing: bool = typer.Option(
+        False,
+        "--anchor-missing",
+        help="Also anchor facts that carry no anchors (written before standing existed): "
+        "the upgrade pass. Their standing is computed from here on.",
+    ),
 ) -> None:
-    """The reconcile pass: materialize each fact's standing onto its doc, fold
-    duplicate open questions, retire questions about dropped columns, and report
-    what no rule decides (needs_human). Lands as one commit with a
-    `Grayson-Via: reconcile` trailer, on a clean tree. From a workspace the
-    effective policy governs and an agent shell-out is policy-gated; with
-    --library the checkout's own library.toml governs (the CI recipe)."""
+    """The reconcile pass: materialize each fact's standing onto its doc, execute
+    supersessions a human confirmed but nothing executed, fold duplicate open
+    questions, retire questions about dropped columns, and report what no rule
+    decides (needs_human). Lands as one commit with a `Grayson-Via: reconcile`
+    trailer, on a clean tree. From a workspace the effective policy governs and
+    an agent shell-out is policy-gated; with --library the checkout's own
+    library.toml governs (the CI recipe). --anchor-missing is the one-time
+    upgrade step for a library written before facts carried anchors."""
     from grayson.knowledge import actions as knowledge_actions
     from grayson.library import reconcile_root
 
     if library is not None:
         try:
-            emit(reconcile_root(library.expanduser().resolve(), dry_run=dry_run, push=push))
+            emit(
+                reconcile_root(
+                    library.expanduser().resolve(),
+                    dry_run=dry_run,
+                    push=push,
+                    anchor_missing=anchor_missing,
+                )
+            )
         except (RuntimeError, OSError, ValueError) as e:
             fail(str(e))
         return
     actor = "user" if _stdin_is_tty() else "agent"
     try:
-        emit(knowledge_actions.reconcile(_workspace(), actor=actor, surface="cli", dry_run=dry_run))
+        emit(
+            knowledge_actions.reconcile(
+                _workspace(),
+                actor=actor,
+                surface="cli",
+                dry_run=dry_run,
+                anchor_missing=anchor_missing,
+            )
+        )
     except (RuntimeError, OSError, ValueError, PermissionError) as e:
         fail(str(e.args[0] if e.args else e))
 

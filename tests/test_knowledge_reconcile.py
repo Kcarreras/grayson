@@ -182,3 +182,148 @@ def test_cli_reconcile(workspace, team_lib):
     assert dry["dry_run"] and dry["committed"] is False
     real = invoke("library", "reconcile", "--library", str(team_lib))
     assert real["committed"] is True and real["materialized"]
+
+
+# -- upgrading a library written before standing existed --------------------------
+
+
+def _strip_lifecycle(ks, *tables):
+    """Leave the docs as an older grayson wrote them: no anchors, no kind."""
+    for table in tables:
+        doc = ks.read(table)
+        for f in doc["facts"]:
+            f["anchors"] = []
+            f["kind"] = None
+        ks.save(table, doc)
+
+
+def _publish_record(workspace, sid: str, pid: str) -> None:
+    folder = workspace.records_dir / sid
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{pid}.json").write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "kind": "proposal",
+                "session_id": sid,
+                "id": pid,
+                "verdict": "pass",
+                "title": "fix",
+                "ts": "2026-06-01T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_anchor_missing_baselines_old_facts(workspace, ks):
+    from grayson.knowledge import StandingContext, effective_standing
+
+    ks.set_profile(T, {"columns": [{"name": "AMOUNT"}]})
+    ks.upsert_definition(T, {"path": "m.sql", "hash": "sha256:a", "kind": "dbt_model"})
+    ks.add_fact(T, "AMOUNT is gross", fact_id="amt")
+    ks.add_fact(
+        T,
+        "Verified fix: dedupe",
+        fact_id="verified_fix_p_001_20260601_120000_ab12",
+        status="data_inferred",
+    )
+    ks.add_fact(
+        T,
+        "Verified fix: record gone",
+        fact_id="verified_fix_p_002_20260601_120000_ab12",
+        status="data_inferred",
+    )
+    ks.add_fact(T, "gone", fact_id="gone")
+    ks.retire_fact(T, "gone", by="user", reason="r")
+    ks.add_fact("DB.S.U", "free text on a bare doc", fact_id="free")
+    _strip_lifecycle(ks, T, "DB.S.U")
+    _publish_record(workspace, "20260601-120000-ab12", "p_001")
+    policy = workspace.config.knowledge
+
+    dry = reconcile_docs(ks, workspace.records_dir, policy, dry_run=True, anchor_missing=True)
+    assert [a["fact_id"] for a in dry["anchored"]] == [
+        "amt",
+        "verified_fix_p_001_20260601_120000_ab12",
+        "verified_fix_p_002_20260601_120000_ab12",
+    ]
+    assert dry["unanchorable"] == 1 and ks.fact(T, "amt")["anchors"] == []  # dry: unwritten
+
+    out = reconcile_docs(ks, workspace.records_dir, policy, anchor_missing=True)
+    amt = ks.fact(T, "amt")
+    assert {"kind": "column", "name": "AMOUNT"} in amt["anchors"]
+    assert {"kind": "definition", "key": "m.sql", "hash": "sha256:a"} in amt["anchors"]
+    assert amt["anchored_by"] == "reconcile" and amt["anchored_at"] and amt["kind"] is None
+    fix = ks.fact(T, "verified_fix_p_001_20260601_120000_ab12")
+    assert fix["kind"] == "verified_fix"
+    assert {
+        "kind": "record",
+        "session": "20260601-120000-ab12",
+        "id": "p_001",
+        "record_kind": "proposal",
+    } in fix["anchors"]
+    orphan = ks.fact(T, "verified_fix_p_002_20260601_120000_ab12")
+    assert orphan["kind"] == "verified_fix"  # folds in briefings from now on
+    assert not any(a["kind"] == "record" for a in orphan["anchors"])  # nothing to point at
+    by_id = {a["fact_id"]: a for a in out["anchored"]}
+    assert by_id["verified_fix_p_001_20260601_120000_ab12"]["record"] is True
+    assert by_id["verified_fix_p_002_20260601_120000_ab12"]["record"] is False
+    assert ks.fact(T, "gone")["anchored_by"] is None  # retired: untouched
+    assert ks.fact("DB.S.U", "free")["anchored_by"] is None  # nothing to anchor to
+    again = reconcile_docs(ks, workspace.records_dir, policy, anchor_missing=True)
+    assert again["anchored"] == [] and again["unanchorable"] == 1  # idempotent
+    # standing works from here on
+    ks.upsert_definition(T, {"path": "m.sql", "hash": "sha256:b", "kind": "dbt_model"})
+    doc = ks.read(T)
+    amt = next(f for f in doc["facts"] if f["id"] == "amt")
+    assert effective_standing(amt, doc, StandingContext())[0] == "unverified"
+
+
+def test_confirmed_supersession_reads_as_done_and_reconcile_executes_it(workspace, ks):
+    from grayson.knowledge import StandingContext, annotate_doc, effective_standing
+    from grayson.util import utcnow
+
+    ks.add_fact(T, "old", fact_id="old")
+    ks.confirm_fact(T, "old")
+    ks.add_fact(T, "new", fact_id="new", supersedes="old", evidence=["q_1"])
+    # an older grayson's confirm: the status flips, nothing executes
+    doc = ks.read(T)
+    new = next(f for f in doc["facts"] if f["id"] == "new")
+    new.update(status="user_confirmed", confirmed_by="kcg", confirmed_at=utcnow())
+    ks.save(T, doc)
+    assert ks.fact(T, "old")["superseded_by"] is None
+    # read time: the human vouched, so the pair is done, not contested
+    doc = ks.read(T)
+    old = next(f for f in doc["facts"] if f["id"] == "old")
+    assert effective_standing(old, doc, StandingContext()) == ("retired", "superseded by new")
+    assert annotate_doc(doc, StandingContext())["contested"] == []
+    policy = workspace.config.knowledge
+    dry = reconcile_docs(ks, workspace.records_dir, policy, dry_run=True)
+    assert dry["supersessions_executed"] == [{"table": T, "fact_id": "old", "by": "new"}]
+    assert ks.fact(T, "old")["superseded_by"] is None
+    reconcile_docs(ks, workspace.records_dir, policy)
+    old = ks.fact(T, "old")
+    assert old["superseded_by"] == "new" and old["retired_by"] == "reconcile"
+    assert old["standing_reason"] == "superseded by new (confirmed by kcg)"
+    again = reconcile_docs(ks, workspace.records_dir, policy)
+    assert again["supersessions_executed"] == []
+
+
+def test_doctor_counts_unanchored_facts(workspace, ks):
+    ks.set_profile(T, {"columns": [{"name": "AMOUNT"}]})
+    ks.add_fact(T, "AMOUNT is gross", fact_id="amt")
+    _strip_lifecycle(ks, T)
+    standing = library_doctor(workspace)["standing"]
+    assert standing["unanchored_facts"] == 1 and "--anchor-missing" in standing["hint"]
+    reconcile_docs(ks, workspace.records_dir, workspace.config.knowledge, anchor_missing=True)
+    standing = library_doctor(workspace)["standing"]
+    assert standing["unanchored_facts"] == 0 and "--anchor-missing" not in standing["hint"]
+
+
+def test_cli_reconcile_anchor_missing(workspace, ks):
+    ks.set_profile(T, {"columns": [{"name": "AMOUNT"}]})
+    ks.add_fact(T, "AMOUNT is gross", fact_id="amt")
+    _strip_lifecycle(ks, T)
+    dry = invoke("library", "reconcile", "--dry-run", "--anchor-missing")
+    assert dry["anchor_missing"] and [a["fact_id"] for a in dry["anchored"]] == ["amt"]
+    assert ks.fact(T, "amt")["anchors"] == []

@@ -377,11 +377,14 @@ Rules only: materialize standing onto every doc, fold duplicate open
 questions, retire questions that name a dropped column, and report
 `needs_human` — contested pairs, unverified and stale facts — as the queue
 for the console or a permitted agent. It never retires a fact by rule and
-never touches status. Clean tree required; one commit with a
-`Grayson-Via: reconcile` trailer. `library doctor` runs the same pass dry as
-its `standing` section, which never fails the doctor: standing is a queue,
-not a fault. Because it needs no warehouse it runs on a schedule from the
-library repo itself:
+never touches status. The one write it makes beyond the rules is executing a
+supersession a human already confirmed but nothing executed (a confirm done
+by an older grayson, or by hand): the decision was the human's, the pass
+records it, and read time treats such a pair as done even before the pass
+runs. Clean tree required; one commit with a `Grayson-Via: reconcile`
+trailer. `library doctor` runs the same pass dry as its `standing` section,
+which never fails the doctor: standing is a queue, not a fault. Because it
+needs no warehouse it runs on a schedule from the library repo itself:
 
 ```yaml
 # .github/workflows/reconcile.yml in the library repo
@@ -399,6 +402,40 @@ jobs:
 
 Put the run behind a pull request instead of `--push` when the team wants
 to review what the rules materialized.
+
+### Upgrading a library written before standing existed
+
+Nothing migrates: the format stays at version one and an older grayson
+round-trips every new field. But anchors are recorded at write time, so a
+fact written before this release carries none — a dropped column or a
+changed model cannot touch it, an old verified-fix fact neither folds in
+briefings nor re-verifies, and only the proposed-fact horizon applies. The
+upgrade step is the reconcile pass with `--anchor-missing`, once:
+
+```bash
+grayson library doctor                            # standing.unanchored_facts says how many
+grayson library reconcile --dry-run --anchor-missing
+grayson library reconcile --anchor-missing        # one commit; review it
+```
+
+It anchors every live fact that has none to the doc as it stands — its
+mentioned columns, the definition hashes on record, and for a verified-fix
+fact the record its id encodes, when that record is still in the library —
+stamped `anchored_by: reconcile` so a reader knows the fact was *baselined*
+then, not recorded then. That is the honest claim about a fact nobody
+re-verified: flag it if these change from here on. Facts on a doc with no
+columns and no definitions have nothing to anchor to and are counted as
+`unanchorable`; they age by the horizon rule alone.
+
+Two other things change on upgrade. Proposed facts older than the horizon
+read as unverified at once — confirm the ones you stand behind, or set
+`proposed_horizon_days = 0` to switch the rule off. And a solo workspace
+whose grayson.toml has no `[knowledge]` section reads as `curate`, so an
+agent may retire and supersede with evidence from the first session;
+`grayson library policy set --preset propose` first if you want to opt in
+later. A team library without a policy reads as `propose` until an admin
+widens it. Re-run `grayson harness init` afterwards: the protocol files
+agents read are generated once and say nothing about standing until then.
 
 ### Re-verification against the warehouse
 

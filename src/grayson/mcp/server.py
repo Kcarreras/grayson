@@ -1126,14 +1126,20 @@ def build_server(workspace: Workspace) -> Any:
     @mcp.tool(
         description="The reconcile pass over the whole library: materialize each fact's "
         "standing onto its doc, fold duplicate open questions, retire questions about "
-        "dropped columns, and report what no rule decides (needs_human: contested "
-        "pairs, unverified and stale facts). dry_run=true reports without writing and "
-        "is always allowed; the real pass lands as one commit and is policy-gated."
+        "dropped columns, execute supersessions a human confirmed but nothing executed, "
+        "and report what no rule decides (needs_human: contested pairs, unverified and "
+        "stale facts). dry_run=true reports without writing and is always allowed; the "
+        "real pass lands as one commit and is policy-gated. anchor_missing=true also "
+        "anchors facts written before anchors existed (the one-time upgrade step)."
     )
-    def knowledge_reconcile(dry_run: bool = False) -> dict:
+    def knowledge_reconcile(dry_run: bool = False, anchor_missing: bool = False) -> dict:
         try:
             return knowledge_actions.reconcile(
-                workspace, actor="agent", surface="mcp", dry_run=dry_run
+                workspace,
+                actor="agent",
+                surface="mcp",
+                dry_run=dry_run,
+                anchor_missing=anchor_missing,
             )
         except ActionRefused as e:
             return _refused(e)

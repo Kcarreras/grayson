@@ -198,3 +198,14 @@ def test_lint_flags_dangling_lifecycle_references(ks):
     problems = [w["problem"] for w in ks.lint()["warnings"]]
     assert any("supersedes 'ghost'" in p for p in problems)
     assert any("compatible with 'phantom'" in p for p in problems)
+
+
+def test_legacy_fix_id_encodes_its_record():
+    from grayson.knowledge.standing import legacy_fix_record
+
+    assert legacy_fix_record("verified_fix_p_001_20260601_120000_ab12") == (
+        "20260601-120000-ab12",
+        "p_001",
+    )
+    assert legacy_fix_record("amount_is_gross") is None
+    assert legacy_fix_record("verified_fix_p_001_2026") is None

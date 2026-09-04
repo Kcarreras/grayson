@@ -120,8 +120,12 @@ agent may act alone. What stays fixed, and why:
 | 25 | low | A CLI shell-out could claim the human's authority for a lifecycle action | Same terminal rule as every user action: a person at a prompt is `user`, a non-interactive caller is `agent` and policy-gated, and `--by user` from a shell-out is refused |
 
 The reconcile pass is rules only — it materializes standing, folds duplicate
-questions, and retires questions about dropped columns; it never retires a
-fact and never touches status.
+questions, retires questions about dropped columns, and with
+`--anchor-missing` baselines anchors on facts written before they existed; it
+never retires a fact by rule and never touches status. Its one write beyond
+the rules executes a supersession a human already confirmed (a confirm done
+by an older grayson), which records the human's decision rather than making
+one.
 
 A fourth issue was integrity-adjacent rather than a bypass: a session that found
 nothing could not close, because every stage from `fixes` on required an accepted
