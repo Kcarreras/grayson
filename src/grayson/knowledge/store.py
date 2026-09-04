@@ -22,6 +22,7 @@ from grayson.knowledge.relationships import (
     normalize_relationships,
     relationship_issues,
 )
+from grayson.knowledge.standing import STANDINGS, derive_anchors, fact_for_disk
 from grayson.util import utcnow
 
 #: version of the knowledge-doc format this grayson reads and writes. Docs
@@ -72,8 +73,16 @@ _KNOWN_FRONT_KEYS = {
     "definition_files",
     "definitions",
     "structure",
+    "retired_questions",
+    "resolutions",
     *PROFILE_KEYS,
 }
+
+#: lifecycle records beside the facts, both additive lists: an open question
+#: retired as moot (who, why, when — the question itself is kept so an agent
+#: does not re-ask it) and a contested pair a human or a permitted agent
+#: marked compatible (both stand; the note says why)
+_LIFECYCLE_DOC_KEYS = ("retired_questions", "resolutions")
 
 #: where a table is defined, structured. `definition_files` (bare paths) is the
 #: format-1 spelling and is still written, derived from these, so an older
@@ -128,6 +137,35 @@ class Fact(BaseModel):
     #: created_by records the actor KIND (agent|user); author records WHOSE
     #: workspace/identity produced it — the traceability handle in a shared library.
     author: str | None = None
+    # -- lifecycle (knowledge/standing.py) — written only when set --------------
+    #: standing on disk is only ever retired|stale|unverified: `current` is the
+    #: absence of a reason, recomputed on every read from the anchors
+    standing: str | None = None
+    standing_reason: str | None = None
+    standing_at: str | None = None
+    standing_by: str | None = None  # agent | user | reconcile | verify
+    #: what would falsify the fact: {kind: column, name} / {kind: definition,
+    #: key, hash} / {kind: record, session, id, record_kind}
+    anchors: list[dict] = Field(default_factory=list)
+    #: a corrected fact names the one it replaces; the replacement executes
+    #: when a human confirms it, or at once when the policy lets the agent
+    supersedes: str | None = None
+    superseded_by: str | None = None
+    retired_by: str | None = None
+    retired_at: str | None = None
+    restored_by: str | None = None
+    restored_at: str | None = None
+    #: when anchors were (re)derived by a bulk pass rather than at write time —
+    #: a re-anchor by a person, or the upgrade pass over facts written before
+    #: anchors existed
+    anchored_by: str | None = None
+    anchored_at: str | None = None
+    #: e.g. `verified_fix` — a briefing folds these into one line per table
+    kind: str | None = None
+    #: contested pairs a human (or a permitted agent) judged to both hold
+    compatible_with: list[str] = Field(default_factory=list)
+    #: last time a query anchor was re-run and matched (`knowledge verify`)
+    verified_at: str | None = None
 
 
 class KnowledgeStore:
@@ -161,6 +199,8 @@ class KnowledgeStore:
                 "structure": {},
                 "notes": "",
                 "extra": {},
+                "retired_questions": [],
+                "resolutions": [],
                 **{
                     k: (v.copy() if isinstance(v, list) else v)
                     for k, v in _PROFILE_DEFAULTS.items()
@@ -205,6 +245,9 @@ class KnowledgeStore:
         }
         for key, default in _PROFILE_DEFAULTS.items():
             doc[key] = data.get(key, default.copy() if isinstance(default, list) else default)
+        for key in _LIFECYCLE_DOC_KEYS:
+            raw_list = data.get(key)
+            doc[key] = [dict(x) for x in raw_list if isinstance(x, dict)] if raw_list else []
         # Hand-edited files write these in looser shapes; normalize once here so
         # every consumer (graph, completeness, templates, agents) sees dicts.
         doc["relationships"], _ = normalize_relationships(doc.get("relationships"), fqn.upper())
@@ -246,9 +289,12 @@ class KnowledgeStore:
             front["definitions"] = definitions
         if doc.get("structure"):
             front["structure"] = doc["structure"]
+        for key in _LIFECYCLE_DOC_KEYS:
+            if doc.get(key):
+                front[key] = doc[key]
         front |= {
             "definition_files": [d["path"] for d in definitions if d.get("path")],
-            "facts": doc.get("facts", []),
+            "facts": [fact_for_disk(f) for f in doc.get("facts", [])],
         }
         notes = doc.get("notes", "").strip()
         text = (
@@ -262,6 +308,11 @@ class KnowledgeStore:
 
         atomic_write_text(path, text)
 
+    def save(self, fqn: str, doc: dict[str, Any]) -> None:
+        """Write a doc read from this store back, after in-place edits (the
+        reconcile pass materializing standing). Same format gate as any write."""
+        self._write(fqn, doc)
+
     def add_fact(
         self,
         fqn: str,
@@ -271,7 +322,15 @@ class KnowledgeStore:
         created_by: str = "agent",
         evidence: list[str] | None = None,
         author: str | None = None,
+        anchors: list[dict] | None = None,
+        supersedes: str | None = None,
+        kind: str | None = None,
     ) -> dict:
+        """Record a fact. Its anchors — what would falsify it — are derived
+        from the doc as it stands (columns the text names, the definition
+        hashes on record) plus any the caller passes (a verified fix's record).
+        `supersedes` names an earlier fact this one corrects: a proposal only,
+        until a human confirms this fact or a permitted agent executes it."""
         # 'agents propose; users confirm': user_confirmed status is reachable ONLY
         # through confirm_fact (a user action), never by writing a new fact. This
         # stops an agent from laundering an assertion into human-authority provenance.
@@ -284,6 +343,21 @@ class KnowledgeStore:
         fid = fact_id or _slug(fact_text, {f["id"] for f in doc["facts"]})
         if any(f["id"] == fid for f in doc["facts"]):
             raise ValueError(f"fact id '{fid}' already exists for {fqn}")
+        if supersedes:
+            target = self._fact_in(doc, supersedes)
+            if target.get("superseded_by"):
+                raise ValueError(
+                    f"fact '{supersedes}' is already superseded by "
+                    f"'{target['superseded_by']}' — supersede the head of the chain instead"
+                )
+            if target.get("standing") == "retired":
+                raise ValueError(f"fact '{supersedes}' is retired already; nothing to supersede")
+            if created_by == "agent" and not evidence:
+                # the evidence rule: an agent may correct a fact, never on vibes
+                raise ValueError(
+                    "a superseding fact from an agent must cite evidence — the query, "
+                    "intervention, or record that shows the earlier fact wrong"
+                )
         from grayson.identity import get_user_id
 
         fact = Fact(
@@ -293,10 +367,188 @@ class KnowledgeStore:
             created_by=created_by,
             evidence=evidence or [],
             author=author or get_user_id(),
+            anchors=derive_anchors(fact_text, doc, keep=anchors),
+            supersedes=supersedes or None,
+            kind=kind or None,
         )
         doc["facts"].append(fact.model_dump())
         self._write(fqn, doc)
         return fact.model_dump()
+
+    @staticmethod
+    def _fact_in(doc: dict, fact_id: str) -> dict:
+        for f in doc["facts"]:
+            if f["id"] == fact_id:
+                return f
+        raise KeyError(f"no fact '{fact_id}' for {doc.get('table')}")
+
+    # -- lifecycle (docs/LIBRARY.md, "Standing, pruning, and the knowledge policy")
+
+    def execute_supersession(
+        self, fqn: str, new_id: str, by: str = "user", trust: str | None = None
+    ) -> dict:
+        """Make a recorded supersession real: the earlier fact is retired with
+        the successor named. First wins — a fact already superseded is never
+        re-pointed. When an agent executes (the policy allowed it), the new
+        fact must rank as knowledge under `trust`, or at least as high as the
+        fact it replaces: a hypothesis does not displace a confirmed fact by
+        itself; that pair waits for the human."""
+        doc = self.read(fqn)
+        new = self._fact_in(doc, new_id)
+        target_id = new.get("supersedes")
+        if not target_id:
+            raise ValueError(f"fact '{new_id}' does not name a fact it supersedes")
+        old = self._fact_in(doc, target_id)
+        if old.get("superseded_by") and old["superseded_by"] != new_id:
+            raise ValueError(
+                f"fact '{target_id}' is already superseded by '{old['superseded_by']}'"
+            )
+        if by == "agent":
+            from grayson.knowledge.policy import STATUS_RANK
+
+            new_rank = STATUS_RANK.get(str(new.get("status")), 0)
+            old_rank = STATUS_RANK.get(str(old.get("status")), 0)
+            admitted = trust is not None and new_rank >= STATUS_RANK.get(trust, 1)
+            if new_rank < old_rank and not admitted:
+                raise ValueError(
+                    f"a {new.get('status')} fact cannot displace a {old.get('status')} one "
+                    f"under trust '{trust}' — the pair stays contested until a human "
+                    f"confirms '{new_id}' (or the policy's trust admits {new.get('status')})"
+                )
+        apply_supersession(old, new_id, by)
+        self._write(fqn, doc)
+        return {"fact": dict(new), "superseded": dict(old)}
+
+    def retire_fact(
+        self,
+        fqn: str,
+        fact_id: str,
+        reason: str = "",
+        by: str = "user",
+        evidence: list[str] | None = None,
+    ) -> dict:
+        """Retire a fact: it leaves briefings and stays in the doc with who
+        retired it, when, and why. An agent must cite evidence (what falsified
+        it); a human must give a reason. Reversible with restore_fact."""
+        reason = (reason or "").strip()
+        evidence = [str(e) for e in (evidence or []) if str(e).strip()]
+        if by == "agent" and not evidence:
+            raise ValueError(
+                "an agent retiring a fact must cite evidence — the query id, intervention, "
+                "drift observation, or record that shows it no longer holds"
+            )
+        if by != "agent" and not reason:
+            raise ValueError("retiring a fact needs a reason — it is what the next reader sees")
+        doc = self.read(fqn)
+        fact = self._fact_in(doc, fact_id)
+        if fact.get("standing") == "retired":
+            raise ValueError(f"fact '{fact_id}' is retired already ({fact.get('standing_reason')})")
+        now = utcnow()
+        fact["standing"] = "retired"
+        fact["standing_reason"] = reason or f"retired by {by}: {', '.join(evidence)}"
+        fact["standing_at"] = now
+        fact["standing_by"] = by
+        fact["retired_by"] = by
+        fact["retired_at"] = now
+        fact["restored_by"] = None
+        fact["restored_at"] = None
+        for e in evidence:
+            if e not in fact["evidence"]:
+                fact["evidence"].append(e)
+        self._write(fqn, doc)
+        return dict(fact)
+
+    def restore_fact(self, fqn: str, fact_id: str, by: str = "user") -> dict:
+        """Bring a retired, stale, or unverified fact back to current: its
+        anchors are re-baselined on the doc as it stands now (a changed
+        definition hash, a dropped column no longer counted), and retired
+        marks clear. A superseded fact restored means both stand — the pair is
+        marked compatible rather than re-contested."""
+        doc = self.read(fqn)
+        fact = self._fact_in(doc, fact_id)
+        successor = fact.get("superseded_by")
+        keep = [a for a in fact.get("anchors") or [] if a.get("kind") == "record"]
+        fact["anchors"] = derive_anchors(str(fact.get("fact", "")), doc, keep=keep)
+        for key in ("standing", "standing_reason", "standing_at", "standing_by"):
+            fact[key] = None
+        fact["superseded_by"] = None
+        fact["retired_by"] = None
+        fact["retired_at"] = None
+        fact["restored_by"] = by
+        fact["restored_at"] = utcnow()
+        if successor:
+            try:
+                other = self._fact_in(doc, successor)
+            except KeyError:
+                other = None
+            if other is not None:
+                _link_compatible(fact, other)
+                doc.setdefault("resolutions", []).append(
+                    {
+                        "facts": sorted([fact_id, successor]),
+                        "by": by,
+                        "at": fact["restored_at"],
+                        "note": f"{fact_id} restored after {successor} superseded it: both stand",
+                    }
+                )
+        self._write(fqn, doc)
+        return dict(fact)
+
+    def dismiss_question(self, fqn: str, question: str, reason: str, by: str = "user") -> dict:
+        """Retire an open question as moot (answered elsewhere, about a dropped
+        column, no longer worth asking). The question is kept under
+        `retired_questions` with who, why and when, so no agent re-asks it."""
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("dismissing a question needs a reason")
+        doc = self.read(fqn)
+        resolved = _match_question(doc, question)
+        doc["open_questions"] = [q for q in (doc.get("open_questions") or []) if str(q) != resolved]
+        entry = {"question": resolved, "reason": reason, "by": by, "at": utcnow()}
+        doc.setdefault("retired_questions", []).append(entry)
+        self._write(fqn, doc)
+        return {**entry, "open_questions_left": len(doc["open_questions"])}
+
+    def resolve_contested(
+        self, fqn: str, fact_a: str, fact_b: str, by: str = "user", note: str = ""
+    ) -> dict:
+        """Judge two contested facts compatible: both stand, the pair stops
+        being surfaced. A judgment, not an observation — no evidence can show
+        'both are true', which is why the policy keeps it the human's unless
+        told otherwise."""
+        if fact_a == fact_b:
+            raise ValueError("a contested pair is two different facts")
+        doc = self.read(fqn)
+        a, b = self._fact_in(doc, fact_a), self._fact_in(doc, fact_b)
+        _link_compatible(a, b)
+        entry = {"facts": sorted([fact_a, fact_b]), "by": by, "at": utcnow(), "note": note.strip()}
+        doc.setdefault("resolutions", []).append(entry)
+        self._write(fqn, doc)
+        return entry
+
+    def reanchor(self, fqn: str, fact_id: str | None = None, by: str = "user") -> dict:
+        """Re-derive anchors from the doc as it stands, for one fact or all —
+        the step after a definition was re-recorded on purpose (a human saying
+        'the facts still hold'). Retired facts are left alone."""
+        doc = self.read(fqn)
+        touched: list[str] = []
+        stamp = utcnow()
+        for f in doc["facts"]:
+            if fact_id and f["id"] != fact_id:
+                continue
+            if f.get("standing") == "retired":
+                continue
+            keep = [a for a in f.get("anchors") or [] if a.get("kind") == "record"]
+            f["anchors"] = derive_anchors(str(f.get("fact", "")), doc, keep=keep)
+            for key in ("standing", "standing_reason", "standing_at", "standing_by"):
+                f[key] = None
+            f["anchored_by"] = by
+            f["anchored_at"] = stamp
+            touched.append(f["id"])
+        if fact_id and not touched:
+            self._fact_in(doc, fact_id)  # raises when unknown; retired is a no-op
+        self._write(fqn, doc)
+        return {"table": doc["table"], "reanchored": touched}
 
     def answer_open_question(
         self,
@@ -316,22 +568,7 @@ class KnowledgeStore:
         the user's answer records it `proposed`; confirmation stays a user
         action (console or `knowledge confirm`)."""
         doc = self.read(fqn)
-        open_qs = [str(q) for q in doc.get("open_questions") or []]
-        needle = question.strip().lower()
-        matches = [q for q in open_qs if q.strip().lower() == needle]
-        if not matches:  # substring convenience, but only when unambiguous
-            matches = [q for q in open_qs if needle in q.lower()]
-        if not matches:
-            raise KeyError(
-                f"no open question matching {question!r} on {fqn.upper()} "
-                f"(open: {open_qs or 'none'})"
-            )
-        if len(matches) > 1:
-            raise ValueError(
-                f"{question!r} matches {len(matches)} open questions on {fqn.upper()} — "
-                f"be more specific: {matches}"
-            )
-        resolved = matches[0]
+        resolved = _match_question(doc, question)
         fact_text = f"{resolved.rstrip('?')}? — {answer.strip()}"
         fact = self.add_fact(
             fqn, fact_text, status=status, created_by=created_by, evidence=evidence
@@ -357,6 +594,13 @@ class KnowledgeStore:
                 f["confirmed_by"] = (get_user_id() or by) if by == "user" else by
                 f["confirmed_at"] = utcnow()
                 self._write(fqn, doc)
+                # the confirm is the human's accept of a proposed supersession:
+                # it executes here, the way a finding's does inside accept
+                target = f.get("supersedes")
+                if target and any(
+                    o["id"] == target and not o.get("superseded_by") for o in doc["facts"]
+                ):
+                    return self.execute_supersession(fqn, fact_id, by="user")["fact"]
                 return f
         raise KeyError(f"no fact '{fact_id}' for {fqn}")
 
@@ -655,6 +899,35 @@ class KnowledgeStore:
             for problem in relationship_issues(doc):
                 warnings.append({"table": fqn, "problem": problem})
             ids = [f["id"] for f in doc["facts"]]
+            known = set(ids)
+            for f in doc["facts"]:
+                for key in ("supersedes", "superseded_by"):
+                    ref = f.get(key)
+                    if ref and ref not in known:
+                        warnings.append(
+                            {
+                                "table": fqn,
+                                "problem": f"fact '{f['id']}' {key} '{ref}', which is not "
+                                "in this doc — a hand edit or a merge dropped it",
+                            }
+                        )
+                for ref in f.get("compatible_with") or []:
+                    if ref not in known:
+                        warnings.append(
+                            {
+                                "table": fqn,
+                                "problem": f"fact '{f['id']}' is marked compatible with "
+                                f"'{ref}', which is not in this doc",
+                            }
+                        )
+                if f.get("standing") and f["standing"] not in STANDINGS:
+                    errors.append(
+                        {
+                            "file": rel,
+                            "problem": f"fact '{f['id']}' has standing {f['standing']!r}; "
+                            f"expected one of {', '.join(STANDINGS)}",
+                        }
+                    )
             dupes = sorted({i for i in ids if ids.count(i) > 1})
             if dupes:
                 errors.append(
@@ -958,6 +1231,50 @@ def _merge_definitions(current: list[dict], incoming: list[dict]) -> list[dict]:
     for d in incoming:
         merged[_key(d)] = d
     return list(merged.values())
+
+
+def apply_supersession(old: dict, new_id: str, by: str, stamp: str | None = None) -> None:
+    """Mark `old` superseded by `new_id`, in place: retired with the successor
+    named, unless it was retired already (then only the pointer is set).
+    Shared by the store's execute path and the reconcile pass."""
+    now = stamp or utcnow()
+    old["superseded_by"] = new_id
+    if old.get("standing") != "retired":
+        old["standing"] = "retired"
+        old["standing_reason"] = f"superseded by {new_id}"
+        old["standing_at"] = now
+        old["standing_by"] = by
+        old["retired_by"] = by
+        old["retired_at"] = now
+
+
+def _match_question(doc: dict, question: str) -> str:
+    """The one open question `question` names — exactly, or as an unambiguous
+    fragment. KeyError when none, ValueError when several."""
+    open_qs = [str(q) for q in doc.get("open_questions") or []]
+    needle = question.strip().lower()
+    matches = [q for q in open_qs if q.strip().lower() == needle]
+    if not matches:  # substring convenience, but only when unambiguous
+        matches = [q for q in open_qs if needle in q.lower()]
+    table = doc.get("table")
+    if not matches:
+        raise KeyError(
+            f"no open question matching {question!r} on {table} (open: {open_qs or 'none'})"
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            f"{question!r} matches {len(matches)} open questions on {table} — "
+            f"be more specific: {matches}"
+        )
+    return matches[0]
+
+
+def _link_compatible(a: dict, b: dict) -> None:
+    for x, y in ((a, b), (b, a)):
+        current = list(x.get("compatible_with") or [])
+        if y["id"] not in current:
+            current.append(y["id"])
+        x["compatible_with"] = current
 
 
 def _strip_heading(body: str, table: str) -> str:

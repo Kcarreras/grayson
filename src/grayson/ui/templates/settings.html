@@ -81,6 +81,33 @@
 {% endfor %}
 </div>
 
+<h2>Knowledge policy {{ help("knowledge_policy") }}</h2>
+<div class="card" data-knowledge-policy>
+  <dl class="props">
+    <dt>Preset</dt>
+    <dd><span class="badge {{ 'ok' if policy.preset == 'propose' else 'act' if policy.preset == 'curate' else 'attn' }}">{{ policy.preset }}</span>
+      {% if policy.library %}<span class="faint small">met with the team library's
+        <span class="mono">{{ policy.library.preset }}</span>{% if policy.library.default %} (its default — no policy set in library.toml){% endif %}</span>{% endif %}</dd>
+    <dt>Trust</dt>
+    <dd><span class="mono">{{ policy.trust }}</span>
+      <span class="faint small">lowest status a briefing ranks as knowledge</span></dd>
+    <dt>Actions</dt>
+    <dd class="row" style="gap: 6px; flex-wrap: wrap;">
+      {% for action, actor in policy.actions.items() %}
+      <span class="badge {{ 'act' if actor == 'agent' else 'plain' }}"
+            title="{{ policy.action_help[action] }}{% if policy.narrowed_by.get(action) %} — withheld by the {{ policy.narrowed_by[action] }}{% endif %}">{{ action | replace("_", " ") }}: {{ actor }}</span>
+      {% endfor %}
+    </dd>
+    <dt>Horizon</dt>
+    <dd>{{ policy.proposed_horizon_days }} days
+      <span class="faint small">an unconfirmed proposed fact reads as unverified after this</span></dd>
+  </dl>
+  <div class="faint small" style="margin-top: 8px;">Change it with
+    <code>grayson library policy set --preset curate</code>
+    (<code>--deny restore</code>, <code>--allow retire</code>, <code>--trust proposed</code>)
+    — the team library's file when one is linked, this workspace's otherwise; agents read it, never change it.</div>
+</div>
+
 <h2>Team library</h2>
 <div class="card">
 {% if cfg.library.path %}

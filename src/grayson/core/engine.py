@@ -235,17 +235,36 @@ def record_finding(
         raise EnforcementError(f"finding failed schema '{tpl.findings_schema}': {e}") from e
     _validate_evidence(session, finding.evidence)
     if finding.supersedes:
-        target = session.finding(finding.supersedes)
-        if target is None:
-            raise EnforcementError(
-                f"supersedes cites unknown finding '{finding.supersedes}'. "
-                "Cite an existing finding in this session."
-            )
-        if target.get("superseded_by"):
-            raise EnforcementError(
-                f"finding '{finding.supersedes}' is already superseded by "
-                f"'{target['superseded_by']}' — supersede the head of the chain instead."
-            )
+        from grayson.records import get_library_record, parse_record_ref
+
+        ref = parse_record_ref(finding.supersedes)
+        if ref is not None:
+            # a published finding from another session: `<sid>/<fid>`; the
+            # library copy is marked when the user accepts this one
+            published = get_library_record(session.workspace.records_dir, *ref)
+            if published is None or published.get("kind") != "finding":
+                raise EnforcementError(
+                    f"supersedes cites '{finding.supersedes}', which is not a published "
+                    "finding in the library (records_search lists them as session_id/id)."
+                )
+            if published.get("superseded_by"):
+                raise EnforcementError(
+                    f"published finding '{finding.supersedes}' is already superseded by "
+                    f"'{published['superseded_by']}' — supersede the head of the chain instead."
+                )
+        else:
+            target = session.finding(finding.supersedes)
+            if target is None:
+                raise EnforcementError(
+                    f"supersedes cites unknown finding '{finding.supersedes}'. "
+                    "Cite an existing finding in this session, or a published one as "
+                    "<session_id>/<fid>."
+                )
+            if target.get("superseded_by"):
+                raise EnforcementError(
+                    f"finding '{finding.supersedes}' is already superseded by "
+                    f"'{target['superseded_by']}' — supersede the head of the chain instead."
+                )
     fid = session.add_finding(
         schema_name=finding.schema_name,
         severity=finding.severity,

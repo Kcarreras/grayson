@@ -33,7 +33,7 @@ and points the workspace at the clone. Collaborators run the same command.
 
 | Folder | Contents | Written by |
 |---|---|---|
-| `knowledge/` | One document per table (`<db>/<schema>/<table>.md`): descriptors, dated definition observations, facts with provenance; `glossary.md` | agents propose, humans confirm |
+| `knowledge/` | One document per table (`<db>/<schema>/<table>.md`): descriptors, dated definition observations, facts with provenance and standing, retired questions, resolutions; `glossary.md` | agents propose, humans confirm; lifecycle actions under the knowledge policy |
 | `views/` | The QA view library: `registry.yaml` (name, purpose, source tables, base files, DDL path) and `ddl/*.sql` | humans register the views agents proposed |
 | `workflows/` | Workflow templates: overrides of the built-ins and custom investigation types | humans, `grayson workflow fork` |
 | `findings_schemas/` | The team's own findings schemas: each extends a built-in with fields and, optionally, branches ([WORKFLOWS.md](WORKFLOWS.md#shared-schemas-in-the-library)) | humans, `grayson schema new`, `grayson workflow promote` |
@@ -216,6 +216,256 @@ the same table. The structure does not refresh itself: if the fix changed
 columns or a model, `knowledge sync` (and a manifest re-ingest) is the step
 that makes the descriptor follow, and the next session's drift line catches
 it if nobody does.
+
+## Standing, pruning, and the knowledge policy
+
+A library that only ever grows misleads twice over: every fact on a busy
+table lands in every briefing, and a fact recorded in March about a model
+that changed in June reads exactly like one recorded yesterday. grayson
+answers both without deleting anything.
+
+### Status and standing are two axes
+
+A fact's **status** says who vouches for it (`proposed`, `data_inferred`,
+`user_confirmed`). Its **standing** says whether what it rests on still
+holds:
+
+| Standing | Meaning | Set by |
+|---|---|---|
+| `current` | nothing it rests on has changed | the rules, on every read |
+| `unverified` | something it rests on changed and nobody has looked: a definition it was recorded against has a new hash, a `knowledge verify` re-run disagreed with the record, or a proposed fact sat unconfirmed past the horizon | the rules; `verify` |
+| `stale` | something it rests on is gone: a column it names was dropped (per the last sync, or the DESCRIBE at session start), or the record it came from was removed or superseded | the rules |
+| `retired` | an actor retired it with a reason, or a confirmed successor superseded it | a person, a permitted agent, a confirm |
+
+The axes are orthogonal: a user-confirmed fact can be stale. Standing derives
+from **anchors** — what would falsify the fact — recorded at write time from
+what the store can already see: the recorded column names the text mentions,
+the hash of every definition entry on the doc, and, for a verified fix, the
+published record it came from. Everything is computed from library files, so
+the knowledge-only server serves it too; `retired` is the one sticky state,
+cleared only by a restore. `library reconcile` also writes the computed
+standing onto the doc so a hand reader and a git diff see it; where the file
+and the rules disagree, the rules win.
+
+A fact's fields for all this are additive (`anchors`, `standing`,
+`standing_reason`, `supersedes`, `superseded_by`, `retired_by`, …) and are
+written only when set, so a doc nobody has touched with a lifecycle action
+diffs as before, and an older grayson round-trips them.
+
+### The briefing
+
+Session start no longer dumps the doc. Each target table briefs as:
+
+- facts ranked by standing (current before unverified), then status
+  (confirmed, data-inferred, proposed), then newest first, each carrying its
+  `role` under the policy's **trust** — `knowledge` or `hypothesis` — so the
+  agent is told which is which;
+- capped per table (`briefing_cap`, default 12), the count of the rest stated
+  and `knowledge_show` named to fetch them;
+- stale and retired facts hidden and counted, never silently dropped;
+- verified-fix facts folded into one line per table pointing at
+  `records_search`, since the record already holds the full story;
+- **contested** pairs beside the facts: a fact proposing to supersede another
+  that nobody has confirmed, two answers to one open question, or (weakest,
+  console and doctor only) two facts on one column with mixed provenance;
+- recent **agent actions** — what agents retired, restored, dismissed or
+  resolved within the policy's window, with the reason.
+
+`knowledge_briefing.<table>` carries the counts and pairs; `knowledge.<table>`
+stays a list of facts, now ranked, capped and annotated.
+
+### Lifecycle actions, and who may take them
+
+| Action | What it does | Must cite | `propose` | `curate` | `autonomous` |
+|---|---|---|---|---|---|
+| `retire` | out of briefings, kept with who and why; restorable | evidence (agent), a reason (person) | user | agent | agent |
+| `supersede` | record a corrected fact naming the one it replaces; always recorded, the replacement **executes** now or waits for the human's confirm | evidence (agent) | user | agent | agent |
+| `dismiss_question` | retire an open question as moot, kept under `retired_questions` | a reason | user | agent | agent |
+| `reconcile` | the rules pass, as one commit (a dry run is always allowed) | — | user | agent | agent |
+| `resolve_contested` | judge two contested facts compatible | nothing: judgment | user | user | agent |
+| `restore` | back to current; anchors re-baselined on the doc as it stands | nothing: judgment | user | user | agent |
+
+The **evidence rule** is code, not policy: an agent retiring or superseding
+a fact must cite what falsified it (a query id, an intervention, a drift
+observation, a record), and with `--session` query ids must have executed
+there. A permitted agent acts alone, but never on an assertion. The
+**confirmed label** stays outside the policy too: `user_confirmed` records
+that a human vouched, so no actor but a human sets it; authority for agent
+facts is the trust setting instead.
+
+An agent's supersession executes only when the new fact ranks as knowledge
+under trust, or at least as high as the one it replaces: a proposed fact
+does not displace a confirmed one by itself, however permissive the preset —
+that pair reads as contested until the human confirms the correction, which
+executes it (the same shape as a finding's supersession inside accept).
+
+```bash
+grayson knowledge retire DB.S.T amounts_are_net -e q_0007 [--session <sid>]
+grayson knowledge supersede DB.S.T amounts_are_net --fact "amounts are gross of tax since 2026-06" -e q_0007
+grayson knowledge dismiss DB.S.T -q "is AMOUNT signed" -r "AMOUNT was dropped"
+grayson knowledge resolve DB.S.T fact_a fact_b --note "different date ranges"
+grayson knowledge restore DB.S.T [fact_id]        # no id: re-anchor every live fact
+grayson knowledge verify DB.S.T --session <sid>   # re-run verified fixes' after-queries
+grayson knowledge policy                          # what the agent may do here
+```
+
+MCP: `knowledge_retire`, `knowledge_supersede`, `knowledge_dismiss_question`,
+`knowledge_resolve`, `knowledge_restore`, `knowledge_verify`,
+`knowledge_reconcile`, `knowledge_policy`. A refusal names the setting that
+withheld the action. At the CLI a person at a terminal is `user` and always
+allowed; a non-interactive shell-out is `agent` and policy-gated, and
+`--by user` from a shell-out is refused as everywhere else.
+
+### What replaces pre-approval
+
+Under a permissive preset the human moves from approving before to auditing
+after. Three things make that workable:
+
+- **Provenance.** Every action stamps who and when; a retired fact carries
+  its reason beside the original.
+- **Reversibility.** Each lifecycle action lands as its own library commit
+  on the doc's path alone, with a `Grayson-Via: mcp-agent | cli-agent |
+  reconcile` trailer, so one action is one `git revert`. With auto-push off
+  they sit in your clone until `grayson library push`.
+- **Visibility.** The briefing, the table page, the Knowledge tab's tiles and
+  `library doctor` list agent actions within the window
+  (`agent_window_days`, default 30). An over-eager agent shows up as a
+  number, not as silently missing knowledge.
+
+### The policy: presets, where it lives, how two sides combine
+
+```toml
+# grayson.toml — the workspace's own
+[knowledge]
+policy = "curate"          # propose | curate | autonomous
+trust = "data_inferred"    # lowest status a briefing ranks as knowledge
+proposed_horizon_days = 90 # an unconfirmed proposed fact reads unverified after this
+briefing_cap = 12
+
+[knowledge.agent]          # per-action overrides
+restore = "agent"
+```
+
+```toml
+# library.toml — the team's, admin-owned, travelling with the repo
+[library]
+admins = ["kcg"]
+knowledge_policy = "curate"
+knowledge_agent_denied = ["restore"]   # withheld from agents whatever the preset says
+```
+
+Blast radius decides where a policy lives. In solo mode the workspace's is
+the policy. With a team library linked, the **effective** policy is the meet
+of the two: an action is the agent's only when both sides say so, the
+stricter trust wins, and a library that has not chosen counts as `propose`
+until an admin widens it — a workspace narrows the team's policy, never
+widens it. `grayson library policy show` prints the effective policy and
+which side withheld each action; `grayson library policy set --preset curate
+[--deny restore] [--allow retire] [--trust proposed]` changes the library's
+(an admin's commit, interactive terminal only) or, in solo mode, the
+workspace's. `grayson setup` asks once. The console's Settings page shows
+the effective policy; agents read it (`knowledge_policy`) and never change it.
+
+### Reconcile: the unattended pass
+
+```bash
+grayson library reconcile [--dry-run]                 # from a workspace
+grayson library reconcile --library ./qa-library --push   # from CI, on a checkout
+```
+
+Rules only: materialize standing onto every doc, fold duplicate open
+questions, retire questions that name a dropped column, and report
+`needs_human` — contested pairs, unverified and stale facts — as the queue
+for the console or a permitted agent. It never retires a fact by rule and
+never touches status. The one write it makes beyond the rules is executing a
+supersession a human already confirmed but nothing executed (a confirm done
+by an older grayson, or by hand): the decision was the human's, the pass
+records it, and read time treats such a pair as done even before the pass
+runs. Clean tree required; one commit with a `Grayson-Via: reconcile`
+trailer. `library doctor` runs the same pass dry as its `standing` section,
+which never fails the doctor: standing is a queue, not a fault. Because it
+needs no warehouse it runs on a schedule from the library repo itself:
+
+```yaml
+# .github/workflows/reconcile.yml in the library repo
+on:
+  schedule: [{cron: "0 6 * * 1"}]
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx install git+https://github.com/Kcarreras/grayson
+      - run: git config user.name grayson-reconcile && git config user.email bot@example.com
+      - run: grayson library reconcile --library . --push
+```
+
+Put the run behind a pull request instead of `--push` when the team wants
+to review what the rules materialized.
+
+### Upgrading a library written before standing existed
+
+Nothing migrates: the format stays at version one and an older grayson
+round-trips every new field. But anchors are recorded at write time, so a
+fact written before this release carries none — a dropped column or a
+changed model cannot touch it, an old verified-fix fact neither folds in
+briefings nor re-verifies, and only the proposed-fact horizon applies. The
+upgrade step is the reconcile pass with `--anchor-missing`, once:
+
+```bash
+grayson library doctor                            # standing.unanchored_facts says how many
+grayson library reconcile --dry-run --anchor-missing
+grayson library reconcile --anchor-missing        # one commit; review it
+```
+
+It anchors every live fact that has none to the doc as it stands — its
+mentioned columns, the definition hashes on record, and for a verified-fix
+fact the record its id encodes, when that record is still in the library —
+stamped `anchored_by: reconcile` so a reader knows the fact was *baselined*
+then, not recorded then. That is the honest claim about a fact nobody
+re-verified: flag it if these change from here on. Facts on a doc with no
+columns and no definitions have nothing to anchor to and are counted as
+`unanchorable`; they age by the horizon rule alone.
+
+Two other things change on upgrade. Proposed facts older than the horizon
+read as unverified at once — confirm the ones you stand behind, or set
+`proposed_horizon_days = 0` to switch the rule off. And a solo workspace
+whose grayson.toml has no `[knowledge]` section reads as `curate`, so an
+agent may retire and supersede with evidence from the first session;
+`grayson library policy set --preset propose` first if you want to opt in
+later. A team library without a policy reads as `propose` until an admin
+widens it. Re-run `grayson harness init` afterwards: the protocol files
+agents read are generated once and say nothing about standing until then.
+
+### Re-verification against the warehouse
+
+The one anchor with a query cost. A verified fix's record carries the fix's
+after-query; `knowledge verify <table> --session <sid>` (MCP
+`knowledge_verify`) re-runs it through the session — guarded, audited,
+budgeted — and compares the row count with the record's. A match
+re-baselines the fact (`verified_at`); a mismatch marks it unverified with
+both counts in its reason until the next verify agrees or someone restores
+it. The verdict is code comparing counts, so it is not policy-gated; it
+spends budget, so it is opt-in per session.
+
+### Records read as history when they are
+
+Records are search-time, not briefing-time, so they need collapsing rather
+than pruning. `records search` now carries a `state` on every row: a finding
+with a passing proposal in the same session is `resolved` (with
+`resolved_by`), a superseded one `superseded`, and both rank below `current`.
+A finding may supersede a **published** finding from another session by
+citing it as `<session_id>/<fid>`; on accept, the library copy is marked
+`superseded_by` (first wins there too).
+
+### What grayson does not do
+
+It never judges semantics. Two free-text facts that contradict without a
+shared column, question, or supersession claim are invisible to it — the
+briefing ranking and the supersede path are the mitigation, and an agent that
+reads both is expected to record the correction with evidence or say in its
+findings that both hold. That is the ceiling of a tool that runs no LLM, and
+it is deliberate.
 
 ## Format stability
 

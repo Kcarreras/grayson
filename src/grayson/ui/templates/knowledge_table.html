@@ -145,13 +145,55 @@
 {% endfor %}
 {% endif %}
 
-<h2>Facts {{ help("fact_status") }}</h2>
+{% if contested %}
+<h2>Contested {{ help("contested") }} <span class="h-count">{{ contested | length }}</span></h2>
+{% for c in contested %}
+<div class="card attn" data-contested>
+  <div class="ink2 small">{{ c.why }}</div>
+  {% for f in c.pair if f %}
+  <div class="row split" style="margin-top: 6px;">
+    <span class="ink"><span class="mono small faint">{{ f.id }}</span> {{ f.fact }}</span>
+    <span class="row" style="gap: 6px; align-items: center;">
+      <span class="badge {{ 'ok' if f.status == 'user_confirmed' else 'act' if f.status == 'data_inferred' else 'plain' }}">{{ f.status | replace("_", " ") }}</span>
+      {% if f.status != "user_confirmed" %}
+      <form class="inline" method="post" action="/knowledge/{{ doc.table }}/fact/{{ f.id }}/confirm?t={{ token }}">
+        <button class="btn secondary sm" type="submit"
+                title="Vouch for this one{% if f.supersedes %} — executes its supersession of {{ f.supersedes }}{% endif %}">Confirm</button>
+      </form>
+      {% endif %}
+    </span>
+  </div>
+  {% endfor %}
+  <form class="row" method="post" action="/knowledge/{{ doc.table }}/resolve?t={{ token }}"
+        style="gap: 6px; margin-top: 8px; align-items: center;">
+    <input type="hidden" name="fact_a" value="{{ c.facts[0] }}">
+    <input type="hidden" name="fact_b" value="{{ c.facts[1] }}">
+    <input name="note" placeholder="both hold because…" style="width: auto; flex: 1 1 240px;">
+    <button class="btn ghost sm" type="submit" title="Both stand; stop surfacing this pair">Mark compatible</button>
+  </form>
+</div>
+{% endfor %}
+{% endif %}
+
+<h2>Facts {{ help("fact_status") }} {{ help("fact_standing") }}
+  {% if doc.standing_counts %}<span class="h-count">{{ live_facts | length }} live{% if retired_facts %} · {{ retired_facts | length }} retired{% endif %}</span>{% endif %}</h2>
 {% if not doc.facts %}<div class="card empty">No facts recorded yet.</div>{% endif %}
-{% for f in doc.facts %}
-<div class="card">
+{% set unverified_n = live_facts | selectattr("standing", "equalto", "unverified") | list | length %}
+{% if unverified_n %}
+<div class="row" style="margin: 0 0 8px; gap: 8px; align-items: center;">
+  <span class="ink2 small">{{ unverified_n }} fact{{ "s" if unverified_n != 1 }} unverified — something they rest on changed.</span>
+  <form class="inline" method="post" action="/knowledge/{{ doc.table }}/reanchor?t={{ token }}">
+    <button class="btn ghost sm" type="submit" title="They still hold: re-baseline every live fact on the doc as it stands">They all still hold</button>
+  </form>
+</div>
+{% endif %}
+{% for f in live_facts %}
+<div class="card{% if f.standing == 'stale' %} attn{% endif %}" data-fact="{{ f.id }}" data-standing="{{ f.standing }}">
   <div class="row split">
     <span class="ink" style="font-size: var(--t-md);">{{ f.fact }}</span>
     <span class="row" style="gap: 6px; align-items: center;">
+      {% if f.standing == "unverified" %}<span class="badge attn" title="{{ f.standing_reason }}">unverified</span>
+      {% elif f.standing == "stale" %}<span class="badge bad" title="{{ f.standing_reason }}">stale</span>{% endif %}
       <span class="badge {{ 'ok' if f.status == 'user_confirmed' else 'act' if f.status == 'data_inferred' else 'plain' }}">{{ f.status | replace("_", " ") }}</span>
       {% if f.status != "user_confirmed" %}
       <form class="inline" method="post"
@@ -160,13 +202,38 @@
                 title="Mark this as knowledge a human vouches for">Confirm</button>
       </form>
       {% endif %}
+      {% if f.standing != "current" %}
+      <form class="inline" method="post"
+            action="/knowledge/{{ doc.table }}/fact/{{ f.id }}/restore?t={{ token }}">
+        <button class="btn ghost sm" type="submit" title="It still holds: re-baseline its anchors">Still holds</button>
+      </form>
+      {% endif %}
     </span>
   </div>
+  {% if f.standing != "current" and f.standing_reason %}
+  <div class="small attn-text mt-1">{{ f.standing_reason }}</div>
+  {% endif %}
   <div class="faint small mt-1">
     {{ f.created_by }} · {{ f.created_at }}
     {% if f.evidence %} · evidence: {% for q in f.evidence %}<span class="chip">{{ q }}</span> {% endfor %}{% endif %}
     {% if f.confirmed_by %} · confirmed by {{ f.confirmed_by }}{% endif %}
+    {% if f.supersedes %} · supersedes <span class="mono">{{ f.supersedes }}</span>{% endif %}
+    {% if f.verified_at %} · re-verified {{ f.verified_at }}{% endif %}
+    {% if f.restored_by %} · restored by {{ f.restored_by }} {{ f.restored_at }}{% endif %}
   </div>
+  <details class="fold" style="margin-top: 6px;">
+    <summary class="faint small">Retire or correct</summary>
+    <form class="row" method="post" action="/knowledge/{{ doc.table }}/fact/{{ f.id }}/retire?t={{ token }}"
+          style="gap: 6px; margin-top: 6px; align-items: center;">
+      <input name="reason" placeholder="why this no longer holds" style="width: auto; flex: 1 1 240px;" required>
+      <button class="btn ghost sm" type="submit" title="Out of briefings; stays in the doc with your reason; one commit; restorable">Retire</button>
+    </form>
+    <form class="row" method="post" action="/knowledge/{{ doc.table }}/fact/{{ f.id }}/supersede?t={{ token }}"
+          style="gap: 6px; margin-top: 6px; align-items: center;">
+      <input name="fact" placeholder="the corrected fact (recorded user-confirmed; supersedes this one)" style="width: auto; flex: 1 1 320px;" required>
+      <button class="btn ghost sm" type="submit">Correct</button>
+    </form>
+  </details>
 </div>
 {% endfor %}
 
@@ -176,6 +243,42 @@
          style="width: auto; flex: 1 1 320px;">
   <button class="btn secondary sm" type="submit">Add fact</button>
 </form>
+
+{% if retired_facts %}
+<details class="fold" style="margin: 12px 0;" data-retired>
+  <summary class="muted small">Retired ({{ retired_facts | length }}) — history, out of briefings</summary>
+  {% for f in retired_facts %}
+  <div class="card" style="margin-top: 6px;" data-fact="{{ f.id }}" data-standing="retired">
+    <div class="row split">
+      <span class="ink2">{{ f.fact }}</span>
+      <span class="row" style="gap: 6px; align-items: center;">
+        <span class="badge plain">{{ f.status | replace("_", " ") }}</span>
+        <form class="inline" method="post"
+              action="/knowledge/{{ doc.table }}/fact/{{ f.id }}/restore?t={{ token }}">
+          <button class="btn ghost sm" type="submit">Restore</button>
+        </form>
+      </span>
+    </div>
+    <div class="faint small mt-1">{{ f.standing_reason }}{% if f.retired_by %} · retired by {{ f.retired_by }} {{ f.retired_at }}{% endif %}
+      {% if f.superseded_by %} · superseded by <span class="mono">{{ f.superseded_by }}</span>{% endif %}</div>
+  </div>
+  {% endfor %}
+</details>
+{% endif %}
+
+{% if agent_actions %}
+<h2>Recent agent actions {{ help("agent_actions") }} <span class="h-count">{{ agent_actions | length }}</span></h2>
+<div class="card" data-agent-actions>
+{% for a in agent_actions %}
+  <div class="row" style="margin: 4px 0; gap: 8px;">
+    <span class="badge plain">{{ a.kind | replace("_", " ") }}</span>
+    <span class="mono small">{{ a.fact_id or a.question or (a.facts | join(" + ")) }}</span>
+    <span class="ink2 small">{{ a.reason }}</span>
+    <span class="faint small mono" style="margin-left: auto;">{{ a.at }}</span>
+  </div>
+{% endfor %}
+</div>
+{% endif %}
 
 {% if doc.open_questions %}
 <h2>Open questions {{ help("open_questions") }}</h2>
@@ -188,9 +291,27 @@
     <input type="hidden" name="question" value="{{ oq }}">
     <input name="answer" placeholder="your answer" style="width: auto; flex: 1 1 220px;">
     <button class="btn secondary sm" type="submit">Answer</button>
+    <button class="btn ghost sm" type="submit" form="dismiss-{{ loop.index }}"
+            title="Moot: kept under retired questions so nobody re-asks it">Dismiss</button>
+  </form>
+  <form id="dismiss-{{ loop.index }}" class="row" method="post"
+        action="/knowledge/{{ doc.table }}/question/dismiss?t={{ token }}"
+        style="gap: 6px; margin: 0 0 6px 28px; align-items: center;">
+    <input type="hidden" name="question" value="{{ oq }}">
+    <input name="reason" placeholder="why it is moot (to dismiss)" style="width: auto; flex: 1 1 220px;">
   </form>
 {% endfor %}
 </div>
+{% endif %}
+
+{% if doc.retired_questions %}
+<details class="fold" style="margin: 8px 0;">
+  <summary class="muted small">Retired questions ({{ doc.retired_questions | length }}) {{ help("retired_questions") }}</summary>
+  {% for q in doc.retired_questions %}
+  <div class="small" style="margin: 6px 0;"><span class="ink2">{{ q.question }}</span>
+    <span class="faint">— {{ q.reason }} · {{ q.by }} {{ q.at }}</span></div>
+  {% endfor %}
+</details>
 {% endif %}
 
 {% if doc.notes %}

@@ -496,6 +496,25 @@ mattered facts with **provenance**:
 - A passing fix verification records a `data_inferred` fact on the tables it touched,
   citing both queries, so the fix is in the next session's briefing, not only in
   `records search`.
+- **Standing, and a policy where the warehouse has a wall.** Beside `status` (who
+  vouches) every fact carries a computed **standing** — `current`, `unverified`,
+  `stale`, `retired` — derived from *anchors* recorded at write time: the columns its
+  text names, the definition hashes on the doc, the record a verified fix came from.
+  A dropped column or a removed record makes it stale, a changed definition or a
+  proposed fact past the horizon makes it unverified; `retired` is set by an actor
+  and sticky. Session start briefs a ranked, capped list per table (each fact with a
+  `role` under the policy's `trust`, knowledge or hypothesis) with hidden counts,
+  contested pairs, and recent agent actions, instead of the raw doc. Lifecycle
+  actions — retire, supersede, dismiss a question, reconcile, resolve a contested
+  pair, restore — are gated by the **knowledge policy** (`propose` / `curate` /
+  `autonomous`, per-action overrides; the workspace's `[knowledge]` met with the
+  library's `library.toml`, which can only narrow). The evidence rule is code, not
+  policy: an agent retiring or superseding must cite what falsified the fact, and a
+  proposed fact never displaces a confirmed one by itself. Each action is one
+  attributed library commit with a `Grayson-Via` trailer; `library reconcile` is the
+  rules-only pass (materialize standing, fold questions) that runs from CI without
+  a warehouse. `user_confirmed` stays a human-only label. Full design:
+  docs/LIBRARY.md, "Standing, pruning, and the knowledge policy".
 
 ## 11a. Team library & distribution model
 

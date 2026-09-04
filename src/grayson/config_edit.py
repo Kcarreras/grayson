@@ -34,6 +34,10 @@ SETTABLE: dict[str, tuple[str, str, str]] = {
     "scopes.allowed": ("scopes", "allowed", "list"),
     "library.auto_push": ("library", "auto_push", "bool"),
     "library.path": ("library", "path", "path"),
+    "knowledge.policy": ("knowledge", "policy", "str"),
+    "knowledge.trust": ("knowledge", "trust", "str"),
+    "knowledge.proposed_horizon_days": ("knowledge", "proposed_horizon_days", "int"),
+    "knowledge.briefing_cap": ("knowledge", "briefing_cap", "int"),
 }
 
 _SECTION_COMMENTS: dict[str, list[str]] = {
@@ -44,6 +48,11 @@ _SECTION_COMMENTS: dict[str, list[str]] = {
         "# strict = true blocks out-of-scope reads instead of warning",
     ],
     "library": ["# team library repo clone (docs/SPEC.md s11a); auto_push syncs every write"],
+    "knowledge": ["# knowledge policy: propose | curate | autonomous (docs/LIBRARY.md)"],
+    "knowledge.agent": [
+        "# per-action overrides: retire | supersede | dismiss_question | "
+        'reconcile | resolve_contested | restore = "agent" | "user"'
+    ],
 }
 
 
@@ -121,6 +130,14 @@ def _coerce(key: str, kind: str, value: Any) -> Any:
         if not path.is_dir():
             raise ConfigError(f"{key}: directory does not exist: {path}")
         return path
+    if kind == "int":
+        try:
+            number = int(str(value).strip())
+        except ValueError as e:
+            raise ConfigError(f"{key} must be an integer, got {value!r}") from e
+        if number < 0:
+            raise ConfigError(f"{key} must be 0 or more")
+        return number
     return str(value).strip()
 
 
@@ -132,6 +149,18 @@ def _validate(root: Path, dotted: str, coerced: Any) -> None:
             raise ConfigError(f"unknown guard profile '{coerced}' (known: {known})")
     if dotted == "connection.name" and not coerced:
         raise ConfigError("connection.name cannot be empty")
+    if dotted == "knowledge.policy":
+        from grayson.knowledge.policy import PRESETS
+
+        if coerced not in PRESETS:
+            raise ConfigError(
+                f"unknown knowledge policy preset '{coerced}' (presets: {', '.join(PRESETS)})"
+            )
+    if dotted == "knowledge.trust":
+        from grayson.knowledge.policy import TRUST_LEVELS
+
+        if coerced not in TRUST_LEVELS:
+            raise ConfigError(f"knowledge.trust must be one of {', '.join(TRUST_LEVELS)}")
 
 
 def set_values(root: Path, changes: dict[str, Any]) -> dict:
@@ -190,6 +219,36 @@ def set_workflow_defaults(
     return {"workflow": workflow, "defaults": values}
 
 
+def set_knowledge_actions(root: Path, overrides: dict[str, str | None]) -> dict:
+    """Set (or clear) per-action overrides of the knowledge policy preset —
+    the `[knowledge.agent]` table. A None value removes that action's override
+    so the preset decides again; no overrides left means no section."""
+    from grayson.knowledge.policy import ACTIONS
+
+    cfg_path, data = _raw(root)
+    section = data.get("knowledge", {})
+    current = dict(section.get("agent", {})) if isinstance(section, dict) else {}
+    for action, actor in overrides.items():
+        if action not in ACTIONS:
+            raise ConfigError(
+                f"unknown knowledge action {action!r} (actions: {', '.join(ACTIONS)})"
+            )
+        if actor is None:
+            current.pop(action, None)
+            continue
+        actor = str(actor).strip().lower()
+        if actor not in ("agent", "user"):
+            raise ConfigError(f"{action}: actor must be 'agent' or 'user', got {actor!r}")
+        current[action] = actor
+    values = {a: current[a] for a in ACTIONS if a in current}
+    text = cfg_path.read_text(encoding="utf-8")
+    text = _replace_section(
+        text, "knowledge.agent", _section_block("knowledge.agent", values) if values else []
+    )
+    cfg_path.write_text(text, encoding="utf-8")
+    return {"overrides": values}
+
+
 def set_guard_profile(root: Path, name: str, updates: dict[str, Any]) -> dict:
     """Create or edit one named guard profile (partial updates allowed)."""
     if not name.replace("_", "").replace("-", "").isalnum():
@@ -231,5 +290,6 @@ def config_summary(root: Path) -> dict:
             "path": str(cfg.library_path) if cfg.library_path else None,
             "auto_push": cfg.library_auto_push,
         },
+        "knowledge": cfg.knowledge.summary(),
         "settable_keys": sorted(SETTABLE),
     }

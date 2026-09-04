@@ -258,6 +258,18 @@ def _record_verified_fix(
                 status="data_inferred",
                 created_by=actor,
                 evidence=[f"session {session.id} {q}" for q in (before_qid, after_qid)],
+                # anchored to the published record: if that record is removed or
+                # superseded the fact goes stale, and `knowledge verify` can re-run
+                # the record's after-query against the warehouse
+                anchors=[
+                    {
+                        "kind": "record",
+                        "session": session.id,
+                        "id": proposal["pid"],
+                        "record_kind": "proposal",
+                    }
+                ],
+                kind="verified_fix",
             )
         except (ValueError, OSError):  # not an FQN, already recorded, or unwritable
             continue

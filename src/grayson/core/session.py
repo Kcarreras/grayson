@@ -791,6 +791,15 @@ class Session:
             con.close()
         self.log_event(actor, "finding_accepted", {"fid": fid})
         target = (self.finding(fid) or {}).get("payload", {}).get("supersedes")
+        from grayson.records import mark_record_superseded, parse_record_ref
+
+        ref = parse_record_ref(target)
+        if ref is not None:
+            # a published finding from another session: the library copy is
+            # what stops reading as current (first wins there too)
+            if mark_record_superseded(self.workspace, *ref, by=f"{self.id}/{fid}"):
+                self.log_event(actor, "finding_superseded", {"record": target, "by": fid})
+            target = None
         if target:
             con = self._con()
             try:

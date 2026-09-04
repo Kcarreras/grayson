@@ -103,6 +103,30 @@ residue from the fixes above (regressions in `tests/test_cli.py` and
 | 20 | medium | A required checkpoint that did not apply to the target had no honest exit — the only route past the gate was a query chosen to satisfy the relevance test | Checkpoints can be **waived** by a user with a mandatory reason. Agents request via intervention; a waived gate is reported separately from a closed one everywhere |
 | 21 | high | The terminal gate covered `close`, `waive` and `--force` but not the other human boundaries: `finding accept`, `proposal approve`/`reject`, `intervention respond` and `knowledge confirm` ran fine from a shell-out — an agent could accept its own finding, approve its own fix, answer its own intervention | Every command documented as a user action now requires an interactive terminal. `intervention respond` loses its non-interactive stdin path |
 
+### 2026-09-04 — Knowledge lifecycle: a policy where the warehouse has a wall
+
+Facts gained a lifecycle (retire, supersede, restore, dismiss a question,
+resolve a contested pair, reconcile — docs/LIBRARY.md, "Standing, pruning,
+and the knowledge policy"). Unlike warehouse writes, these are deliberately
+*not* hard-gated: a fact is a git-tracked file, every action is an attributed
+commit, and a revert undoes one, so the human picks per action whether the
+agent may act alone. What stays fixed, and why:
+
+| # | Severity | Concern | Containment |
+|---|---|---|---|
+| 22 | high | A permitted agent could retire or supersede a confirmed fact that contradicts its own finding, clearing its way | The evidence rule is code, not policy: an agent must cite what falsified the fact, and query ids must have executed in the named session. An agent's supersession executes only when the new fact ranks as knowledge under `trust` or at least as high as the one it replaces; otherwise the pair stays contested until a human confirms. Every action is its own commit with a `Grayson-Via` trailer; agent actions are listed in briefings, on the table page, and by `library doctor` within the policy window |
+| 23 | high | The policy toggles could become a new laundering path for `user_confirmed` (#6) | Unchanged: no preset lets any actor but a human set `user_confirmed`. Authority for agent facts is the `trust` ranking, never the label. Confirming a fact that proposes a supersession executes it — inside the user's action, as with findings |
+| 24 | medium | A permissive workspace could widen what its agent does to a *shared* library | The effective policy is the meet of the workspace's and the library's: an action is the agent's only when both say so; a library that has not chosen counts as `propose`. `library.toml` is admin-owned and, with the CODEOWNERS pattern already documented, review-gated on the git host |
+| 25 | low | A CLI shell-out could claim the human's authority for a lifecycle action | Same terminal rule as every user action: a person at a prompt is `user`, a non-interactive caller is `agent` and policy-gated, and `--by user` from a shell-out is refused |
+
+The reconcile pass is rules only — it materializes standing, folds duplicate
+questions, retires questions about dropped columns, and with
+`--anchor-missing` baselines anchors on facts written before they existed; it
+never retires a fact by rule and never touches status. Its one write beyond
+the rules executes a supersession a human already confirmed (a confirm done
+by an older grayson), which records the human's decision rather than making
+one.
+
 A fourth issue was integrity-adjacent rather than a bypass: a session that found
 nothing could not close, because every stage from `fixes` on required an accepted
 finding. The pressure that creates — invent a finding or abandon the session —

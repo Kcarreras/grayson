@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 from grayson.config import CONFIG_FILENAME
+from grayson.knowledge.policy import EffectivePolicy, KnowledgePolicy
 from grayson.workspace import Workspace
 
 LIBRARY_ASSETS = (
@@ -323,6 +324,116 @@ def set_library_admins(workspace: Workspace, add: str = "", remove: str = "") ->
     return {"admins": admins, "changed": True, "library_sync": sync}
 
 
+def library_policy(root: Path) -> tuple[KnowledgePolicy | None, dict]:
+    """The team's knowledge policy from library.toml, and a report of it.
+    None when the library has not chosen (the team default then applies).
+    A settings file that does not parse reads as no policy — the meet falls
+    back to the team default, which is the strict side."""
+    from grayson.knowledge.policy import PolicyError
+
+    try:
+        settings = read_library_settings(root)
+    except ValueError as e:
+        return None, {"error": str(e)}
+    try:
+        policy = KnowledgePolicy.from_library_settings(settings)
+    except PolicyError as e:
+        return None, {"error": f"library.toml knowledge policy: {e}"}
+    return policy, {"set": policy is not None}
+
+
+def effective_policy(workspace: Workspace) -> EffectivePolicy:
+    """What governs this workspace: its own [knowledge] policy in solo mode;
+    in team mode, the meet of that and the library's (the team default,
+    `propose`, when the library has not chosen)."""
+    from grayson.knowledge.policy import DEFAULT_TEAM_PRESET, meet
+
+    own = workspace.config.knowledge
+    lib = workspace.config.library_path
+    if lib is None:
+        return meet(own, None)
+    policy, _report = library_policy(lib)
+    if policy is None:
+        return meet(own, KnowledgePolicy.from_preset(DEFAULT_TEAM_PRESET), library_default=True)
+    return meet(own, policy)
+
+
+def set_library_policy(
+    workspace: Workspace,
+    preset: str | None = None,
+    deny: list[str] | None = None,
+    allow: list[str] | None = None,
+    trust: str | None = None,
+    proposed_horizon_days: int | None = None,
+) -> dict:
+    """Change the team's knowledge policy in library.toml: the preset, the
+    actions withheld from agents regardless of preset (`deny`), or actions to
+    stop withholding (`allow`). An admin's action, landing as its own commit
+    with the actor's trailer — the same guard rail as the admins list, over
+    the same declared identity. In solo mode the workspace's own grayson.toml
+    is the policy and this refuses, naming it."""
+    from grayson.identity import get_user_id
+    from grayson.knowledge.policy import ACTIONS, PRESETS, TRUST_LEVELS, PolicyError
+
+    if workspace.config.library_path is None:
+        raise PermissionError(
+            "no team library is linked — the workspace's own policy is in grayson.toml "
+            "([knowledge] policy; `grayson config set knowledge.policy <preset>`)"
+        )
+    root = library_root(workspace)
+    admins = library_admins(root)
+    me = get_user_id()
+    if not me:
+        raise PermissionError("set your user id first (`grayson user set <id>`)")
+    if admins and me not in admins:
+        raise PermissionError(
+            f"only a library admin changes the knowledge policy (current: {', '.join(admins)}); "
+            "you are not one — ask one of them, or change library.toml through a "
+            "reviewed commit"
+        )
+    settings = read_library_settings(root)
+    changes: dict[str, object] = {}
+    if preset is not None:
+        if preset not in PRESETS:
+            raise ValueError(f"unknown preset {preset!r} (presets: {', '.join(PRESETS)})")
+        changes["knowledge_policy"] = preset
+    denied = [str(a) for a in settings.get("knowledge_agent_denied") or []]
+    for action in deny or []:
+        if action not in ACTIONS:
+            raise ValueError(f"unknown action {action!r} (actions: {', '.join(ACTIONS)})")
+        if action not in denied:
+            denied.append(action)
+    for action in allow or []:
+        if action not in ACTIONS:
+            raise ValueError(f"unknown action {action!r} (actions: {', '.join(ACTIONS)})")
+        if action in denied:
+            denied.remove(action)
+    if (deny or allow) and denied != list(settings.get("knowledge_agent_denied") or []):
+        changes["knowledge_agent_denied"] = denied
+    if trust is not None:
+        if trust not in TRUST_LEVELS:
+            raise ValueError(f"trust must be one of {', '.join(TRUST_LEVELS)}")
+        changes["knowledge_trust"] = trust
+    if proposed_horizon_days is not None:
+        if proposed_horizon_days < 0:
+            raise ValueError("proposed_horizon_days must be 0 or more")
+        changes["knowledge_proposed_horizon_days"] = int(proposed_horizon_days)
+    if not changes:
+        policy, _ = library_policy(root)
+        return {"policy": policy.summary() if policy else None, "changed": False}
+    try:
+        KnowledgePolicy.from_library_settings({**settings, **changes})
+    except PolicyError as e:
+        raise ValueError(str(e)) from e
+    write_library_settings(root, changes)
+    policy, _ = library_policy(root)
+    label = ", ".join(f"{k.removeprefix('knowledge_')}={v}" for k, v in changes.items())
+    sync = commit_library_paths(
+        workspace, [LIBRARY_SETTINGS_FILENAME], f"grayson library policy: {label}"
+    )
+    return {"policy": policy.summary() if policy else None, "changed": True, "library_sync": sync}
+
+
 def settings_last_change(root: Path) -> dict | None:
     """The last commit that touched library.toml — who changed the admins,
     and when — so an unexpected change shows up instead of sitting quietly."""
@@ -607,12 +718,17 @@ def _admins_report(root: Path) -> dict:
     return {"admins": library_admins(root), "admins_changed": settings_last_change(root)}
 
 
+def _policy_report(root: Path) -> dict:
+    policy, report = library_policy(root)
+    return {"knowledge_policy": policy.summary() if policy else None, **report}
+
+
 def library_status(workspace: Workspace) -> dict:
     """Report whether the linked library clone is behind its remote / dirty."""
     lib = workspace.config.library_path
     if lib is None:
         return {"linked": False, "detail": "no [library] path configured (solo mode)"}
-    return {"linked": True, **repo_status(lib), **_admins_report(lib)}
+    return {"linked": True, **repo_status(lib), **_admins_report(lib), **_policy_report(lib)}
 
 
 def library_pull_path(lib: Path) -> dict:
@@ -708,6 +824,9 @@ def library_doctor(workspace: Workspace) -> dict:
         "schemas": schemas,
         "records": records,
         "settings": settings,
+        # informational: standing never fails the doctor — it is the queue, not a fault
+        "standing": standing_report(workspace),
+        "policy": effective_policy(workspace).summary(),
         "repo": repo_status(lib),
     }
 
@@ -726,7 +845,150 @@ def _lint_settings(root: Path) -> dict:
         bad = [a for a in raw if not (isinstance(a, str) and _ADMIN_ID_RE.match(a))]
         if bad:
             errors.append(f"admins entries are not user ids: {bad}")
-    return {"ok": not errors, "errors": errors, **_admins_report(root)}
+    _policy, policy_report = library_policy(root)
+    if policy_report.get("error"):
+        errors.append(policy_report["error"])
+    return {"ok": not errors, "errors": errors, **_admins_report(root), **_policy_report(root)}
+
+
+def reconcile_root(
+    root: Path,
+    policy: KnowledgePolicy | EffectivePolicy | None = None,
+    dry_run: bool = False,
+    push: bool = False,
+    anchor_missing: bool = False,
+) -> dict:
+    """The reconcile pass over a library directory — a workspace's linked
+    clone or a bare checkout in CI. Rules only (knowledge/reconcile.py); the
+    result lands as one commit with a `Grayson-Via: reconcile` trailer, on a
+    clean tree, and is pushed when asked. With `dry_run` nothing is written."""
+    from grayson.knowledge import KnowledgeStore
+    from grayson.knowledge.policy import DEFAULT_TEAM_PRESET
+    from grayson.knowledge.reconcile import reconcile_docs
+
+    if policy is None:
+        policy, _ = library_policy(root)
+        if policy is None:
+            policy = KnowledgePolicy.from_preset(DEFAULT_TEAM_PRESET)
+    is_git = (root / ".git").exists()
+    if is_git and not dry_run and _git(root, "status", "--porcelain").stdout.strip():
+        raise RuntimeError(
+            "library working tree is dirty — commit or stash first, so the reconcile "
+            "lands as one revertible commit and nothing else rides along with it"
+        )
+    report = reconcile_docs(
+        KnowledgeStore(root / "knowledge"),
+        root / "records",
+        policy,
+        dry_run,
+        anchor_missing=anchor_missing,
+    )
+    out = {"library": str(root), "is_git": is_git, "policy": policy.summary(), **report}
+    if dry_run or not report["touched"]:
+        out["committed"] = False
+        return out
+    if not is_git:
+        out["committed"] = False
+        out["warning"] = (
+            "library is not a git repo, so this pass has no rollback point — "
+            "`git init` the library (or `grayson library link`) before the next one"
+        )
+        return out
+    parts = [
+        f"{len(report['materialized'])} standing change(s)",
+        f"{len(report['questions_folded'])} question(s) folded",
+        f"{len(report['questions_retired'])} question(s) retired",
+    ]
+    if report["supersessions_executed"]:
+        parts.append(f"{len(report['supersessions_executed'])} confirmed supersession(s) executed")
+    if report["anchored"]:
+        parts.append(f"{len(report['anchored'])} fact(s) anchored")
+    label = ", ".join(parts)
+    _git(root, "add", "-A", "--", *report["touched"])
+    commit = _git(
+        root,
+        "commit",
+        "-m",
+        _with_trailers(f"grayson library reconcile: {label}", via="reconcile"),
+        "--",
+        *report["touched"],
+    )
+    out["committed"] = commit.returncode == 0
+    if out["committed"] and push:
+        out["push"] = _push(root, committed=True)
+    return out
+
+
+def reconcile_library(
+    workspace: Workspace, dry_run: bool = False, anchor_missing: bool = False
+) -> dict:
+    """Reconcile the workspace's library (or, in solo mode, its own knowledge
+    directory) under the effective policy; pushes when the workspace auto-pushes."""
+    root = workspace.config.library_path or workspace.root
+    return reconcile_root(
+        root,
+        policy=effective_policy(workspace),
+        dry_run=dry_run,
+        push=bool(workspace.config.library_path) and workspace.config.library_auto_push,
+        anchor_missing=anchor_missing,
+    )
+
+
+def standing_report(workspace: Workspace) -> dict:
+    """What the reconcile pass would do and what it cannot decide — the
+    doctor's read-only view of standing across the library."""
+    from grayson.knowledge import KnowledgeStore
+    from grayson.knowledge.reconcile import reconcile_docs
+
+    report = reconcile_docs(
+        KnowledgeStore(workspace.knowledge_dir),
+        workspace.records_dir,
+        effective_policy(workspace),
+        dry_run=True,
+    )
+    unanchored = _unanchored_count(workspace)
+    return {
+        "counts": report["counts"],
+        "would_materialize": len(report["materialized"]),
+        "would_fold_questions": len(report["questions_folded"]),
+        "would_retire_questions": len(report["questions_retired"]),
+        "would_execute_supersessions": len(report["supersessions_executed"]),
+        "unanchored_facts": unanchored,
+        "needs_human": report["needs_human"],
+        "agent_actions": report["agent_actions"],
+        "hint": (
+            "`grayson library reconcile` materializes standing onto the docs as one commit; "
+            "needs_human lists what no rule decides — contested pairs, unverified and "
+            "stale facts — for the console's Knowledge tab or an agent the policy permits"
+            + (
+                f". {unanchored} live fact(s) carry no anchors (written before standing "
+                "existed): `grayson library reconcile --anchor-missing` baselines them"
+                if unanchored
+                else ""
+            )
+        ),
+    }
+
+
+def _unanchored_count(workspace: Workspace) -> int:
+    """Live facts with no anchors — the upgrade signal."""
+    from grayson.knowledge import KnowledgeDocError, KnowledgeStore
+
+    store = KnowledgeStore(workspace.knowledge_dir)
+    total = 0
+    for fqn in store.all_tables():
+        try:
+            doc = store.read(fqn)
+        except (KnowledgeDocError, ValueError):
+            continue
+        total += sum(
+            1
+            for f in doc["facts"]
+            if not f.get("anchors")
+            and not f.get("superseded_by")
+            and f.get("standing") != "retired"
+        )
+    return total
 
 
 def migrate_library(workspace: Workspace) -> dict:

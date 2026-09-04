@@ -59,9 +59,12 @@ grayson session narrate <sid> --text "... (q_0003)"       # agent's story; must 
 grayson session report <sid> --out report.md              # shareable report
 ```
 
-The flow: session start snapshots table metadata, loads relevant knowledge,
+The flow: session start snapshots table metadata, briefs the agent with the
+relevant knowledge — ranked and capped per table, each fact carrying its
+status, its role under the knowledge policy's trust, and its standing
+(whether what it rests on still holds; [LIBRARY.md](LIBRARY.md#standing-pruning-and-the-knowledge-policy)) —
 reports where the recorded column list has drifted from the warehouse
-(`knowledge_drift`, [LIBRARY.md](LIBRARY.md)), checks QA-view coverage, and
+(`knowledge_drift`), checks QA-view coverage, and
 surfaces failing external checks as pre-vetted leads ([CHECKS.md](CHECKS.md)). Checkpoints close only by citing executed
 queries that touched the tables under investigation. Judgment calls go to a
 human via interventions, answered in the console. Findings validate against

@@ -341,6 +341,7 @@ def setup() -> None:
             _offer_admin_bootstrap(ws, done["library"])
         except (FileExistsError, FileNotFoundError, RuntimeError, OSError) as e:
             say(f"  library link failed: {e} — retry later with `grayson library link`")
+    _offer_policy_choice(ws, done)
 
     # -- harness ---------------------------------------------------------
     say("\nThe protocol file teaches your agent how to drive grayson.")
@@ -741,11 +742,23 @@ def session_start(
     # trip the guard, and evidence touching them must count
     result["views_in_scope"] = enter_session_scope(registry, session, tables)
     knowledge = KnowledgeStore(ws.knowledge_dir)
-    result["knowledge"] = {t: knowledge.read(t)["facts"] for t in tables}
-    result["knowledge_gaps"] = sorted(t for t, facts in result["knowledge"].items() if not facts)
-    result["knowledge_drift"] = drift_report(
-        knowledge, (result.get("metadata_snapshot") or {}).get("columns") or {}
+    from grayson.knowledge import StandingContext
+    from grayson.knowledge.briefing import briefing_hints, build_briefing
+    from grayson.library import effective_policy
+
+    live_columns = (result.get("metadata_snapshot") or {}).get("columns") or {}
+    policy = effective_policy(ws)
+    ctx = StandingContext.build(ws.records_dir, policy, live_columns=live_columns)
+    briefings = build_briefing(knowledge, tables, ctx, policy.briefing_cap)
+    result["knowledge"] = {t: b["facts"] for t, b in briefings.items()}
+    result["knowledge_briefing"] = {
+        t: {k: v for k, v in b.items() if k != "facts"} for t, b in briefings.items()
+    }
+    result["knowledge_gaps"] = sorted(
+        t for t, b in briefings.items() if "counts" in b and not sum(b["counts"].values())
     )
+    result["knowledge_drift"] = drift_report(knowledge, live_columns)
+    result["knowledge_policy"] = {"actions": policy.actions, "trust": policy.trust}
     from grayson.checks import ChecksStore
 
     result["external_checks"] = ChecksStore(ws.checks_dir).summary(tables or None)
@@ -782,6 +795,9 @@ def session_start(
             "query first (their `sql`/`details` are in external_checks.failing), then "
             "widen the investigation",
         )
+    result["hints"] = (
+        briefing_hints(briefings, fetch="`grayson knowledge show <table>`") + result["hints"]
+    )
     emit(result)
 
 
@@ -2441,24 +2457,15 @@ def _attach_library_sync(out: dict, ws: Workspace, message: str) -> None:
 
 @knowledge_app.command("show")
 def knowledge_show(table: str) -> None:
-    """Show a table's knowledge entry, with a base-descriptor completeness report
-    and the text of any captured definition snapshots."""
-    from grayson.knowledge import SNAPSHOT_INLINE_CHARS
+    """Show a table's knowledge entry: every fact with its status and standing,
+    contested pairs, recent agent actions, the base-descriptor completeness
+    report, captured definition snapshots, and what the policy lets an agent do."""
+    from grayson.knowledge import actions as knowledge_actions
 
-    ws = _workspace()
-    store = KnowledgeStore(ws.knowledge_dir)
     try:
-        doc = store.read(table)
+        emit(knowledge_actions.show(_workspace(), table))
     except ValueError as e:
-        fail(str(e))
-        return
-    snapshots: dict[str, str] = {}
-    for d in doc["definitions"]:
-        name = d.get("snapshot")
-        text = store.read_snapshot(doc["table"], str(name)) if name else None
-        if text is not None:
-            snapshots[str(name)] = text[:SNAPSHOT_INLINE_CHARS]
-    emit({**doc, "completeness": completeness(doc), "definition_snapshots": snapshots})
+        fail(str(e.args[0] if e.args else e))
 
 
 @knowledge_app.command("sync")
@@ -2786,6 +2793,202 @@ def knowledge_search(term: str) -> None:
     emit(KnowledgeStore(_workspace().knowledge_dir).search(term))
 
 
+# -- knowledge lifecycle (policy-gated; docs/LIBRARY.md) ----------------------
+
+
+def _lifecycle_actor(by: str | None) -> str:
+    """Who is acting: a person at a terminal is `user` (always allowed); a
+    non-interactive shell-out is `agent` (policy-gated). `--by user` from a
+    shell-out is refused, as everywhere else — authority narrows, never widens."""
+    actor = resolve_actor(by)
+    return "user" if actor == "user" else "agent"
+
+
+def _run_lifecycle(fn, *args, **kwargs) -> None:
+    from grayson.knowledge.actions import ActionRefused
+
+    try:
+        emit(fn(*args, **kwargs))
+    except ActionRefused as e:
+        fail(str(e))
+    except (ValueError, KeyError, FileNotFoundError, PermissionError) as e:
+        fail(str(e.args[0] if e.args else e))
+
+
+@knowledge_app.command("policy")
+def knowledge_policy_cmd() -> None:
+    """The knowledge policy in force: which lifecycle actions an agent may take
+    alone, the trust level, and which side (workspace or team library) withheld
+    each action. `grayson library policy set` changes it."""
+    from grayson.library import effective_policy
+
+    emit(effective_policy(_workspace()).summary())
+
+
+@knowledge_app.command("retire")
+def knowledge_retire(
+    table: str,
+    fact_id: str,
+    reason: str = typer.Option("", "--reason", "-r", help="Why (required from a person)."),
+    evidence: list[str] = typer.Option(
+        [], "--evidence", "-e", help="What falsified it (required from an agent)."
+    ),
+    session: str | None = typer.Option(
+        None, "--session", help="Query ids in the evidence must have executed here."
+    ),
+    by: str | None = typer.Option(
+        None, "--by", help="agent | user (default: who is at the terminal)."
+    ),
+) -> None:
+    """Retire a fact that no longer holds. It stays in the doc, marked with who
+    and why, out of briefings; one library commit records it; restore undoes it.
+    An agent must cite evidence and is subject to the knowledge policy."""
+    from grayson.knowledge import actions as knowledge_actions
+
+    _run_lifecycle(
+        knowledge_actions.retire,
+        _workspace(),
+        table,
+        fact_id,
+        reason=reason,
+        evidence=list(evidence),
+        actor=_lifecycle_actor(by),
+        surface="cli",
+        session_id=session,
+    )
+
+
+@knowledge_app.command("supersede")
+def knowledge_supersede(
+    table: str,
+    fact_id: str,
+    fact: str = typer.Option(..., "--fact", help="The corrected fact."),
+    evidence: list[str] = typer.Option([], "--evidence", "-e"),
+    status: str = typer.Option("proposed", "--status", help="proposed|data_inferred"),
+    new_id: str | None = typer.Option(None, "--id", help="Id for the new fact."),
+    session: str | None = typer.Option(None, "--session"),
+    by: str | None = typer.Option(
+        None, "--by", help="agent | user (default: who is at the terminal)."
+    ),
+) -> None:
+    """Record a corrected fact that supersedes an earlier one. Always recorded;
+    the supersession executes now when a person acts (confirming the new fact
+    in the same step) or when the policy lets the agent and the new fact ranks
+    as knowledge under trust — otherwise it waits, contested, for the user's
+    confirm. An agent must cite evidence."""
+    from grayson.knowledge import actions as knowledge_actions
+
+    _run_lifecycle(
+        knowledge_actions.supersede,
+        _workspace(),
+        table,
+        fact_id,
+        fact,
+        evidence=list(evidence),
+        status=status,
+        actor=_lifecycle_actor(by),
+        surface="cli",
+        session_id=session,
+        new_id=new_id,
+    )
+
+
+@knowledge_app.command("restore")
+def knowledge_restore(
+    table: str,
+    fact_id: str | None = typer.Argument(None, help="One fact; omit to re-anchor every fact."),
+    by: str | None = typer.Option(
+        None, "--by", help="agent | user (default: who is at the terminal)."
+    ),
+) -> None:
+    """Restore a retired, stale, or unverified fact to current — its anchors are
+    re-baselined on the doc as it stands. Without a fact id, re-anchor every
+    non-retired fact on the table (after a definition was re-recorded on purpose).
+    A judgment, so the policy keeps it the user's unless told otherwise."""
+    from grayson.knowledge import actions as knowledge_actions
+
+    actor = _lifecycle_actor(by)
+    if fact_id is None:
+        _run_lifecycle(
+            knowledge_actions.reanchor, _workspace(), table, None, actor=actor, surface="cli"
+        )
+        return
+    _run_lifecycle(
+        knowledge_actions.restore, _workspace(), table, fact_id, actor=actor, surface="cli"
+    )
+
+
+@knowledge_app.command("dismiss")
+def knowledge_dismiss(
+    table: str,
+    question: str = typer.Option(
+        ..., "--question", "-q", help="The open question (or a unique fragment)."
+    ),
+    reason: str = typer.Option(..., "--reason", "-r"),
+    by: str | None = typer.Option(
+        None, "--by", help="agent | user (default: who is at the terminal)."
+    ),
+) -> None:
+    """Retire an open question as moot, with a reason. It is kept under
+    retired_questions so nobody re-asks it. To answer it, use `knowledge answer`."""
+    from grayson.knowledge import actions as knowledge_actions
+
+    _run_lifecycle(
+        knowledge_actions.dismiss_question,
+        _workspace(),
+        table,
+        question,
+        reason,
+        actor=_lifecycle_actor(by),
+        surface="cli",
+    )
+
+
+@knowledge_app.command("resolve")
+def knowledge_resolve(
+    table: str,
+    fact_a: str,
+    fact_b: str,
+    note: str = typer.Option("", "--note", help="Why both hold."),
+    by: str | None = typer.Option(
+        None, "--by", help="agent | user (default: who is at the terminal)."
+    ),
+) -> None:
+    """Judge two contested facts compatible — both hold — so the pair stops being
+    surfaced. If one is wrong, `knowledge supersede` is the command, not this."""
+    from grayson.knowledge import actions as knowledge_actions
+
+    _run_lifecycle(
+        knowledge_actions.resolve,
+        _workspace(),
+        table,
+        fact_a,
+        fact_b,
+        note=note,
+        actor=_lifecycle_actor(by),
+        surface="cli",
+    )
+
+
+@knowledge_app.command("verify")
+def knowledge_verify(
+    table: str,
+    session: str = typer.Option(..., "--session", help="Session to re-run the queries in."),
+) -> None:
+    """Re-run the after-query behind each verified-fix fact on a table and compare
+    row counts with the record: a match re-baselines the fact, a mismatch marks it
+    unverified with both counts. Each re-run is a guarded, audited query."""
+    from grayson.core.session import resolve_session_id
+    from grayson.knowledge.verify import VerifyError, verify_table
+
+    ws = _workspace()
+    try:
+        sess = Session(ws, resolve_session_id(ws, session))
+        emit(verify_table(ws, table, sess))
+    except (VerifyError, ValueError, KeyError, FileNotFoundError) as e:
+        fail(str(e.args[0] if e.args else e))
+
+
 # -- checks --------------------------------------------------------------
 
 
@@ -2988,6 +3191,70 @@ def _first_admin_prompt(current: str | None) -> list[str]:
     return [answer] if answer else []
 
 
+_PRESET_LINES = (
+    "  propose    — the agent proposes everything; you retire, correct, and resolve",
+    "  curate     — evidence-backed actions (retire, supersede, dismiss a question, "
+    "reconcile) are the agent's; judgment-only ones (resolve a contested pair, restore) "
+    "stay yours",
+    "  autonomous — the agent does all of it; you audit after (every action is one "
+    "revertible commit)",
+)
+
+
+def _offer_policy_choice(ws: Workspace, done: dict) -> None:
+    """Setup's one question about knowledge autonomy: which lifecycle actions on
+    facts an agent may take alone. In team mode the choice is the library's,
+    set by an admin (or the first person to link it); in solo mode it is the
+    workspace's. Never from a script."""
+    from grayson.identity import get_user_id
+    from grayson.knowledge.policy import DEFAULT_TEAM_PRESET, PRESETS
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    say = typer.echo
+    say("\nKnowledge policy: how much of the library's housekeeping an agent may do alone.")
+    for line in _PRESET_LINES:
+        say(line)
+    if ws.config.library_path is not None:
+        from grayson.library import library_admins, library_policy, library_root, set_library_policy
+
+        root = library_root(ws)
+        policy, _report = library_policy(root)
+        if policy is not None:
+            say(f"  the team library sets '{policy.preset}' (grayson library policy show)")
+            return
+        me = get_user_id()
+        admins = library_admins(root)
+        if not me or (admins and me not in admins):
+            say(
+                f"  the team library has not chosen, so '{DEFAULT_TEAM_PRESET}' applies until an "
+                "admin runs `grayson library policy set --preset <name>`"
+            )
+            return
+        answer = typer.prompt("Team preset", default=DEFAULT_TEAM_PRESET).strip()
+        if answer not in PRESETS:
+            say(f"  skipped: unknown preset {answer!r}")
+            return
+        try:
+            done["knowledge_policy"] = set_library_policy(ws, preset=answer)
+        except (PermissionError, ValueError) as e:
+            say(f"  skipped: {e}")
+        return
+    from grayson.config_edit import ConfigError, set_values
+
+    current = ws.config.knowledge.preset
+    answer = typer.prompt("Preset for this workspace", default=current).strip()
+    if answer == current:
+        done["knowledge_policy"] = current
+        return
+    try:
+        set_values(ws.root, {"knowledge.policy": answer})
+        ws.reload_config()
+        done["knowledge_policy"] = answer
+    except ConfigError as e:
+        say(f"  skipped: {e}")
+
+
 def _offer_admin_bootstrap(ws: Workspace, out: dict) -> None:
     """After linking: a library with no admins offers the linking human the
     role, so the list is set by a person at creation rather than left empty
@@ -3100,6 +3367,142 @@ def library_doctor_cmd() -> None:
     emit(report)
     if not report["ok"]:
         raise typer.Exit(1)
+
+
+@library_app.command("reconcile")
+def library_reconcile_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report without writing."),
+    library: Path | None = typer.Option(
+        None,
+        "--library",
+        help="A library checkout to reconcile directly (CI); no workspace needed.",
+    ),
+    push: bool = typer.Option(False, "--push", help="With --library: push the commit."),
+    anchor_missing: bool = typer.Option(
+        False,
+        "--anchor-missing",
+        help="Also anchor facts that carry no anchors (written before standing existed): "
+        "the upgrade pass. Their standing is computed from here on.",
+    ),
+) -> None:
+    """The reconcile pass: materialize each fact's standing onto its doc, execute
+    supersessions a human confirmed but nothing executed, fold duplicate open
+    questions, retire questions about dropped columns, and report what no rule
+    decides (needs_human). Lands as one commit with a `Grayson-Via: reconcile`
+    trailer, on a clean tree. From a workspace the effective policy governs and
+    an agent shell-out is policy-gated; with --library the checkout's own
+    library.toml governs (the CI recipe). --anchor-missing is the one-time
+    upgrade step for a library written before facts carried anchors."""
+    from grayson.knowledge import actions as knowledge_actions
+    from grayson.library import reconcile_root
+
+    if library is not None:
+        try:
+            emit(
+                reconcile_root(
+                    library.expanduser().resolve(),
+                    dry_run=dry_run,
+                    push=push,
+                    anchor_missing=anchor_missing,
+                )
+            )
+        except (RuntimeError, OSError, ValueError) as e:
+            fail(str(e))
+        return
+    actor = "user" if _stdin_is_tty() else "agent"
+    try:
+        emit(
+            knowledge_actions.reconcile(
+                _workspace(),
+                actor=actor,
+                surface="cli",
+                dry_run=dry_run,
+                anchor_missing=anchor_missing,
+            )
+        )
+    except (RuntimeError, OSError, ValueError, PermissionError) as e:
+        fail(str(e.args[0] if e.args else e))
+
+
+policy_app = typer.Typer(
+    help="The knowledge policy: which lifecycle actions on facts an agent may take alone.",
+    no_args_is_help=True,
+)
+library_app.add_typer(policy_app, name="policy")
+
+
+@policy_app.command("show")
+def library_policy_show() -> None:
+    """The effective policy: the workspace's [knowledge] settings met with the
+    team library's (library.toml), and which side withheld each action."""
+    from grayson.library import effective_policy, library_root
+
+    ws = _workspace()
+    out = effective_policy(ws).summary()
+    out["workspace_file"] = str(ws.root / "grayson.toml")
+    out["library_file"] = str(library_root(ws) / "library.toml") if ws.config.library_path else None
+    emit(out)
+
+
+@policy_app.command("set")
+def library_policy_set(
+    preset: str | None = typer.Option(None, "--preset", help="propose | curate | autonomous"),
+    deny: list[str] = typer.Option([], "--deny", help="Keep this action the user's (repeatable)."),
+    allow: list[str] = typer.Option(
+        [], "--allow", help="Stop withholding this action (repeatable)."
+    ),
+    trust: str | None = typer.Option(
+        None, "--trust", help="user_confirmed | data_inferred | proposed"
+    ),
+    horizon: int | None = typer.Option(
+        None, "--horizon-days", help="Days an unconfirmed proposed fact stays current."
+    ),
+) -> None:
+    """Change the policy. With a team library linked this writes library.toml as an
+    admin's commit (the team's policy, which every workspace's own can only
+    narrow); in solo mode it writes this workspace's grayson.toml. A user action:
+    interactive terminal only."""
+    require_interactive("changing the knowledge policy")
+    ws = _workspace()
+    if ws.config.library_path is None:
+        from grayson.config_edit import ConfigError, set_knowledge_actions, set_values
+
+        changes: dict[str, object] = {}
+        if preset is not None:
+            changes["knowledge.policy"] = preset
+        if trust is not None:
+            changes["knowledge.trust"] = trust
+        if horizon is not None:
+            changes["knowledge.proposed_horizon_days"] = horizon
+        try:
+            if changes:
+                set_values(ws.root, changes)
+            overrides: dict[str, str | None] = {a: "user" for a in deny}
+            overrides.update(dict.fromkeys(allow))  # an allow removes the override
+            if overrides:
+                set_knowledge_actions(ws.root, overrides)
+        except ConfigError as e:
+            fail(str(e))
+            return
+        from grayson.library import effective_policy
+
+        emit({"scope": "workspace", **effective_policy(ws.reload_config() and ws).summary()})
+        return
+    from grayson.library import set_library_policy
+
+    try:
+        out = set_library_policy(
+            ws,
+            preset=preset,
+            deny=list(deny),
+            allow=list(allow),
+            trust=trust,
+            proposed_horizon_days=horizon,
+        )
+    except (PermissionError, ValueError) as e:
+        fail(str(e))
+        return
+    emit({"scope": "library", **out})
 
 
 @library_app.command("migrate")
