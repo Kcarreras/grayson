@@ -76,6 +76,19 @@ they are equivalent. Never query Snowflake except through grayson.
    that; read the `warnings` the command returns and fix any shape it flags.
    If a target has no recorded knowledge at all, settle
    grain/semantics with the user early — or run the `table-onboarding` workflow first.
+   Knowledge at session start is a briefing, not the whole doc: facts ranked and capped
+   per table, each with a `status` (who vouches: proposed / data_inferred /
+   user_confirmed), a `role` under the policy's trust (knowledge, or hypothesis — a lead,
+   not a settled fact), and a `standing` (whether what it rests on still holds: current,
+   or unverified / stale with the reason). `knowledge_briefing` carries what was left
+   out, contested pairs, and recent agent actions; `grayson knowledge show` lists every
+   fact. Knowledge has a lifecycle, and the user decides how much of it is yours
+   (`grayson knowledge policy`): a fact the evidence shows wrong is superseded with
+   `grayson knowledge supersede <table> <fact_id> --fact "..." -e q_0007` (always
+   recorded; it executes when the policy lets you, otherwise it waits for the user's
+   confirm) or retired with `grayson knowledge retire <table> <fact_id> -e q_0007`
+   (evidence required). A contested pair you cannot settle is the user's: name it in
+   your findings. A refusal names the setting to change — ask, never route around it.
    The recorded column list is a human artefact and falls behind the warehouse:
    session start reports `knowledge_drift` (columns added, dropped, or retyped since
    the library last looked). Treat drift as a lead, then run

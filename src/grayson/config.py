@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from grayson.knowledge.policy import KnowledgePolicy, PolicyError
+
 CONFIG_FILENAME = "grayson.toml"
 
 BUILTIN_PROFILES: dict[str, dict[str, int]] = {
@@ -50,6 +52,9 @@ class WorkspaceConfig(BaseModel):
     workflow_defaults: dict[str, WorkflowDefaults] = Field(default_factory=dict)
     library_path: Path | None = None
     library_auto_push: bool = False
+    #: which knowledge lifecycle actions an agent may take alone ([knowledge] in
+    #: grayson.toml); in team mode the library's own policy narrows it further
+    knowledge: KnowledgePolicy = Field(default_factory=KnowledgePolicy)
 
     @classmethod
     def load(cls, path: Path) -> WorkspaceConfig:
@@ -58,6 +63,13 @@ class WorkspaceConfig(BaseModel):
         for name, vals in data.get("guard_profiles", {}).items():
             profiles[name] = GuardSettings(**vals)
         library = data.get("library", {}).get("path")
+        knowledge_raw = data.get("knowledge", {})
+        try:
+            knowledge = KnowledgePolicy.from_config(
+                knowledge_raw if isinstance(knowledge_raw, dict) else {}
+            )
+        except PolicyError as e:
+            raise ValueError(f"{CONFIG_FILENAME} [knowledge]: {e}") from e
         return cls(
             connection=data.get("connection", {}).get("name", "default"),
             default_guard_profile=data.get("defaults", {}).get("guard_profile", "moderate"),
@@ -70,6 +82,7 @@ class WorkspaceConfig(BaseModel):
             },
             library_path=Path(library).expanduser() if library else None,
             library_auto_push=bool(data.get("library", {}).get("auto_push", False)),
+            knowledge=knowledge,
         )
 
     def resolve_profile(self, name: str | None) -> GuardSettings:
@@ -117,4 +130,25 @@ budget_cap = 0
 # Team library repo (see docs/SPEC.md s11a). Uncomment to link a local clone:
 # [library]
 # path = "~/work/data-qa-library"
+
+# Knowledge policy: which lifecycle actions on facts an agent may take alone
+# (docs/LIBRARY.md, "Standing, pruning, and the knowledge policy").
+#   propose    — the agent proposes everything; a human retires, supersedes, resolves
+#   curate     — evidence-backed actions (retire, supersede, dismiss a question,
+#                reconcile) are the agent's; judgment-only ones (resolve a contested
+#                pair, restore) stay the human's
+#   autonomous — the agent does all of it; the human audits after
+# A linked team library's own policy (library.toml) can narrow this, never widen it.
+[knowledge]
+policy = "curate"
+# lowest status a briefing ranks as knowledge rather than a hypothesis:
+# user_confirmed | data_inferred | proposed
+trust = "data_inferred"
+# a proposed fact nobody confirmed within this many days reads as unverified
+proposed_horizon_days = 90
+# facts shown per table at session start; the rest are counted and fetchable
+briefing_cap = 12
+# per-action overrides, e.g. to keep one action human under `autonomous`:
+# [knowledge.agent]
+# retire = "user"
 """

@@ -22,12 +22,16 @@ from grayson.history import suggest_guard_profile
 from grayson.interventions import build_request
 from grayson.interventions.types import InterventionError
 from grayson.knowledge import (
-    SNAPSHOT_INLINE_CHARS,
     KnowledgeStore,
+    StandingContext,
     completeness,
     describe_drift,
     drift_report,
 )
+from grayson.knowledge import actions as knowledge_actions
+from grayson.knowledge.actions import ActionRefused
+from grayson.knowledge.briefing import briefing_hints, build_briefing
+from grayson.library import effective_policy
 from grayson.util import parse_table_list
 from grayson.views import ViewRegistry, enter_session_scope
 from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
@@ -67,6 +71,17 @@ If a target table has no recorded knowledge, settle grain/semantics with the use
 knowledge_add so future sessions start briefed. An open question in the library that the
 user can simply answer needs no session at all: relay their answer with knowledge_answer,
 which records it and retires the question (they confirm it in the console).
+Knowledge at session start is a briefing, not the whole doc: facts ranked and capped per
+table, each with a status (who vouches: proposed / data_inferred / user_confirmed), a role
+under the policy's trust (knowledge, or hypothesis — treat hypotheses as leads, not as
+settled), and a standing (whether what it rests on still holds: current, or unverified /
+stale with the reason). knowledge_briefing carries what was left out, contested pairs, and
+recent agent actions; knowledge_show lists everything. Knowledge has a lifecycle and the
+user decides how much of it is yours (knowledge_policy): a fact shown wrong by evidence is
+superseded with knowledge_supersede (always recorded; it executes when the policy lets
+you, else it waits for the user's confirm) or retired with knowledge_retire (evidence
+required); a contested pair you cannot settle is left for the user and named in your
+findings. A refusal names the setting to change — ask the user, never route around it.
 Resuming a session you did not start in this context (a new chat, a compacted window,
 a second worker)? Call session_brief first: it carries the setup answers, every gate's
 state, the user's intervention answers, and the next action — re-derive nothing it records.
@@ -275,8 +290,17 @@ def build_server(workspace: Workspace) -> Any:
             if isinstance(info, dict) and info.get("last_altered")
         }
         knowledge = KnowledgeStore(workspace.knowledge_dir)
-        facts = {t: knowledge.read(t)["facts"] for t in tables}
-        gaps = sorted(t for t, f in facts.items() if not f)
+        # the briefing, not the raw doc: ranked, capped, each fact carrying its
+        # standing and its role under the policy's trust (docs/LIBRARY.md)
+        policy = effective_policy(workspace)
+        ctx = StandingContext.build(
+            workspace.records_dir, policy, live_columns=snap.get("columns") or {}
+        )
+        briefings = build_briefing(knowledge, tables, ctx, policy.briefing_cap)
+        facts = {t: b["facts"] for t, b in briefings.items()}
+        gaps = sorted(
+            t for t, b in briefings.items() if "counts" in b and not sum(b["counts"].values())
+        )
         drift = drift_report(knowledge, snap.get("columns") or {})
         external = ChecksStore(workspace.checks_dir).summary(tables or None)
         registry = ViewRegistry(workspace.views_dir)
@@ -292,8 +316,17 @@ def build_server(workspace: Workspace) -> Any:
             "view_coverage": registry.coverage_check(tables, current),
             "views_in_scope": enter_session_scope(registry, s, tables),
             "knowledge": facts,
+            "knowledge_briefing": {
+                t: {k: v for k, v in b.items() if k != "facts"} for t, b in briefings.items()
+            },
             "knowledge_gaps": gaps,
             "knowledge_drift": drift,
+            "knowledge_policy": {
+                "actions": policy.actions,
+                "trust": policy.trust,
+                "hint": "knowledge_policy() explains each action; a refusal names the "
+                "setting to change",
+            },
             "external_checks": external,
         }
         if context_scope:
@@ -338,6 +371,7 @@ def build_server(workspace: Workspace) -> Any:
                 "with the user early (intervention), record durable answers with "
                 "knowledge_add, or run the table-onboarding workflow first"
             )
+        hints += briefing_hints(briefings, fetch="knowledge_show(table)")
         if hints:
             out["hint"] = "; ".join(hints)
         return out
@@ -801,18 +835,15 @@ def build_server(workspace: Workspace) -> Any:
         return out
 
     @mcp.tool(
-        description="Read the knowledge library entry for a table, including its "
-        "base-descriptor completeness report (what is still undescribed)."
+        description="Read the knowledge library entry for a table: every fact with its "
+        "status (who vouches) and standing (whether what it rests on still holds: "
+        "current | unverified | stale | retired, with the reason), contested pairs, "
+        "recent agent actions, the base-descriptor completeness report, and what the "
+        "knowledge policy lets you do about any of it."
     )
     def knowledge_show(table: str) -> dict:
         try:
-            store = KnowledgeStore(workspace.knowledge_dir)
-            doc = store.read(table)
-            return {
-                **doc,
-                "completeness": completeness(doc),
-                "definition_snapshots": _definition_snapshots(store, doc),
-            }
+            return knowledge_actions.show(workspace, table)
         except ValueError as e:
             return _err(e)
 
@@ -946,15 +977,168 @@ def build_server(workspace: Workspace) -> Any:
     def knowledge_search(term: str) -> list[dict]:
         return KnowledgeStore(workspace.knowledge_dir).search(term)
 
-    def _definition_snapshots(store: KnowledgeStore, doc: dict) -> dict[str, str]:
-        """Captured definition text riding along with the doc, bounded."""
-        out: dict[str, str] = {}
-        for d in doc.get("definitions") or []:
-            name = d.get("snapshot")
-            text = store.read_snapshot(doc["table"], str(name)) if name else None
-            if text is not None:
-                out[str(name)] = text[:SNAPSHOT_INLINE_CHARS]
-        return out
+    # -- knowledge lifecycle (policy-gated; docs/LIBRARY.md) ------------------
+
+    def _refused(e: ActionRefused) -> dict:
+        return {
+            "error": str(e),
+            "type": "ActionRefused",
+            "policy": {"actions": dict(e.policy.actions), "trust": e.policy.trust},
+        }
+
+    @mcp.tool(
+        description="The knowledge policy in force: which lifecycle actions on facts "
+        "(retire, supersede, dismiss_question, reconcile, resolve_contested, restore) "
+        "you may take alone and which are the user's, the trust level (lowest status "
+        "a briefing ranks as knowledge), and which side — workspace or team library — "
+        "withheld each action. A refusal from any knowledge_* tool names the setting."
+    )
+    def knowledge_policy() -> dict:
+        return effective_policy(workspace).summary()
+
+    @mcp.tool(
+        description="Retire a fact that no longer holds, citing what falsified it in "
+        "`evidence` (query ids, an intervention id, a drift observation such as "
+        "'column X dropped', a record id). Required — an agent never retires on an "
+        "assertion. With session_id, query ids must have executed in that session. "
+        "The fact stays in the doc, marked retired with who and why, out of briefings, "
+        "and one library commit records it; a human can restore it. Policy-gated: "
+        "under `propose` the user retires — record a superseding fact instead."
+    )
+    def knowledge_retire(
+        table: str,
+        fact_id: str,
+        evidence: list[str],
+        reason: str = "",
+        session_id: str | None = None,
+    ) -> dict:
+        try:
+            return knowledge_actions.retire(
+                workspace,
+                table,
+                fact_id,
+                reason=reason,
+                evidence=evidence,
+                actor="agent",
+                surface="mcp",
+                session_id=session_id,
+            )
+        except ActionRefused as e:
+            return _refused(e)
+        except (ValueError, KeyError, FileNotFoundError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Record a corrected fact that supersedes `fact_id`, citing the "
+        "evidence that shows the earlier one wrong (required). Always recorded. The "
+        "supersession itself executes now when the policy lets you and the new fact "
+        "ranks as knowledge under trust (or at least as high as the one it replaces); "
+        "otherwise it is pending — the pair reads as contested in briefings until the "
+        "user confirms the new fact, which executes it. status: proposed|data_inferred."
+    )
+    def knowledge_supersede(
+        table: str,
+        fact_id: str,
+        fact: str,
+        evidence: list[str],
+        status: str = "proposed",
+        session_id: str | None = None,
+    ) -> dict:
+        try:
+            return knowledge_actions.supersede(
+                workspace,
+                table,
+                fact_id,
+                fact,
+                evidence=evidence,
+                status=status,
+                actor="agent",
+                surface="mcp",
+                session_id=session_id,
+            )
+        except (ValueError, KeyError, FileNotFoundError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Restore a retired, stale, or unverified fact to current: its anchors "
+        "are re-baselined on the doc as it stands (a changed definition, a dropped "
+        "column no longer counted). A judgment that the fact still holds — policy-"
+        "gated, the user's under `propose` and `curate`."
+    )
+    def knowledge_restore(table: str, fact_id: str) -> dict:
+        try:
+            return knowledge_actions.restore(
+                workspace, table, fact_id, actor="agent", surface="mcp"
+            )
+        except ActionRefused as e:
+            return _refused(e)
+        except (ValueError, KeyError, FileNotFoundError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Retire an open question as moot (answered elsewhere, about a "
+        "dropped column, not worth asking), with a reason. It is kept under "
+        "retired_questions so nobody re-asks it. To answer a question instead, use "
+        "knowledge_answer. Policy-gated."
+    )
+    def knowledge_dismiss_question(table: str, question: str, reason: str) -> dict:
+        try:
+            return knowledge_actions.dismiss_question(
+                workspace, table, question, reason, actor="agent", surface="mcp"
+            )
+        except ActionRefused as e:
+            return _refused(e)
+        except (ValueError, KeyError, FileNotFoundError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Judge two contested facts compatible — both hold (different scopes, "
+        "different times) — so the pair stops being surfaced. A judgment with no "
+        "evidence behind it, which is why the policy keeps it the user's unless told "
+        "otherwise. If one is wrong, knowledge_supersede is the tool, not this."
+    )
+    def knowledge_resolve(table: str, fact_a: str, fact_b: str, note: str = "") -> dict:
+        try:
+            return knowledge_actions.resolve(
+                workspace, table, fact_a, fact_b, note=note, actor="agent", surface="mcp"
+            )
+        except ActionRefused as e:
+            return _refused(e)
+        except (ValueError, KeyError, FileNotFoundError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Re-run, through the session, the after-query behind each verified-"
+        "fix fact on a table and compare row counts with the record: a match "
+        "re-baselines the fact (verified_at), a mismatch marks it unverified with both "
+        "counts in its reason. Deterministic and audited (each re-run is a guarded "
+        "query with an id), not policy-gated; it spends session budget, so run it when "
+        "a fix's durability matters to the investigation."
+    )
+    def knowledge_verify(table: str, session_id: str) -> dict:
+        from grayson.knowledge.verify import VerifyError, verify_table
+
+        try:
+            return verify_table(workspace, table, _session(session_id))
+        except (VerifyError, ValueError, KeyError, FileNotFoundError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="The reconcile pass over the whole library: materialize each fact's "
+        "standing onto its doc, fold duplicate open questions, retire questions about "
+        "dropped columns, and report what no rule decides (needs_human: contested "
+        "pairs, unverified and stale facts). dry_run=true reports without writing and "
+        "is always allowed; the real pass lands as one commit and is policy-gated."
+    )
+    def knowledge_reconcile(dry_run: bool = False) -> dict:
+        try:
+            return knowledge_actions.reconcile(
+                workspace, actor="agent", surface="mcp", dry_run=dry_run
+            )
+        except ActionRefused as e:
+            return _refused(e)
+        except (RuntimeError, OSError, ValueError) as e:
+            return _err(e)
 
     @mcp.tool(
         description="Search past findings and fix proposals across ALL sessions — "

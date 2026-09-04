@@ -50,6 +50,7 @@ checkpoints. The console refreshes itself while agents work.*
 | Humans at the boundaries | Fix application, gate overrides, budget raises, and fact confirmation are user actions; the agent-facing config surface is read-only. |
 | Cost control | Auto-`LIMIT`, per-statement timeout, and per-session query budget, bundled as guard profiles. |
 | Audit | Every statement — accepted or rejected — is recorded; `grayson audit reconcile` diffs warehouse history against the trail to catch what ran around it. |
+| Knowledge that ages honestly | Every fact carries a standing derived from what it rests on — a dropped column, a changed definition, a superseded record — and briefings are ranked and capped. Agents prune under a policy the human sets per action, always citing evidence, each action one revertible commit. |
 
 The threat model, the adversarial review history, and the honest limits of
 each layer: [docs/SECURITY.md](docs/SECURITY.md) · [docs/SPEC.md](docs/SPEC.md).
@@ -150,7 +151,7 @@ Recipes, the Docker image, and the trust model of each:
 |---|---|
 | [docs/SESSIONS.md](docs/SESSIONS.md) | Running sessions: harness setup, the loop in detail, charts, guard profiles and settings |
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | Workflow templates: the core seven, required vs suggested checks, forking and ownership, lint |
-| [docs/LIBRARY.md](docs/LIBRARY.md) | The team library: knowledge provenance, user ids, records that compound, knowledge-only access |
+| [docs/LIBRARY.md](docs/LIBRARY.md) | The team library: knowledge provenance, standing and pruning, the knowledge policy, user ids, records that compound, knowledge-only access |
 | [docs/CHECKS.md](docs/CHECKS.md) | Feeding external checks (dbt, Airflow, …) in as pre-vetted leads |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment recipes: solo, knowledge appliance, credential-isolated server |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, adversarial review log, bypass and containment |

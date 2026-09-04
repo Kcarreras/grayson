@@ -203,6 +203,35 @@ GLOSSARY: dict[str, str] = {
         "from queries), user_confirmed (a human blessed it — agents can never "
         "set this themselves)."
     ),
+    "fact_standing": (
+        "Whether what a fact rests on still holds, separate from who vouches for "
+        "it: current; unverified (a definition it was recorded against changed, or "
+        "it sat proposed past the horizon — a lead to re-check); stale (a column it "
+        "names was dropped, or its record is gone); retired (someone retired it, or "
+        "a confirmed successor superseded it). Computed from the doc's anchors on "
+        "every read; retired is the one sticky state."
+    ),
+    "contested": (
+        "Pairs grayson cannot judge: a fact proposing to supersede another that no "
+        "one has confirmed, two answers to one question, or two facts on one "
+        "column with mixed provenance. Confirm the correction to execute it, or "
+        "mark the pair compatible if both hold."
+    ),
+    "agent_actions": (
+        "Lifecycle actions agents took here recently under the knowledge policy — "
+        "what they retired, restored, dismissed, resolved, with the reason. The "
+        "audit that replaces pre-approval: every one is its own library commit."
+    ),
+    "knowledge_policy": (
+        "Which lifecycle actions on facts an agent may take alone. propose: a human "
+        "acts on everything. curate: evidence-backed actions are the agent's, "
+        "judgment-only ones the human's. autonomous: the agent does all of it, the "
+        "human audits after. A linked team library's policy can narrow this, never "
+        "widen it. Evidence is required from an agent whatever the policy says."
+    ),
+    "retired_questions": (
+        "Open questions dismissed as moot, with who and why — kept so no agent re-asks them."
+    ),
     "external_checks": (
         "Deterministic checks your automation (Airflow, dbt, ...) runs on a "
         "schedule, dropped into the library as JSON. Agents see failing checks "

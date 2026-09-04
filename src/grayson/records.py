@@ -76,6 +76,47 @@ def _session_base(sid: str, meta: dict) -> dict:
     }
 
 
+#: how a record reads in search: current first, then resolved (a finding a
+#: passing proposal fixed), then superseded — history ranks below the live
+_STATE_RANK = {"current": 0, "verified": 0, "failed": 0, "resolved": 1, "superseded": 2}
+
+
+def annotate_states(rows: list[dict]) -> list[dict]:
+    """Each finding row learns whether it was fixed (`resolved_by`: a proposal
+    in the same session whose verification passed) or superseded, as a
+    `state`; proposals carry their verdict as one. A read-time join on the
+    finding link that every proposal already records — no format change, so a
+    record published by an older grayson reads the same."""
+    passing: dict[tuple[str, str], str] = {}
+    for r in rows:
+        if r.get("kind") == "proposal" and r.get("verdict") == "pass" and r.get("finding_fid"):
+            passing.setdefault((r["session_id"], str(r["finding_fid"])), r["id"])
+    out: list[dict] = []
+    for r in rows:
+        row = dict(r)
+        if row.get("kind") == "finding":
+            if row.get("superseded_by"):
+                row["state"] = "superseded"
+            elif (row["session_id"], str(row["id"])) in passing:
+                row["state"] = "resolved"
+                row["resolved_by"] = passing[(row["session_id"], str(row["id"]))]
+            else:
+                row["state"] = "current"
+        elif row.get("kind") == "proposal":
+            verdict = row.get("verdict")
+            row["state"] = "verified" if verdict == "pass" else "failed" if verdict else "current"
+        else:
+            row["state"] = "current"
+        out.append(row)
+    return out
+
+
+def _rank(rows: list[dict]) -> list[dict]:
+    """Current before resolved before superseded; newest first within each."""
+    newest = sorted(rows, key=lambda r: r.get("ts") or "", reverse=True)
+    return sorted(newest, key=lambda r: _STATE_RANK.get(str(r.get("state")), 0))
+
+
 def collect_records(workspace: Workspace, kind: str | None = None) -> list[dict]:
     """All findings and proposals across local sessions, newest session first,
     followed by team records from the library that no local session covers."""
@@ -425,6 +466,38 @@ def delete_session_records(workspace: Workspace, session_id: str, reason: str = 
     }
 
 
+def parse_record_ref(ref: str | None) -> tuple[str, str] | None:
+    """`<session_id>/<record_id>` — how a finding names a published record from
+    another session that it supersedes. None for a bare, same-session id."""
+    if not ref or "/" not in ref:
+        return None
+    sid, _, rid = ref.partition("/")
+    if not sid or not rid or "/" in rid:
+        return None
+    return sid, rid
+
+
+def mark_record_superseded(workspace: Workspace, session_id: str, record_id: str, by: str) -> bool:
+    """Point a published finding at the (accepted) finding that supersedes it,
+    across sessions: the library copy stops reading as current. First wins —
+    a record already superseded is never re-pointed. Best-effort like every
+    publication; returns whether the record changed."""
+    from grayson.library import maybe_auto_push
+    from grayson.util import atomic_write_text
+
+    path = _record_path(workspace.records_dir, session_id, record_id)
+    data = get_library_record(workspace.records_dir, session_id, record_id)
+    if data is None or data.get("kind") != "finding" or data.get("superseded_by"):
+        return False
+    data["superseded_by"] = by
+    try:
+        atomic_write_text(path, json.dumps(data, indent=2, default=str) + "\n")
+    except OSError:
+        return False
+    maybe_auto_push(workspace, f"grayson records: supersede {session_id}/{record_id} by {by}")
+    return True
+
+
 def library_records(records_dir: Path, kind: str | None = None) -> list[dict]:
     """Summary rows for every published record in the library."""
     if kind is not None and kind not in RECORD_KINDS:
@@ -454,8 +527,12 @@ def search_library_records(
     records_dir: Path, term: str = "", kind: str | None = None, limit: int = 50
 ) -> list[dict]:
     """Library-only record search (what the knowledge-only server exposes)."""
-    rows = library_records(records_dir, kind)
-    rows.sort(key=lambda r: r.get("ts") or "", reverse=True)
+    if kind is not None and kind not in RECORD_KINDS:
+        raise ValueError(f"kind must be one of {RECORD_KINDS}")
+    rows = annotate_states(library_records(records_dir))
+    if kind is not None:
+        rows = [r for r in rows if r["kind"] == kind]
+    rows = _rank(rows)
     if term:
         needle = term.lower()
         rows = [
@@ -489,7 +566,12 @@ def search_records(
     Results carry summaries, not full payloads (use get_record for those) —
     they are list rows for humans and agents scanning for a past problem.
     """
-    records = collect_records(workspace, kind)
+    if kind is not None and kind not in RECORD_KINDS:
+        raise ValueError(f"kind must be one of {RECORD_KINDS}")
+    records = annotate_states(collect_records(workspace))
+    if kind is not None:
+        records = [r for r in records if r["kind"] == kind]
+    records = _rank(records)
     if term:
         needle = term.lower()
         records = [

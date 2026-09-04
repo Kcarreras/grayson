@@ -1,9 +1,24 @@
 from grayson.knowledge.define import record_definition
+from grayson.knowledge.policy import (
+    ACTIONS,
+    PRESETS,
+    TRUST_LEVELS,
+    EffectivePolicy,
+    KnowledgePolicy,
+    PolicyError,
+)
 from grayson.knowledge.relationships import (
     CARDINALITIES,
     normalize_relationship,
     normalize_relationships,
     relationship_issues,
+)
+from grayson.knowledge.standing import (
+    STANDINGS,
+    StandingContext,
+    annotate_doc,
+    contested_pairs,
+    effective_standing,
 )
 from grayson.knowledge.store import (
     DEFINITION_KINDS,
@@ -23,19 +38,30 @@ from grayson.knowledge.store import (
 )
 
 __all__ = [
+    "ACTIONS",
+    "PRESETS",
+    "STANDINGS",
+    "TRUST_LEVELS",
     "CARDINALITIES",
     "DEFINITION_KINDS",
     "DEFINITION_PROVENANCE_KEYS",
     "KNOWLEDGE_FORMAT",
     "PROFILE_KEYS",
     "SNAPSHOT_INLINE_CHARS",
+    "EffectivePolicy",
     "Fact",
     "KnowledgeDocError",
+    "KnowledgePolicy",
     "KnowledgeStore",
+    "PolicyError",
+    "StandingContext",
+    "annotate_doc",
     "column_drift",
     "columns_from_describe",
     "completeness",
+    "contested_pairs",
     "describe_drift",
+    "effective_standing",
     "drift_report",
     "normalize_relationship",
     "normalize_relationships",

@@ -37,9 +37,11 @@
 {% endif %}
 
 {% set open_q = tables | selectattr("completeness") | selectattr("completeness.open_questions") | list | length %}
+{% set contested_n = tables | selectattr("contested") | list | length %}
+{% set agent_n = tables | selectattr("agent_actions") | list | length %}
 <details class="section" id="tables" data-fold="tables" open>
 <summary><h2>Tables
-  <span class="h-count">{{ tables | length }}{% if open_q %} · {{ open_q }} with open questions{% endif %}</span></h2></summary>
+  <span class="h-count">{{ tables | length }}{% if open_q %} · {{ open_q }} with open questions{% endif %}{% if contested_n %} · {{ contested_n }} contested{% endif %}{% if agent_n %} · {{ agent_n }} with recent agent actions{% endif %}</span></h2></summary>
 {% if not tables %}
 <div class="card empty">
   {% if q %}Nothing matches “{{ q }}”.{% else %}No tables described yet. Agents add them as
@@ -52,8 +54,12 @@
   ("gaps", "asc", "Most described first"),
   ("facts", "desc", "Most facts first"),
   ("name", "asc", "Name A–Z"),
+  ("attention", "desc", "Needs attention first"),
 ], [
   ("open", "open questions"),
+  ("contested", "contested"),
+  ("attention", "unverified or stale"),
+  ("agent", "agent actions"),
   ("incomplete", "gaps"),
   ("complete", "base complete"),
   ("error", "unreadable"),
@@ -75,14 +81,25 @@
 </details>
 {% else %}
 {% set c = t.completeness %}
+{% set st = t.standing or {} %}
+{% set attention = (st.unverified or 0) + (st.stale or 0) %}
 <details class="card foldcard" data-item data-fold="{{ t.table }}"
-  data-tags="{{ 'open' if c.open_questions }} {{ 'complete' if c.base_complete else 'incomplete' }}"
+  data-tags="{{ 'open' if c.open_questions }} {{ 'complete' if c.base_complete else 'incomplete' }}{% if t.contested %} contested{% endif %}{% if attention %} attention{% endif %}{% if t.agent_actions %} agent{% endif %}"
   data-s-name="{{ t.table }}" data-s-open="{{ c.open_questions }}"
-  data-s-gaps="{{ c.missing | length }}" data-s-facts="{{ c.facts }}">
+  data-s-gaps="{{ c.missing | length }}" data-s-facts="{{ c.facts }}"
+  data-s-attention="{{ attention + (t.contested or 0) * 10 }}">
   <summary class="chartsum">
     <span class="name"><span class="c-caret">▸</span>
       <a class="mono" href="/knowledge/{{ t.table }}?t={{ token }}" title="Open {{ t.table }}"><b>{{ fqn(t.table) }}</b></a></span>
     <span class="row" style="margin-left: auto;">
+      {% if t.contested %}
+        <span class="badge bad" title="Facts that disagree, or a pending supersession">{{ t.contested }} contested</span>{% endif %}
+      {% if st.stale %}
+        <span class="badge bad" title="A column they name was dropped, or their record is gone">{{ st.stale }} stale</span>{% endif %}
+      {% if st.unverified %}
+        <span class="badge attn" title="Something they rest on changed; re-check">{{ st.unverified }} unverified</span>{% endif %}
+      {% if t.agent_actions %}
+        <span class="badge plain" title="Lifecycle actions agents took here recently">{{ t.agent_actions }} agent action{{ "s" if t.agent_actions != 1 }}</span>{% endif %}
       {% if c.open_questions %}
         <span class="badge attn">{{ c.open_questions }} open</span>{% endif %}
       {% if c.base_complete %}<span class="badge ok">base complete</span>

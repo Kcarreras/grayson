@@ -206,6 +206,11 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             ql = q.lower()
             hit_tables = {h["source"] for h in fact_hits}
             all_tables = [t for t in all_tables if ql in t.lower() or t in hit_tables]
+        from grayson.knowledge import StandingContext, annotate_doc
+        from grayson.library import effective_policy
+
+        policy = effective_policy(workspace)
+        ctx = StandingContext.build(workspace.records_dir, policy)
         rows = []
         for fqn in all_tables:
             try:
@@ -215,8 +220,16 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 # the whole point is telling the user which file to fix
                 rows.append({"table": fqn, "grain": None, "completeness": None, "error": str(e)})
                 continue
+            annotated = annotate_doc(doc, ctx)
             rows.append(
-                {"table": fqn, "grain": doc.get("grain"), "completeness": completeness(doc)}
+                {
+                    "table": fqn,
+                    "grain": doc.get("grain"),
+                    "completeness": completeness(doc),
+                    "standing": annotated["standing_counts"],
+                    "contested": len(annotated["contested"]),
+                    "agent_actions": len(annotated["agent_actions"]),
+                }
             )
         # The map always shows the whole library, not the filtered subset: a
         # search narrows the list you are reading, not the schema you are in.
@@ -236,20 +249,31 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     @app.get("/knowledge/{fqn}", response_class=HTMLResponse)
     def knowledge_table(request: Request, fqn: str) -> Any:
         _check(request)
+        from grayson.knowledge import actions as knowledge_actions
+
         store = KnowledgeStore(workspace.knowledge_dir)
         try:
-            doc = store.read(fqn)
+            doc = knowledge_actions.show(workspace, fqn)
         except KnowledgeDocError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        facts = doc["facts"]
+        by_id = {f["id"]: f for f in facts}
         return templates.TemplateResponse(
             request,
             "knowledge_table.html",
             {
                 "nav": "knowledge",
                 "doc": doc,
-                "comp": completeness(doc),
+                "comp": doc["completeness"],
+                "live_facts": [f for f in facts if f["standing"] != "retired"],
+                "retired_facts": [f for f in facts if f["standing"] == "retired"],
+                "contested": [
+                    {**c, "pair": [by_id.get(i) for i in c["facts"]]} for c in doc["contested"]
+                ],
+                "agent_actions": doc["agent_actions"],
+                "policy": doc["policy"],
                 "snapshots": {
                     str(d["snapshot"]): store.read_snapshot(doc["table"], str(d["snapshot"]))
                     for d in doc["definitions"]
@@ -286,6 +310,82 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             f"grayson knowledge: confirm {fact_id} on {fqn.upper()}",
             lambda store: store.confirm_fact(fqn, fact_id),
         )
+
+    def _lifecycle(fqn: str, fn, *args, **kwargs) -> Any:
+        """One console lifecycle action: the human's, so never policy-refused;
+        the action commits itself as one library commit."""
+        from grayson.knowledge.actions import ActionRefused
+
+        try:
+            fn(workspace, *args, actor="user", surface="console", **kwargs)
+        except ActionRefused as e:  # pragma: no cover - a user is never refused
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except (KnowledgeDocError, ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=str(e.args[0] if e.args else e)) from e
+        return _redirect(f"/knowledge/{fqn}")
+
+    @app.post("/knowledge/{fqn}/fact/{fact_id}/retire")
+    async def knowledge_retire_fact(request: Request, fqn: str, fact_id: str) -> Any:
+        _check(request)
+        from grayson.knowledge import actions as knowledge_actions
+
+        form = await request.form()
+        reason = str(form.get("reason", "")).strip()
+        if not reason:
+            raise HTTPException(status_code=400, detail="retiring a fact needs a reason")
+        return _lifecycle(fqn, knowledge_actions.retire, fqn, fact_id, reason=reason)
+
+    @app.post("/knowledge/{fqn}/fact/{fact_id}/restore")
+    def knowledge_restore_fact(request: Request, fqn: str, fact_id: str) -> Any:
+        _check(request)
+        from grayson.knowledge import actions as knowledge_actions
+
+        return _lifecycle(fqn, knowledge_actions.restore, fqn, fact_id)
+
+    @app.post("/knowledge/{fqn}/fact/{fact_id}/supersede")
+    async def knowledge_supersede_fact(request: Request, fqn: str, fact_id: str) -> Any:
+        """A human correcting a fact: the corrected one is recorded, confirmed,
+        and the supersession executes — one action, user provenance."""
+        _check(request)
+        from grayson.knowledge import actions as knowledge_actions
+
+        form = await request.form()
+        text = str(form.get("fact", "")).strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="the corrected fact's text is required")
+        return _lifecycle(fqn, knowledge_actions.supersede, fqn, fact_id, text)
+
+    @app.post("/knowledge/{fqn}/reanchor")
+    def knowledge_reanchor(request: Request, fqn: str) -> Any:
+        _check(request)
+        from grayson.knowledge import actions as knowledge_actions
+
+        return _lifecycle(fqn, knowledge_actions.reanchor, fqn, None)
+
+    @app.post("/knowledge/{fqn}/resolve")
+    async def knowledge_resolve_pair(request: Request, fqn: str) -> Any:
+        _check(request)
+        from grayson.knowledge import actions as knowledge_actions
+
+        form = await request.form()
+        a = str(form.get("fact_a", "")).strip()
+        b = str(form.get("fact_b", "")).strip()
+        if not a or not b:
+            raise HTTPException(status_code=400, detail="two fact ids are required")
+        note = str(form.get("note", "")).strip()
+        return _lifecycle(fqn, knowledge_actions.resolve, fqn, a, b, note=note)
+
+    @app.post("/knowledge/{fqn}/question/dismiss")
+    async def knowledge_dismiss_question(request: Request, fqn: str) -> Any:
+        _check(request)
+        from grayson.knowledge import actions as knowledge_actions
+
+        form = await request.form()
+        question = str(form.get("question", "")).strip()
+        reason = str(form.get("reason", "")).strip()
+        if not question or not reason:
+            raise HTTPException(status_code=400, detail="question and reason are required")
+        return _lifecycle(fqn, knowledge_actions.dismiss_question, fqn, question, reason)
 
     @app.post("/knowledge/{fqn}/fact")
     async def knowledge_add_fact(request: Request, fqn: str) -> Any:
@@ -1287,6 +1387,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     def _settings_context(error: str | None = None) -> dict:
         from grayson.config_edit import config_summary
         from grayson.library import (
+            effective_policy,
             library_admins,
             library_root,
             library_status,
@@ -1303,6 +1404,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "lib": library_status(workspace),
             "admins": library_admins(root),
             "admins_changed": settings_last_change(root),
+            "policy": effective_policy(workspace).summary(),
             "error": error,
         }
 

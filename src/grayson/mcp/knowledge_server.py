@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from grayson.checks import ChecksStore
-from grayson.knowledge import KnowledgeStore, completeness
+from grayson.knowledge import KnowledgeStore, StandingContext, annotate_doc, completeness
 from grayson.views import ViewRegistry
 from grayson.workflows import (
     WorkflowNotFound,
@@ -33,7 +33,11 @@ checks, records_search for how similar problems were diagnosed and fixed
 before, and workflow_list for how this team structures investigations.
 This surface cannot write, run queries, or start sessions — it is a library
 card, not the harness. Treat user_confirmed facts as authoritative; treat
-proposed facts as unverified hypotheses.
+proposed facts as unverified hypotheses. Every fact also carries a standing —
+current, or unverified / stale / retired with the reason — computed from what
+it rests on (the columns it names, the definition hash it was recorded
+against, the record it came from): read a stale or retired fact as history,
+an unverified one as a lead to re-check.
 """
 
 
@@ -48,6 +52,13 @@ def build_knowledge_server(library_root: Path) -> Any:
 
     def _err(e: Exception) -> dict:
         return {"error": str(e.args[0] if e.args else e), "type": type(e).__name__}
+
+    def _policy():
+        from grayson.knowledge.policy import DEFAULT_TEAM_PRESET, KnowledgePolicy
+        from grayson.library import library_policy
+
+        policy, _report = library_policy(library_root)
+        return policy or KnowledgePolicy.from_preset(DEFAULT_TEAM_PRESET)
 
     @mcp.tool(
         description="Read the knowledge library entry for a table, including its "
@@ -69,7 +80,14 @@ def build_knowledge_server(library_root: Path) -> Any:
             text = store.read_snapshot(doc["table"], str(name)) if name else None
             if text is not None:
                 snapshots[str(name)] = text[:SNAPSHOT_INLINE_CHARS]
-        return {**doc, "completeness": completeness(doc), "definition_snapshots": snapshots}
+        # standing is computed from library files alone, so this reader gets it
+        # too: which facts still rest on what they were recorded against
+        annotated = annotate_doc(doc, StandingContext.build(library_root / "records", _policy()))
+        return {
+            **annotated,
+            "completeness": completeness(doc),
+            "definition_snapshots": snapshots,
+        }
 
     @mcp.tool(description="Search the knowledge library (facts and glossary) for a term.")
     def knowledge_search(term: str) -> list[dict]:
@@ -158,6 +176,7 @@ def build_knowledge_server(library_root: Path) -> Any:
             "mode": "knowledge-only (read-only)",
             **repo_status(library_root),
             "admins": library_admins(library_root),
+            "knowledge_policy": _policy().summary(),
         }
 
     return mcp
