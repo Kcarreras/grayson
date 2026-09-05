@@ -70,6 +70,26 @@ Absolute paths and `~` paths keep their existing meaning. If an old relative
 path relied on a particular shell directory, change it to the intended
 config-relative or absolute path before resuming work.
 
+## Adopting regression checks
+
+[Regression checks](REGRESSIONS.md) add optional files under the existing
+library's `checks/` directory. There is no configuration, session database, or
+knowledge migration. Updating the package and refreshing installed harness
+instructions with the steps above enables discovery, proposal, and replay.
+Restart MCP servers so the new tools appear.
+
+Existing external JSON results, knowledge, workflows, custom harness text,
+and connection settings remain usable. Definitions are YAML in
+`checks/regressions/`; older Grayson clients ignore them and still read native
+JSON replay results. Those older clients cannot run checks or interpret
+retirement, so they may continue showing a retired check's last result until
+they upgrade. Only current clients should manage regression definitions.
+
+Upgrading never creates or activates checks automatically. Propose checks from
+existing executed queries as useful; a person reviews each before activation.
+Source sessions and cached rows stay local. Teammates can replay a shared check
+without copying the original session.
+
 ## SeekQL rename
 
 Older releases used `seekql.toml`, `.seekql/`, and the `seekql` command. Grayson

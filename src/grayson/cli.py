@@ -766,6 +766,9 @@ def session_start(
     from grayson.checks import ChecksStore
 
     result["external_checks"] = ChecksStore(ws.checks_dir).summary(tables or None)
+    from grayson.checks.regression import RegressionStore
+
+    result["regression_checks"] = RegressionStore(ws.checks_dir).inventory(tables or None)
     result["hints"] = [
         "human console (interventions, reviews, approvals): grayson ui serve",
         f'run a guarded query: grayson query run {session.id} -q "SELECT ..."',
@@ -2996,13 +2999,118 @@ def knowledge_verify(
 # -- checks --------------------------------------------------------------
 
 
+@checks_app.command("regressions")
+def checks_regressions(tables: list[str] = typer.Option([], "--table", "-t")) -> None:
+    """Reusable regression checks and their human-review state."""
+    from grayson.checks.regression import RegressionStore
+
+    emit(RegressionStore(_workspace().checks_dir).inventory(tables or None))
+
+
+@checks_app.command("definition")
+def checks_definition(check_id: str) -> None:
+    """Show a check's SQL, expectation, source evidence, and approval."""
+    from grayson.checks.regression import RegressionStore
+
+    try:
+        emit(RegressionStore(_workspace().checks_dir).read(check_id).view())
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@checks_app.command("propose")
+def checks_propose(
+    session_id: str,
+    qid: str,
+    check_id: str = typer.Option(..., "--id"),
+    name: str = typer.Option(..., "--name"),
+    description: str = typer.Option(..., "--description", help="What regression this prevents."),
+    expect: str = typer.Option("no_rows", "--expect", help="no_rows | scalar"),
+    column: str = typer.Option("", "--column"),
+    operator: str = typer.Option(
+        "eq", "--operator", help="eq | ne | lt | lte | gt | gte | between"
+    ),
+    value: str | None = typer.Option(None, "--value"),
+    upper: str | None = typer.Option(None, "--upper"),
+) -> None:
+    """Turn an executed query into a proposed check for human review."""
+    from grayson.checks.regression import propose_check
+
+    try:
+        emit(
+            propose_check(
+                _session(session_id),
+                qid,
+                check_id,
+                name,
+                description,
+                {
+                    "kind": expect,
+                    "column": column,
+                    "operator": operator,
+                    "value": value,
+                    "upper": upper,
+                },
+            )
+        )
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+def _decide_regression(check_id: str, action: str) -> None:
+    from grayson.checks.regression import RegressionStore, decide_check
+
+    ws = _workspace()
+    try:
+        check = RegressionStore(ws.checks_dir).read(check_id)
+        typer.echo(json.dumps(check.view(), indent=2), err=True)
+        require_interactive(
+            f"{action} a regression check",
+            f"{action.capitalize()} '{check.name}' with this SQL and expectation?",
+        )
+        emit(decide_check(ws, check_id, action, check.digest(), actor="user"))
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@checks_app.command("activate")
+def checks_activate(check_id: str) -> None:
+    """Review and activate a check (human terminal or console only)."""
+    _decide_regression(check_id, "activate")
+
+
+@checks_app.command("retire")
+def checks_retire(check_id: str) -> None:
+    """Stop replaying a check while retaining its definition and history."""
+    _decide_regression(check_id, "retire")
+
+
+@checks_app.command("run")
+def checks_run(
+    session_id: str,
+    check_ids: list[str] = typer.Option(
+        [], "--check", help="Repeat to select checks; default: active checks on session targets."
+    ),
+) -> None:
+    """Rerun approved checks through this session's guard. Nonzero exit on fail or error."""
+    from grayson.checks.regression import run_checks
+
+    try:
+        report = run_checks(_session(session_id), check_ids or None)
+    except (ValueError, OSError) as e:
+        fail(str(e))
+    emit(report)
+    if not report["ok"]:
+        raise typer.Exit(1)
+
+
 @checks_app.command("status")
 def checks_status(
     tables: list[str] = typer.Option(
         [], "--table", "-t", help="Only checks touching these tables."
     ),
 ) -> None:
-    """Latest result per external check, failures and overdue runs called out."""
+    """Latest result per check, failures and overdue runs called out."""
     from grayson.checks import ChecksStore
 
     emit(ChecksStore(_workspace().checks_dir).summary(list(tables) or None))
@@ -3014,7 +3122,7 @@ def checks_list(
         [], "--table", "-t", help="Only checks touching these tables."
     ),
 ) -> None:
-    """Latest run of every external check (full result payloads)."""
+    """Latest run of every check (full result payloads)."""
     from grayson.checks import ChecksStore
 
     emit(

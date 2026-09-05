@@ -18,6 +18,7 @@ from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
+from starlette.concurrency import run_in_threadpool
 
 from grayson import __version__
 from grayson.checks import ChecksStore
@@ -120,8 +121,11 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         }
 
     def _redirect(path: str) -> RedirectResponse:
+        path, _, fragment = path.partition("#")
         sep = "&" if "?" in path else "?"
         target = f"{path}{sep}t={token}" if token else path
+        if fragment:
+            target += f"#{fragment}"
         return RedirectResponse(url=target, status_code=303)
 
     # Vendored JS/CSS. Deliberately not token-gated: these are public library
@@ -504,11 +508,140 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     @app.get("/checks", response_class=HTMLResponse)
     def checks_page(request: Request) -> Any:
         _check(request)
+        from grayson.checks.regression import RegressionStore
+
         return templates.TemplateResponse(
             request,
             "checks.html",
-            {"nav": "checks", "summary": ChecksStore(workspace.checks_dir).summary()},
+            {
+                "nav": "checks",
+                "summary": ChecksStore(workspace.checks_dir).summary(),
+                "regressions": RegressionStore(workspace.checks_dir).inventory(),
+            },
         )
+
+    @app.get("/checks/regression/{check_id}", response_class=HTMLResponse)
+    def regression_detail(request: Request, check_id: str) -> Any:
+        _check(request)
+        from grayson.checks.regression import RegressionStore
+
+        try:
+            check = RegressionStore(workspace.checks_dir).read(check_id)
+        except (ValueError, OSError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        sessions = []
+        for sid in reversed(workspace.list_session_ids()):
+            try:
+                session = Session(workspace, sid)
+                if session.stage != "closed" and set(session.targets).intersection(check.tables):
+                    sessions.append(session.summary())
+            except (ValueError, OSError):
+                continue
+        history = [
+            r.model_dump()
+            for r in ChecksStore(workspace.checks_dir).history(f"regression.{check_id}")[:50]
+        ]
+        local_ids = set(workspace.list_session_ids())
+        for result in history:
+            result["local_evidence"] = result["metrics"].get("session_id") in local_ids
+        return templates.TemplateResponse(
+            request,
+            "regression.html",
+            {
+                "nav": "checks",
+                "check": check.view(),
+                "history": history,
+                "sessions": sessions,
+                "source_available": check.source_session in workspace.list_session_ids(),
+            },
+        )
+
+    @app.post("/session/{sid}/query/{qid}/regression")
+    async def regression_propose(request: Request, sid: str, qid: str) -> Any:
+        _check(request)
+        from grayson.checks.regression import propose_check
+
+        form = await request.form()
+        name = str(form.get("name", ""))
+        import re
+
+        slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:48]
+        check_id = f"check_{slug}_{secrets.token_hex(3)}"
+        kind = str(form.get("kind", "no_rows"))
+        expectation = {"kind": kind}
+        if kind == "scalar":
+            expectation.update(
+                column=str(form.get("column", "")),
+                operator=str(form.get("operator", "eq")),
+                value=form.get("value") or None,
+                upper=form.get("upper") or None,
+            )
+        try:
+            report = await run_in_threadpool(
+                propose_check,
+                _session(sid),
+                qid,
+                check_id,
+                name,
+                str(form.get("description", "")),
+                expectation,
+            )
+        except (ValueError, OSError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        suffix = "?sync=failed" if not report.get("library_sync", {}).get("ok", True) else ""
+        return _redirect(f"/checks/regression/{check_id}{suffix}")
+
+    @app.post("/checks/regression/{check_id}/decide")
+    async def regression_decide(request: Request, check_id: str) -> Any:
+        _check(request)
+        from grayson.checks.regression import decide_check
+
+        form = await request.form()
+        try:
+            report = await run_in_threadpool(
+                decide_check,
+                workspace,
+                check_id,
+                str(form.get("action", "")),
+                str(form.get("digest", "")),
+                actor="user",
+            )
+        except (ValueError, OSError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        suffix = "?sync=failed" if not report.get("library_sync", {}).get("ok", True) else ""
+        return _redirect(f"/checks/regression/{check_id}{suffix}")
+
+    @app.post("/checks/regression/{check_id}/run")
+    async def regression_run(request: Request, check_id: str) -> Any:
+        _check(request)
+        from grayson.checks.regression import run_checks
+
+        form = await request.form()
+        try:
+            report = await run_in_threadpool(
+                run_checks, _session(str(form.get("session_id", ""))), [check_id]
+            )
+            if any(r.get("persistence_error") for r in report["results"]):
+                raise ValueError(
+                    "Replay finished in the session, but its library result could not be saved. "
+                    "See session events."
+                )
+        except (ValueError, OSError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        suffix = "?sync=failed" if not report.get("library_sync", {}).get("ok", True) else ""
+        return _redirect(f"/checks/regression/{check_id}{suffix}")
+
+    @app.post("/session/{sid}/regressions/run")
+    def session_regressions_run(request: Request, sid: str) -> Any:
+        _check(request)
+        from grayson.checks.regression import run_checks
+
+        try:
+            report = run_checks(_session(sid))
+        except (ValueError, OSError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        suffix = "?sync=failed" if not report.get("library_sync", {}).get("ok", True) else ""
+        return _redirect(f"/session/{sid}{suffix}#regressions")
 
     # -- workflows --------------------------------------------------------
 
@@ -1749,6 +1882,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         return out
 
     def _session_context(s: Session, error: str | None = None) -> dict:
+        from grayson.checks.regression import RegressionStore
+
         queries = s.query_log(100)
         return {
             "nav": "sessions",
@@ -1763,6 +1898,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "queries": queries,
             "qsql": {q["qid"]: q.get("sql_raw") or "" for q in queries},
             "events": s.events(40),
+            "regression_runs": [e["payload"] for e in s.events(20, event_type="regression_run")],
+            "regression_checks": RegressionStore(workspace.checks_dir).inventory(s.targets),
             "charts": _charts_context(s),
             "published": _removal(s.id),
             "error": error,

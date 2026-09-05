@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}grayson — {{ check.name }}{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/checks?t={{ token }}">Checks</a><span class="sep">/</span>Regression</nav>
+<div class="pagehead">
+  <h1>{{ check.name }}</h1>
+  <span class="badge {{ 'ok' if check.review_current else 'warn' if check.state != 'retired' else 'plain' }}">
+    {{ 'needs review' if check.state == 'active' and not check.review_current else check.state }}</span>
+</div>
+<p class="ink2">{{ check.description }}</p>
+{% if request.query_params.get('sync') == 'failed' %}
+<div class="banner">Saved locally, but library sharing did not finish. Check the library status in Settings, then retry the library push.</div>
+{% endif %}
+<div class="card" style="margin-top: 18px;">
+  <div class="overline">Expected result</div>
+  <div style="font-size: 20px; margin: 8px 0;">{{ check.expectation_text }}</div>
+  <div class="muted small">{{ check.tables | join(', ') }}</div>
+</div>
+
+{% if check.state != 'retired' and not check.review_current %}
+<div class="card ink2" style="margin-top: 16px;">Review the SQL and expectation before activating.
+  A passing source query alone does not establish the right business rule.</div>
+{% endif %}
+<h2>SQL to replay</h2>
+<pre class="sql">{{ check.sql | sqlhl }}</pre>
+<div class="kv">
+  <div class="item"><b>Source evidence</b>
+    {% if source_available %}<a class="mono" href="/session/{{ check.source_session }}/query/{{ check.source_qid }}?t={{ token }}">{{ check.source_qid }}</a>
+    {% else %}<span class="mono">{{ check.source_qid }}</span> <span class="muted">(source session on another workspace)</span>{% endif %}
+  </div>
+  <div class="item"><b>Originally observed</b> {{ check.source_observation.details }}</div>
+  <div class="item"><b>Source connection</b> {{ check.source_connection }}</div>
+  {% if check.reviewed_at %}<div class="item"><b>Reviewed</b> {{ check.reviewed_by or 'user' }} · {{ check.reviewed_at }}</div>{% endif %}
+</div>
+
+{% if check.state != 'retired' %}
+<div class="card" style="margin-top: 20px;">
+{% if not check.review_current %}
+  <form method="post" action="/checks/regression/{{ check.id }}/decide?t={{ token }}">
+    <input type="hidden" name="digest" value="{{ check.digest }}">
+    <input type="hidden" name="action" value="activate">
+    <button class="btn primary" type="submit">Activate this check</button>
+    <span class="small muted">I have reviewed the SQL and the expectation above.</span>
+  </form>
+{% else %}
+  <div class="overline">Run with fresh evidence</div>
+  {% if sessions %}
+  <form method="post" action="/checks/regression/{{ check.id }}/run?t={{ token }}" class="elform" style="margin-top: 10px;">
+    <label>Investigation session
+      <select name="session_id" required>{% for s in sessions %}
+        <option value="{{ s.id }}">{{ s.title or s.id }} · {{ s.connection }} · {{ s.guard_profile }}</option>
+      {% endfor %}</select>
+    </label>
+    <div class="submit"><button class="btn primary" type="submit">Run check</button>
+      <span class="small muted">Uses this session's scope and budget. Does not widen access.</span></div>
+  </form>
+  {% else %}<p class="muted">Start an investigation session over {{ check.tables | join(', ') }} to run this check.</p>{% endif %}
+{% endif %}
+</div>
+{% endif %}
+
+<h2>Run history <span class="h-count">{{ history | length }} recent {{ 'result' if history | length == 1 else 'results' }}</span></h2>
+{% if history %}
+<div class="card scroll"><table>
+<thead><tr><th>Result</th><th>Observed</th><th>Evidence</th><th>Run at</th></tr></thead>
+<tbody>{% for r in history %}<tr>
+  <td><span class="badge {{ 'ok' if r.status == 'pass' else 'bad' if r.status in ['fail', 'error'] else 'plain' }}">{{ r.status }}</span></td>
+  <td class="small">{{ r.details }}</td>
+  <td class="small mono">{% if r.local_evidence %}
+    <a href="/session/{{ r.metrics.session_id }}/query/{{ r.metrics.qid }}?t={{ token }}">{{ r.metrics.qid }}</a>
+    {% else %}{{ r.metrics.get('qid', '') }}{% endif %}
+    <div class="muted">{{ r.metrics.get('connection', '') }}</div></td>
+  <td class="muted small mono">{{ r.run_at }}</td>
+</tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="card muted">No replays yet. The original observation is provenance, not a current test result.</div>{% endif %}
+<p class="small faint">A failure means the approved expectation was violated. Investigate the cause using the new query evidence.
+Errors are inconclusive. Checks do not accept findings or complete workflow gates.</p>
+
+{% if check.state != 'retired' %}
+<details class="inlinefold" style="margin-top: 24px;">
+  <summary>Retire this check</summary>
+  <p class="muted small">Stop offering it for replay. Its definition and run history remain in the library.
+    To change an expectation, propose a new check and retire the old one.</p>
+  <form method="post" action="/checks/regression/{{ check.id }}/decide?t={{ token }}">
+    <input type="hidden" name="digest" value="{{ check.digest }}">
+    <input type="hidden" name="action" value="retire">
+    <button class="btn" type="submit">Retire check</button>
+  </form>
+</details>
+{% endif %}
+{% endblock %}

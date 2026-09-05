@@ -48,6 +48,7 @@ def test_only_read_tools_registered(server):
         "workflow_show",
         "views_list",
         "checks_status",
+        "checks_regressions",
         "checks_show",
         "records_search",
         "records_get",

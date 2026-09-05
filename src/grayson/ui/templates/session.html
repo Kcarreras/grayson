@@ -196,6 +196,36 @@
 </div>
 {% endif %}
 
+{% set active_regressions = regression_checks.checks | selectattr('review_current') | list %}
+{% if active_regressions or regression_runs %}
+<details class="section" id="regressions" data-fold="regressions" open>
+  <summary><h2>Regression checks <span class="h-count">{{ active_regressions | length }} active on these tables</span></h2></summary>
+  <div class="card">
+    <p class="muted small">Test what previous investigations established. Each replay produces fresh evidence in this session.</p>
+    {% if request.query_params.get('sync') == 'failed' %}
+    <div class="banner">Results saved locally, but library sharing did not finish. Check the library status in Settings, then retry the library push.</div>
+    {% endif %}
+    {% if active_regressions and s.stage != 'closed' %}
+    <form method="post" action="/session/{{ s.id }}/regressions/run?t={{ token }}">
+      <button class="btn" type="submit">Run {{ active_regressions | length }} regression check{{ 's' if active_regressions | length != 1 }}</button>
+      <span class="muted small">Uses your current scope and query budget.</span>
+    </form>
+    {% endif %}
+    {% if regression_runs %}
+    <table style="margin-top: 12px;"><tr><th>Check</th><th>Result</th><th>Observed</th><th>Evidence</th></tr>
+      {% for r in regression_runs %}<tr>
+        <td><a href="/checks/regression/{{ r.id }}?t={{ token }}">{{ r.name }}</a></td>
+        <td><span class="badge {{ 'ok' if r.status == 'pass' else 'bad' }}">{{ r.status }}</span></td>
+        <td class="small">{{ r.details }}{% if r.persistence_error %}
+          <div class="attn-text">Could not save to the library: {{ r.persistence_error }}</div>{% endif %}</td>
+        <td><a class="mono" href="/session/{{ s.id }}/query/{{ r.qid }}?t={{ token }}">{{ r.qid }}</a></td>
+      </tr>{% endfor %}
+    </table>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+
 <details class="section" id="checkpoints" data-fold="checkpoints" open>
 <summary><h2>Checkpoints {{ help("checkpoints") }}
   <span class="h-count">{{ checkpoints | selectattr("status","equalto","complete") | list | length }} of {{ checkpoints | length }} complete{% if readiness.waived_checks %}, {{ readiness.waived_checks | length }} waived{% endif %}</span></h2></summary>

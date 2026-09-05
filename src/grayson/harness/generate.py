@@ -112,6 +112,22 @@ they are equivalent. Never query Snowflake except through grayson.
    refresh any the setup flags. Need another registered view later?
    `grayson views use <sid> <name>` brings it into scope. Note the session id; use it
    in every later command.
+2a. Test what the team already learned: session start lists `regression_checks`.
+   Run its active checks with `grayson checks run <sid>` (MCP: `checks_run`) before
+   diagnosing a known problem from scratch. Each approved SQL/expectation pair
+   runs through the same guard and returns new query ids you can cite. A failing
+   check means its expectation was violated, not that the old root cause returned;
+   investigate it. An error (schema changed, guard refused, missing result) is never
+   a pass. Tests do not complete checkpoints or accept findings for you.
+   After fixing or diagnosing a repeatable issue, turn its evidence query into a
+   proposed regression check: `grayson checks propose <sid> <qid> --id orders_no_dupes
+   --name "Orders remain unique" --description "Catch recurrence of duplicate order ids"`.
+   Default expectation: the query returns no violating rows. For a scalar metric,
+   use `--expect scalar --column N --operator eq --value 0` (also lt/lte/gt/gte/ne,
+   or between with --upper). Choose an explicit business expectation with the user;
+   never adopt today's number as a correctness threshold just because it is on file.
+   The user reviews SQL and expectation in the console's Checks page and activates
+   it; agents can propose and replay checks, never activate or retire them.
 2b. Profile first: `grayson profile table <sid> DB.SCHEMA.TABLE` returns a table's
    whole descriptive battery — per-column nulls, cardinality, ranges, key candidates,
    value frequencies — in three or four guarded queries whose ids are evidence. Do

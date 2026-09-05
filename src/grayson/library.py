@@ -811,6 +811,9 @@ def library_doctor(workspace: Workspace) -> dict:
     workflows = lint_workflows(workspace.workflows_dir)
     schemas = lint_schemas(workspace.findings_schemas_dir, workspace.workflows_dir)
     records = _lint_records(workspace.records_dir)
+    from grayson.checks.regression import RegressionStore
+
+    regressions = RegressionStore(workspace.checks_dir).inventory()
     settings = _lint_settings(lib)
     return {
         "library": str(lib),
@@ -818,12 +821,14 @@ def library_doctor(workspace: Workspace) -> dict:
         and workflows["ok"]
         and schemas["ok"]
         and records["ok"]
-        and settings["ok"],
+        and settings["ok"]
+        and not regressions["errors"],
         "knowledge": knowledge,
         "workflows": workflows,
         "schemas": schemas,
         "records": records,
         "settings": settings,
+        "regressions": regressions,
         # informational: standing never fails the doctor — it is the queue, not a fault
         "standing": standing_report(workspace),
         "policy": effective_policy(workspace).summary(),

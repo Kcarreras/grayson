@@ -2,7 +2,36 @@
 {% from "_macros.html" import check_status, list_tools %}
 {% block title %}grayson — checks{% endblock %}
 {% block content %}
-<h1>External checks {{ help("external_checks") }}</h1>
+<h1>Checks</h1>
+
+<div class="pagehead" style="margin: 18px 0 10px;">
+  <div><h2 style="margin: 0;">Regression library</h2>
+    <p class="muted small">Turn an investigation into a check the whole team can rerun.</p></div>
+</div>
+{% if regressions.errors %}
+<div class="banner">Some regression definitions need repair.
+{% for e in regressions.errors %}<div class="small">{{ e.file }}: {{ e.error }}</div>{% endfor %}</div>
+{% endif %}
+{% if regressions.checks %}
+<div class="card scroll"><table>
+  <thead><tr><th>Regression</th><th>Expectation</th><th>Review</th><th>Tables</th></tr></thead>
+  <tbody>{% for c in regressions.checks %}<tr>
+    <td><a href="/checks/regression/{{ c.id }}?t={{ token }}">{{ c.name }}</a>
+      <div class="muted small">{{ c.description }}</div></td>
+    <td class="small">{{ c.expectation_text }}</td>
+    <td><span class="badge {{ 'ok' if c.review_current else 'warn' if c.state != 'retired' else 'plain' }}">
+      {{ 'needs review' if c.state == 'active' and not c.review_current else c.state }}</span></td>
+    <td class="small mono">{{ c.tables | join(', ') }}</td>
+  </tr>{% endfor %}</tbody>
+</table></div>
+{% else %}
+<div class="card"><b>Keep a fixed problem fixed.</b>
+  <p class="muted">Open an executed query in a session and choose <b>Save as regression check</b>.
+  Set the result you expect, review the SQL, then activate it. Your agent can propose one too.</p>
+  <p class="small faint">Nothing runs in the background. Replays use a session's scope, query budget, and audit trail.</p>
+</div>
+{% endif %}
+<h2 style="margin-top: 28px;">Latest results</h2>
 
 <div class="tiles">
   <div class="tile"><div class="num">{{ summary.total_checks }}</div><div class="lbl">Checks on file</div></div>

@@ -303,6 +303,8 @@ def build_server(workspace: Workspace) -> Any:
         )
         drift = drift_report(knowledge, snap.get("columns") or {})
         external = ChecksStore(workspace.checks_dir).summary(tables or None)
+        from grayson.checks.regression import RegressionStore
+
         registry = ViewRegistry(workspace.views_dir)
         out = {
             "session": s.summary(),
@@ -328,6 +330,7 @@ def build_server(workspace: Workspace) -> Any:
                 "setting to change",
             },
             "external_checks": external,
+            "regression_checks": RegressionStore(workspace.checks_dir).inventory(tables or None),
         }
         if context_scope:
             out["context_scope"] = context_scope
@@ -1279,16 +1282,57 @@ def build_server(workspace: Workspace) -> Any:
             return [_err(e)]
 
     @mcp.tool(
-        description="External deterministic checks (Airflow, dbt, ...) on file in the "
+        description="External checks and native regression results on file in the "
         "library: latest result per check, failures and overdue runs called out. "
         "Failing checks on target tables are pre-vetted leads — replicate them first."
     )
     def checks_status(tables: list[str] | None = None) -> dict:
         return ChecksStore(workspace.checks_dir).summary(tables)
 
-    @mcp.tool(description="One external check's run history, newest first.")
+    @mcp.tool(description="One check's run history, newest first.")
     def checks_show(check_id: str) -> list[dict]:
         return [r.model_dump() for r in ChecksStore(workspace.checks_dir).history(check_id)]
+
+    @mcp.tool(
+        description="List reusable regression checks and review state. Active checks can be "
+        "replayed with checks_run; definitions are not fresh evidence."
+    )
+    def checks_regressions(tables: list[str] | None = None) -> dict:
+        from grayson.checks.regression import RegressionStore
+
+        return RegressionStore(workspace.checks_dir).inventory(tables)
+
+    @mcp.tool(
+        description="Propose a regression check from executed evidence. expectation: "
+        "{kind: no_rows}, or {kind: scalar, column: N, "
+        "operator: eq|ne|lt|lte|gt|gte|between, value: number, upper?: number}. "
+        "The user reviews and activates it in the console before replay."
+    )
+    def checks_propose(
+        session_id: str, qid: str, check_id: str, name: str, description: str, expectation: dict
+    ) -> dict:
+        from grayson.checks.regression import propose_check
+
+        try:
+            return propose_check(
+                _session(session_id), qid, check_id, name, description, expectation
+            )
+        except (ValueError, OSError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Replay approved regression checks through a session's guard, budget, "
+        "and audit. Omit check_ids for active checks on session targets. Each result has "
+        "new query evidence. Errors never count as passes. Does not close checkpoints "
+        "or create findings."
+    )
+    def checks_run(session_id: str, check_ids: list[str] | None = None) -> dict:
+        from grayson.checks.regression import run_checks
+
+        try:
+            return run_checks(_session(session_id), check_ids)
+        except (ValueError, OSError) as e:
+            return _err(e)
 
     @mcp.tool(
         description="Read the workspace configuration: guard profiles, scopes, "
