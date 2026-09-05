@@ -63,6 +63,9 @@ class WorkspaceConfig(BaseModel):
         for name, vals in data.get("guard_profiles", {}).items():
             profiles[name] = GuardSettings(**vals)
         library = data.get("library", {}).get("path")
+        library_path = Path(library).expanduser() if library else None
+        if library_path is not None and not library_path.is_absolute():
+            library_path = (path.resolve().parent / library_path).resolve()
         knowledge_raw = data.get("knowledge", {})
         try:
             knowledge = KnowledgePolicy.from_config(
@@ -80,7 +83,7 @@ class WorkspaceConfig(BaseModel):
                 for name, vals in data.get("workflow_defaults", {}).items()
                 if isinstance(vals, dict)
             },
-            library_path=Path(library).expanduser() if library else None,
+            library_path=library_path,
             library_auto_push=bool(data.get("library", {}).get("auto_push", False)),
             knowledge=knowledge,
         )

@@ -147,6 +147,9 @@ Recipes, the Docker image, and the trust model of each:
 
 ## Going deeper
 
+Already using Grayson or SeekQL? Follow the [upgrade guide](docs/UPGRADING.md)
+to refresh harness instructions and check your library without starting over.
+
 | Doc | What's in it |
 |---|---|
 | [docs/SESSIONS.md](docs/SESSIONS.md) | Running sessions: harness setup, the loop in detail, charts, guard profiles and settings |

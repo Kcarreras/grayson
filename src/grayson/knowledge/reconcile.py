@@ -205,7 +205,7 @@ def reconcile_docs(
             doc["open_questions"] = kept
             if not dry_run:
                 store.save(fqn, doc)
-            touched.append(str(store.table_path(fqn).relative_to(store.dir.parent)))
+            touched.append(store.table_path(fqn).relative_to(store.dir.parent).as_posix())
         contested = contested_pairs({**doc, "facts": annotated_facts})
         if contested or table_queue["unverified"] or table_queue["stale"]:
             needs_human[doc["table"]] = {"contested": contested, **table_queue}

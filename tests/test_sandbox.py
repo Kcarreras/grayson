@@ -3,15 +3,43 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 from typer.testing import CliRunner
 
 from grayson.cli import app
-from grayson.sandbox.executor import SandboxExecutor, sandbox_db_path
+from grayson.sandbox.executor import SandboxExecutor, locate_warehouse, sandbox_db_path
 from grayson.sandbox.seed import seed_sandbox
 
 runner = CliRunner()
+
+
+def test_seekql_warehouse_location_and_catalog_survive_rename(tmp_path, monkeypatch):
+    monkeypatch.delenv("GRAYSON_SANDBOX_DIR")
+    old_store = tmp_path / "old-store"
+    old_store.mkdir()
+    monkeypatch.setenv("SEEKQL_SANDBOX_DIR", str(old_store))
+    root = tmp_path / "demo"
+    warehouse = old_store / sandbox_db_path(root).name
+    with sqlite3.connect(warehouse) as con:
+        con.executescript(
+            "CREATE TABLE _seekql_meta(fqn TEXT, row_count INTEGER, last_altered TEXT);"
+            "INSERT INTO _seekql_meta VALUES ('SANDBOX.SHOP.ORDERS', 1, '2026-01-01');"
+            'CREATE TABLE "SANDBOX.SHOP.ORDERS"(ID INTEGER);'
+            'INSERT INTO "SANDBOX.SHOP.ORDERS" VALUES (7);'
+        )
+    before = warehouse.read_bytes()
+    assert locate_warehouse(root) == warehouse
+    executor = SandboxExecutor(warehouse)
+    assert executor.execute("SHOW TABLES").rows[0]["name"] == "ORDERS"
+    assert executor.execute("SELECT * FROM SANDBOX.SHOP.ORDERS").rows == [{"ID": 7}]
+    ddl = executor.execute("SELECT GET_DDL('SCHEMA', 'SANDBOX.SHOP')")
+    assert ddl.ok and "ORDERS" in str(ddl.rows)
+    assert warehouse.read_bytes() == before
+    # An explicit current store never silently routes to a different warehouse.
+    monkeypatch.setenv("GRAYSON_SANDBOX_DIR", str(tmp_path / "new-store"))
+    assert locate_warehouse(root) != warehouse
 
 
 @pytest.fixture(autouse=True)

@@ -191,6 +191,18 @@ def compare_artifacts(store: CacheStore, before_qid: str, after_qid: str) -> dic
     # the table is absent (empty result: no table is written).
     b_count = store.row_count(before_qid)
     a_count = store.row_count(after_qid)
+    # A missing table is an empty result only when no artifact was written.
+    # Purging keeps sidecars for audit, but removes the evidence to compare.
+    unavailable = [
+        qid
+        for qid, count, sidecar in (
+            (before_qid, b_count, before),
+            (after_qid, a_count, after),
+        )
+        if count is None and (sidecar.get("artifact") or sidecar.get("row_count", 0))
+    ]
+    if unavailable:
+        raise KeyError(f"cached rows unavailable for {unavailable} — rerun the queries to compare")
     b_count = before["row_count"] if b_count is None else b_count
     a_count = after["row_count"] if a_count is None else a_count
     b_trunc = bool(before.get("truncated"))

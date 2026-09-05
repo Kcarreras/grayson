@@ -27,7 +27,7 @@ from grayson.knowledge import KnowledgeStore, completeness, describe_drift, drif
 from grayson.util import parse_table_list, write_json
 from grayson.views import ViewEntry, ViewRegistry, enter_session_scope
 from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
-from grayson.workspace import Workspace
+from grayson.workspace import LegacyWorkspaceError, Workspace
 
 app = typer.Typer(
     name="grayson",
@@ -192,6 +192,8 @@ def _refuse_nested_workspace(path: Path) -> None:
     """Workspaces must not nest — sessions/config would silently split by cwd."""
     try:
         existing = Workspace.find(path.resolve().parent)
+    except LegacyWorkspaceError as e:
+        fail(str(e))
     except FileNotFoundError:
         return
     fail(
@@ -276,6 +278,8 @@ def setup() -> None:
     try:
         ws = Workspace.find()
         say(f"Workspace: {ws.root}")
+    except LegacyWorkspaceError as e:
+        fail(str(e))
     except FileNotFoundError:
         say("No workspace here. (For a no-Snowflake demo, use `grayson sandbox init` instead.)")
         if not typer.confirm(f"Initialize a grayson workspace in {Path.cwd()}?", default=True):
@@ -3506,7 +3510,9 @@ def library_policy_set(
 
 
 @library_app.command("migrate")
-def library_migrate_cmd() -> None:
+def library_migrate_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the migration without writing."),
+) -> None:
     """Rewrite the library's knowledge docs to the current format.
 
     A deliberate, human-run step — never implicit: it requires a clean git tree
@@ -3515,14 +3521,18 @@ def library_migrate_cmd() -> None:
     from grayson.knowledge import KNOWLEDGE_FORMAT
     from grayson.library import migrate_library
 
-    require_interactive(
-        "migrating the library format",
-        f"Rewrite this library's knowledge docs to format {KNOWLEDGE_FORMAT}?",
-    )
+    if not dry_run:
+        require_interactive(
+            "migrating the library format",
+            f"Rewrite this library's knowledge docs to format {KNOWLEDGE_FORMAT}?",
+        )
     try:
-        emit(migrate_library(_workspace()))
+        report = migrate_library(_workspace(), dry_run=dry_run)
     except (RuntimeError, OSError) as e:
         fail(str(e))
+    emit(report)
+    if report["errors"]:
+        raise typer.Exit(1)
 
 
 admins_app = typer.Typer(
@@ -3747,6 +3757,35 @@ def records_delete_cmd(
 
 
 # -- harness -------------------------------------------------------------
+
+
+@harness_app.command("status")
+def harness_instructions_status(
+    path: Path = typer.Option(Path("."), "--path", help="Repo root holding harness instructions."),
+) -> None:
+    """Check all harness instructions against this installed grayson, without writing."""
+    from grayson.harness import HARNESSES
+    from grayson.harness.update import harness_status
+
+    try:
+        emit({"harnesses": [harness_status(path.resolve(), h) for h in sorted(HARNESSES)]})
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@harness_app.command("update")
+def harness_update(
+    harness: str = typer.Argument(..., help="cursor | claude-code | codex | copilot"),
+    path: Path = typer.Option(Path("."), "--path", help="Repo root holding harness instructions."),
+    apply: bool = typer.Option(False, "--apply", help="Apply the previewed changes, with backups."),
+) -> None:
+    """Preview updated instructions; --apply saves them. MCP and permissions stay as configured."""
+    from grayson.harness.update import update_harness
+
+    try:
+        emit(update_harness(path.resolve(), harness, apply=apply))
+    except (ValueError, OSError) as e:
+        fail(str(e))
 
 
 @harness_app.command("init")

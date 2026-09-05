@@ -206,8 +206,11 @@ class KnowledgeStore:
                     for k, v in _PROFILE_DEFAULTS.items()
                 },
             }
-        front, body = _split_frontmatter(path.read_text(encoding="utf-8"))
         rel = path.relative_to(self.dir)
+        try:
+            front, body = _split_frontmatter(path.read_text(encoding="utf-8"))
+        except KnowledgeDocError as e:
+            raise KnowledgeDocError(f"knowledge doc {rel}: {e}") from e
         try:
             data = yaml.safe_load(front) or {} if front else {}
         except yaml.YAMLError as e:
@@ -217,11 +220,16 @@ class KnowledgeStore:
             ) from e
         if not isinstance(data, dict):
             raise KnowledgeDocError(f"knowledge doc {rel}: front-matter is not a mapping")
+        raw_facts = data.get("facts")
+        if raw_facts is not None and not isinstance(raw_facts, list):
+            raise KnowledgeDocError(f"knowledge doc {rel}: 'facts' must be a list")
         try:
-            facts = [Fact.model_validate(f).model_dump() for f in data.get("facts") or []]
+            facts = [Fact.model_validate(f).model_dump() for f in raw_facts or []]
         except ValueError as e:
             raise KnowledgeDocError(f"knowledge doc {rel} has a malformed fact: {e}") from e
         table = data.get("table", fqn.upper())
+        if not isinstance(table, str):
+            raise KnowledgeDocError(f"knowledge doc {rel}: 'table' must be a string")
         try:
             fmt = int(data.get("format", 1))  # unstamped docs predate stamping: format 1
         except (TypeError, ValueError) as e:
@@ -247,6 +255,8 @@ class KnowledgeStore:
             doc[key] = data.get(key, default.copy() if isinstance(default, list) else default)
         for key in _LIFECYCLE_DOC_KEYS:
             raw_list = data.get(key)
+            if raw_list is not None and not isinstance(raw_list, list):
+                raise KnowledgeDocError(f"knowledge doc {rel}: '{key}' must be a list")
             doc[key] = [dict(x) for x in raw_list if isinstance(x, dict)] if raw_list else []
         # Hand-edited files write these in looser shapes; normalize once here so
         # every consumer (graph, completeness, templates, agents) sees dicts.
@@ -839,7 +849,7 @@ class KnowledgeStore:
         for path in sorted(self.dir.rglob("*.md")):
             if path.name == "glossary.md":
                 continue
-            rel = str(path.relative_to(self.dir))
+            rel = path.relative_to(self.dir).as_posix()
             parts = path.relative_to(self.dir).with_suffix("").parts
             if len(parts) != 3:
                 warnings.append(
@@ -964,7 +974,7 @@ class KnowledgeStore:
         except (TypeError, ValueError):
             return None
 
-    def migrate(self) -> dict:
+    def migrate(self, *, dry_run: bool = False) -> dict:
         """Rewrite every table doc to the current format. Deliberate-only: this
         is invoked by `grayson library migrate` (which insists on a clean git
         tree and lands the result as one labeled, revertible commit) — never
@@ -972,12 +982,40 @@ class KnowledgeStore:
         migrated, up_to_date, errors = [], [], []
         for fqn in self.all_tables():
             try:
-                if self._stored_format(fqn) == KNOWLEDGE_FORMAT:
+                doc = self.read(fqn)  # validate even when already stamped
+                stored = self._stored_format(fqn)
+                if doc["format"] > KNOWLEDGE_FORMAT:
+                    raise KnowledgeDocError(
+                        "refusing to rewrite a newer knowledge format — upgrade grayson first"
+                    )
+                if stored == KNOWLEDGE_FORMAT:
                     up_to_date.append(fqn)
                     continue
-                self._write(fqn, upgrade_doc(self.read(fqn)))
+                upgraded = upgrade_doc(doc)
+                if not dry_run:
+                    if stored is None and doc["format"] == KNOWLEDGE_FORMAT:
+                        # Stamping is additive: don't normalize/re-serialize a
+                        # team's comments, unknown fields, or historical facts.
+                        path = self.table_path(fqn)
+                        with path.open(encoding="utf-8", newline="") as stream:
+                            text = stream.read()
+                        bom = "\ufeff" if text.startswith("\ufeff") else ""
+                        text = text.removeprefix(bom) if bom else text
+                        # Use the opening delimiter's newline, not a later
+                        # CRLF in otherwise mixed-ending prose.
+                        newline = "\r\n" if text.startswith("---\r\n") else "\n"
+                        stamp = f"format: {KNOWLEDGE_FORMAT}{newline}"
+                        if text.startswith("---" + newline):
+                            text = "---" + newline + stamp + text[3 + len(newline) :]
+                        else:
+                            text = "---" + newline + stamp + "---" + newline + text
+                        from grayson.util import atomic_write_text
+
+                        atomic_write_text(path, bom + text)
+                    else:
+                        self._write(fqn, upgraded)
                 migrated.append(fqn)
-            except KnowledgeDocError as e:
+            except (ValueError, OSError) as e:
                 # one broken or too-new doc must not abort the rest of the sweep
                 errors.append({"table": fqn, "error": str(e)})
         return {
@@ -985,6 +1023,7 @@ class KnowledgeStore:
             "migrated": migrated,
             "up_to_date": len(up_to_date),
             "errors": errors,
+            "dry_run": dry_run,
         }
 
     def all_tables(self) -> list[str]:
@@ -1300,10 +1339,12 @@ def _norm_columns(value: object) -> list[dict]:
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
-    if text.startswith("---"):
-        m = re.match(r"^---\n(.*?)\n---\n?(.*)$", text, re.DOTALL)
+    text = text.removeprefix("\ufeff")
+    if text.startswith("---\n"):
+        m = re.match(r"^---\n(.*?)^---[ \t]*(?:\n|$)(.*)$", text, re.DOTALL | re.MULTILINE)
         if m:
             return m.group(1), m.group(2)
+        raise KnowledgeDocError("unterminated YAML front-matter — restore the closing --- line")
     return "", text
 
 

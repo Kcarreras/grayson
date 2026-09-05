@@ -289,7 +289,7 @@ def test_report_carries_text_charts_by_default(workspace):
     s = _closed_session_with_a_chart(workspace)
     engine.close_session(s, actor="user", note="fine", overrides_dir=workspace.workflows_dir)
     folder = workspace.records_dir / s.id
-    md = (folder / "report.md").read_text()
+    md = (folder / "report.md").read_text(encoding="utf-8")
     assert "```text" in md and "V by K  [bar" in md
     assert "![" not in md and not (folder / "charts").exists()
 
@@ -306,11 +306,11 @@ def test_profile_svg_publishes_chart_files_beside_the_report(workspace):
     s = _closed_session_with_a_chart(workspace)
     engine.close_session(s, actor="user", note="fine", overrides_dir=workspace.workflows_dir)
     folder = workspace.records_dir / s.id
-    md = (folder / "report.md").read_text()
+    md = (folder / "report.md").read_text(encoding="utf-8")
     files = sorted(p.name for p in (folder / "charts").glob("*.svg"))
     assert files  # one per chart the session drew
     assert f"![V by K](charts/{files[0]})" in md and "```text" not in md
-    svg = (folder / "charts" / files[0]).read_text()
+    svg = (folder / "charts" / files[0]).read_text(encoding="utf-8")
     assert svg.startswith("<svg") and "gray" in svg  # the export mark, like a download
     # the console serves the published file on the record page
     from fastapi.testclient import TestClient
@@ -338,13 +338,13 @@ def test_session_report_out_writes_svgs_when_asked(workspace, fake_snow_env, tmp
     # the session's own chart plus the three table-health's gates required
     assert len(out["chart_files"]) == 4
     assert str(dest.parent / "charts" / "c_001.svg") in out["chart_files"]
-    md = dest.read_text()
+    md = dest.read_text(encoding="utf-8")
     assert "![V by K](charts/c_001.svg)" in md and "```text" in md  # both
     assert (dest.parent / "charts" / "c_001.svg").is_file()
     # the default (profile: text) writes no files
     plain = tmp_path / "plain.md"
     result = CliRunner().invoke(app, ["session", "report", s.id, "--out", str(plain)])
     assert json.loads(result.output)["chart_files"] == []
-    assert "![" not in plain.read_text() and not (tmp_path / "charts").exists()
+    assert "![" not in plain.read_text(encoding="utf-8") and not (tmp_path / "charts").exists()
     bad = CliRunner().invoke(app, ["session", "report", s.id, "--charts", "png"])
     assert bad.exit_code == 1

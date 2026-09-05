@@ -70,7 +70,7 @@ def query_artifacts(
 
     if not store.db_path.is_file():
         raise LocalQueryError("no cached data yet")
-    uri = f"file:{store.db_path.as_posix()}?mode=ro"
+    uri = f"{store.db_path.resolve().as_uri()}?mode=ro"
     try:
         con = sqlite3.connect(uri, uri=True, timeout=30, check_same_thread=False)
     except sqlite3.OperationalError as e:
@@ -99,4 +99,6 @@ def query_artifacts(
         raise LocalQueryError(str(e)) from e
     finally:
         watchdog.cancel()
+        if watchdog.is_alive():
+            watchdog.join()
         con.close()

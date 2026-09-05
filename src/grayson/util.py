@@ -44,7 +44,10 @@ def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
     try:
-        tmp.write_text(text, encoding="utf-8")
+        # Explicit newlines preserve both canonical LF and existing CRLF on
+        # Windows; translating an existing CRLF again would produce CRCRLF.
+        with tmp.open("w", encoding="utf-8", newline="") as stream:
+            stream.write(text)
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)

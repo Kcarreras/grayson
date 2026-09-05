@@ -61,6 +61,14 @@ def locate_warehouse(workspace_root: Path) -> Path:
     working without a reseed.
     """
     target = sandbox_db_path(workspace_root)
+    if not target.is_file() and not os.environ.get(SANDBOX_DIR_ENV):
+        # The product rename must not strand a relocated SeekQL warehouse.
+        # Read it in place: moving a SQLite file can separate it from its WAL.
+        base = os.environ.get("SEEKQL_SANDBOX_DIR")
+        old_store = Path(base) if base else Path.home() / ".seekql" / "sandboxes"
+        old_target = old_store / target.name
+        if old_target.is_file():
+            return old_target
     legacy = workspace_root / ".grayson" / "sandbox_warehouse.db"
     if not target.is_file() and legacy.is_file():
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -156,11 +164,7 @@ class SandboxExecutor:
             fqns = [name]
         elif kind in {"SCHEMA", "DATABASE"}:
             prefix = name + "."
-            fqns = [
-                str(r["fqn"])
-                for r in self._query("SELECT fqn FROM _grayson_meta ORDER BY fqn")
-                if str(r["fqn"]).startswith(prefix)
-            ]
+            fqns = [str(r["fqn"]) for r in self._catalog_rows() if str(r["fqn"]).startswith(prefix)]
             if not fqns:
                 raise SandboxSQLError(f"{kind.lower()} '{name}' does not exist in the sandbox")
         else:
@@ -187,7 +191,7 @@ class SandboxExecutor:
         return out
 
     def _metadata_rows(self) -> list[dict]:
-        rows = self._query("SELECT fqn, row_count, last_altered FROM _grayson_meta ORDER BY fqn")
+        rows = self._catalog_rows()
         out = []
         for r in rows:
             catalog, schema, name = str(r["fqn"]).split(".", 2)
@@ -202,10 +206,25 @@ class SandboxExecutor:
             )
         return out
 
+    def _catalog_rows(self) -> list[dict]:
+        """Both product names describe the same catalog; no warehouse rewrite."""
+        tables = self._query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name IN ('_grayson_meta', '_seekql_meta')"
+        )
+        names = {row["name"] for row in tables}
+        if "_grayson_meta" in names:
+            return self._query(
+                "SELECT fqn, row_count, last_altered FROM _grayson_meta ORDER BY fqn"
+            )
+        if "_seekql_meta" in names:
+            return self._query("SELECT fqn, row_count, last_altered FROM _seekql_meta ORDER BY fqn")
+        raise SandboxSQLError("sandbox metadata catalog missing — restore the original warehouse")
+
     # -- low level --------------------------------------------------------
 
     def _query(self, sql: str, params: tuple = ()) -> list[dict]:
-        uri = f"file:{self.db_path.as_posix()}?mode=ro"
+        uri = f"{self.db_path.resolve().as_uri()}?mode=ro"
         try:
             con = sqlite3.connect(uri, uri=True, timeout=30)
         except sqlite3.OperationalError as e:
