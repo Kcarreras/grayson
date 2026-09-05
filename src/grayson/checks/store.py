@@ -1,4 +1,4 @@
-"""External checks library: deterministic check results dropped in by automation.
+"""Shared check results from external automation and native regression replays.
 
 Teams already run scheduled deterministic checks outside grayson — Airflow DAGs,
 dbt tests, data-quality jobs. This store makes those results a library asset:
@@ -7,11 +7,13 @@ library like knowledge and views), and grayson surfaces the latest result per
 check at session start. A failing external check on a target table is a
 pre-vetted lead an agent should replicate first, before open-ended hunting.
 
-grayson never runs these checks; it only reads, validates, and reports them.
+External jobs run independently. Reviewed native replays use the same result
+contract through grayson.checks.regression.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -35,7 +37,7 @@ INGESTED_SUBDIR = "ingested"
 MAX_INGESTED_RUNS = 25
 
 CHECKS_README = """\
-# External checks
+# Checks
 
 Drop deterministic check results here as JSON — from Airflow, dbt tests,
 data-quality jobs, anything scheduled. grayson reads every `*.json` under this
@@ -66,6 +68,10 @@ or pipe results through `grayson checks ingest <file>` which validates and keeps
 a bounded per-check history under `ingested/`. A dbt run_results.json is
 detected and converted automatically (add `--manifest target/manifest.json` to
 resolve tables and compiled SQL). Full setup guide: docs/CHECKS.md.
+
+Reviewed regression definitions live in `regressions/*.yaml`; their replay
+results live in `runs/`. Save an executed query as a check from the console,
+or use `grayson checks propose`. Full guide: docs/REGRESSIONS.md.
 """
 
 
@@ -175,7 +181,16 @@ class ChecksStore:
         results, _ = self.load()
         wanted = {t.upper() for t in tables} if tables else None
         by_id: dict[str, CheckResult] = {}
+        from grayson.checks.regression import RegressionStore
+
+        retired = {
+            f"regression.{c['id']}"
+            for c in RegressionStore(self.dir).inventory()["checks"]
+            if c["state"] == "retired"
+        }
         for r in results:
+            if r.check_id in retired:
+                continue
             if wanted is not None and not (wanted & set(r.tables)):
                 continue
             prev = by_id.get(r.check_id)
@@ -307,6 +322,22 @@ class ChecksStore:
             "errors": errors,
             "dir": str(self.dir / INGESTED_SUBDIR),
         }
+
+    def record(self, result: CheckResult) -> Path:
+        """Append an immutable native run; concurrent workers never overwrite history.
+
+        Separate files also avoid Git conflicts between teammates replaying the
+        same check. Old readers already understand these result objects.
+        """
+        result = CheckResult.model_validate(result.model_dump())
+        data = result.model_dump()
+        digest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+        target = self.dir / "runs" / result.check_id / f"{digest}.json"
+        from grayson.util import ensure_within
+
+        ensure_within(self.dir, target)
+        write_json(target, data)
+        return target
 
     def _fold_in(self, result: CheckResult) -> bool:
         target = self.dir / INGESTED_SUBDIR / f"{result.check_id}.json"

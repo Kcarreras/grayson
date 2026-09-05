@@ -39,4 +39,42 @@
 <h2>As executed (after guard rewrites)</h2>
 <pre class="sql">{{ sql_exec_html }}</pre>
 {% endif %}
+{% if q.status == 'executed' and q_tables %}
+<details class="section" style="margin-top: 24px;">
+  <summary><h2>Save as regression check</h2></summary>
+  <div class="card">
+    <p class="muted">Turn this query into a test your team can rerun. You will review the saved SQL and expectation before activating it.</p>
+    <form method="post" action="/session/{{ s.id }}/query/{{ q.qid }}/regression?t={{ token }}" class="elform">
+      <label>Check name<input type="text" name="name" maxlength="160" required placeholder="Orders remain unique"></label>
+      <label>What problem should this catch?<textarea name="description" rows="2" maxlength="4000" required placeholder="Catch a recurrence of duplicate order IDs after the import fix."></textarea></label>
+      <label>Expected result<select name="kind" id="regression-kind">
+        <option value="no_rows">No violating rows returned</option>
+        <option value="scalar">A numeric metric meets an expectation</option>
+      </select></label>
+      <div id="regression-scalar" hidden>
+        <div class="two">
+          <label>Result column<input name="column" type="text" placeholder="DUPLICATE_COUNT"></label>
+          <label>Comparison<select name="operator">
+            <option value="eq">Equals</option><option value="ne">Does not equal</option>
+            <option value="lt">Less than</option><option value="lte">At most</option>
+            <option value="gt">Greater than</option><option value="gte">At least</option>
+            <option value="between">Between (inclusive)</option>
+          </select></label>
+        </div>
+        <div class="two">
+          <label>Expected value / lower bound<input name="value" type="text" inputmode="decimal" placeholder="0"></label>
+          <label>Upper bound (between only)<input name="upper" type="text" inputmode="decimal"></label>
+        </div>
+        <p class="hint">The query must return exactly one complete row and a finite numeric value. NULL and missing columns are errors.</p>
+      </div>
+      <div class="submit"><button class="btn primary" type="submit">Save for review</button></div>
+    </form>
+  </div>
+</details>
+<script>
+document.getElementById('regression-kind').addEventListener('change', function () {
+  document.getElementById('regression-scalar').hidden = this.value !== 'scalar';
+});
+</script>
+{% endif %}
 {% endblock %}

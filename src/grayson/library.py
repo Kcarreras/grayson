@@ -762,7 +762,7 @@ def _lint_records(records_dir: Path) -> dict:
     if records_dir.is_dir():
         for path in sorted(records_dir.rglob("*.json")):
             checked += 1
-            rel = str(path.relative_to(records_dir))
+            rel = path.relative_to(records_dir).as_posix()
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
@@ -811,6 +811,9 @@ def library_doctor(workspace: Workspace) -> dict:
     workflows = lint_workflows(workspace.workflows_dir)
     schemas = lint_schemas(workspace.findings_schemas_dir, workspace.workflows_dir)
     records = _lint_records(workspace.records_dir)
+    from grayson.checks.regression import RegressionStore
+
+    regressions = RegressionStore(workspace.checks_dir).inventory()
     settings = _lint_settings(lib)
     return {
         "library": str(lib),
@@ -818,12 +821,14 @@ def library_doctor(workspace: Workspace) -> dict:
         and workflows["ok"]
         and schemas["ok"]
         and records["ok"]
-        and settings["ok"],
+        and settings["ok"]
+        and not regressions["errors"],
         "knowledge": knowledge,
         "workflows": workflows,
         "schemas": schemas,
         "records": records,
         "settings": settings,
+        "regressions": regressions,
         # informational: standing never fails the doctor — it is the queue, not a fault
         "standing": standing_report(workspace),
         "policy": effective_policy(workspace).summary(),
@@ -991,7 +996,7 @@ def _unanchored_count(workspace: Workspace) -> int:
     return total
 
 
-def migrate_library(workspace: Workspace) -> dict:
+def migrate_library(workspace: Workspace, *, dry_run: bool = False) -> dict:
     """Rewrite the library's knowledge docs to the current format, deliberately.
 
     The compatibility contract (docs/LIBRARY.md, "Format stability") is that a
@@ -1005,13 +1010,20 @@ def migrate_library(workspace: Workspace) -> dict:
 
     lib = workspace.config.library_path or workspace.root
     is_git = (lib / ".git").exists()
-    if is_git and _git(lib, "status", "--porcelain").stdout.strip():
-        raise RuntimeError(
-            "library working tree is dirty — commit or stash first, so the migration "
-            "lands as one revertible commit and nothing else rides along with it"
-        )
-    report = KnowledgeStore(workspace.knowledge_dir).migrate()
+    if is_git and not dry_run:
+        status = _git(lib, "status", "--porcelain")
+        if status.returncode:
+            raise RuntimeError(f"cannot check library working tree: {status.stderr.strip()}")
+        if status.stdout.strip():
+            raise RuntimeError(
+                "library working tree is dirty — commit or stash first, so the migration "
+                "lands as one revertible commit and nothing else rides along with it"
+            )
+    store = KnowledgeStore(workspace.knowledge_dir)
+    report = store.migrate(dry_run=dry_run)
     out = {"library": str(lib), "is_git": is_git, **report}
+    if dry_run:
+        return out
     if not is_git:
         out["warning"] = (
             "library is not a git repo, so this rewrite has no rollback point — "
@@ -1023,9 +1035,17 @@ def migrate_library(workspace: Workspace) -> dict:
         user_id = get_user_id()
         if user_id:
             message += f"\n\nGrayson-User: {user_id}"
-        _git(lib, "add", "-A")
-        commit = _git(lib, "commit", "-m", message)
+        paths = [store.table_path(fqn).relative_to(lib).as_posix() for fqn in report["migrated"]]
+        staged = _git(lib, "add", "--", *paths)
+        if staged.returncode:
+            raise RuntimeError(f"migration saved but git add failed: {staged.stderr.strip()}")
+        commit = _git(lib, "commit", "-m", message, "--", *paths)
         out["committed"] = commit.returncode == 0
+        if commit.returncode:
+            raise RuntimeError(
+                "migration saved but could not create its rollback commit: "
+                + (commit.stdout + commit.stderr).strip()
+            )
         if workspace.config.library_auto_push:
             push = _git(lib, "push", "-u", "origin", "HEAD", timeout=120)
             out["pushed"] = push.returncode == 0

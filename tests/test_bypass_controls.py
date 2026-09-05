@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 from typer.testing import CliRunner
@@ -129,7 +130,9 @@ def test_cursor_hooks_apply_status_remove_roundtrip(tmp_path):
     assert result["script_written"] is True
     hooks_file = tmp_path / ".cursor" / "hooks.json"
     script = tmp_path / ".cursor" / "hooks" / "grayson-guard.py"
-    assert script.is_file() and script.stat().st_mode & 0o111  # executable
+    assert script.is_file()
+    if os.name != "nt":  # Windows does not expose POSIX executable mode bits
+        assert script.stat().st_mode & 0o111
     data = json.loads(hooks_file.read_text())
     entry = {"command": "./.cursor/hooks/grayson-guard.py", "failClosed": True, "timeout": 10}
     assert entry in data["hooks"]["beforeShellExecution"]

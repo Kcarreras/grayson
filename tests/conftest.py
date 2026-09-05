@@ -61,6 +61,15 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Workspace:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Scratch library commits must not depend on (or use) the developer's
+    # global Git identity. Environment changes are confined to each test.
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "Grayson Tests")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "tests@invalid.example")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_user_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # keep the developer's real ~/.grayson/config.toml user id out of test facts
     monkeypatch.setenv("GRAYSON_CONFIG_DIR", str(tmp_path / "user-config"))

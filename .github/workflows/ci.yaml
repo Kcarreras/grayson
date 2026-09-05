@@ -5,26 +5,22 @@ name: ci
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main, "claude/**", "codex/**"]
   pull_request:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python }}
-      # library tests commit to scratch git repos; runners, unlike any
-      # developer machine, ship without a git identity
-      - run: |
-          git config --global user.name ci
-          git config --global user.email ci@invalid.example
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .

@@ -10,6 +10,13 @@ replicate first). A check older than its declared cadence is flagged
 Below: the result contract, three ways to feed results in, and how to adapt
 your own tool.
 
+To turn a Grayson investigation query into a check that Grayson can replay,
+see [Regression checks](REGRESSIONS.md). Native replays and external jobs share
+the result contract below; external ingestion continues to work unchanged.
+Use a different prefix from `regression.` for new external checks. Existing
+IDs remain valid; native proposals refuse to take over an ID with results
+already on file.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/checks_dark.png">
   <img src="img/checks_light.png" alt="The Checks tab: failing checks first with details, metrics and check SQL; all checks with status, source, and last run">

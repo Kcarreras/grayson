@@ -72,6 +72,7 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
         "created_at": summary["created_at"],
         "connection": summary["connection"],
         "targets": summary["targets"],
+        "regression_runs": [e["payload"] for e in session.events(20, event_type="regression_run")],
         "scope_extra": summary["scope_extra"],
         "strict_scope": summary["strict_scope"],
         "guard": {
@@ -302,6 +303,15 @@ def render_brief(brief: dict) -> str:
         label = f" [{r['label']}]" if r["label"] else ""
         tables = f" {', '.join(r['tables'])}" if r["tables"] else ""
         lines.append(f"- {r['qid']}{label} {rows}{tables} · {r['sql']}")
+
+    if brief.get("regression_runs"):
+        lines += ["", "## Regression checks (latest 20 replays)"]
+        for result in brief["regression_runs"]:
+            lines.append(
+                f"- {result['name']}: {result['status']} ({result['qid']}) — {result['details']}"
+            )
+            if result.get("persistence_error"):
+                lines.append(f"  Library result was not saved: {result['persistence_error']}")
 
     if brief["charts"]:
         lines += ["", "## Charts"]

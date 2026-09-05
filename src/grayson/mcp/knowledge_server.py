@@ -137,7 +137,16 @@ def build_knowledge_server(library_root: Path) -> Any:
     def checks_status(tables: list[str] | None = None) -> dict:
         return ChecksStore(checks_dir).summary(tables)
 
-    @mcp.tool(description="One external check's run history, newest first.")
+    @mcp.tool(
+        description="Read reusable regression definitions and review state. "
+        "This read-only server cannot propose, activate, or run checks."
+    )
+    def checks_regressions(tables: list[str] | None = None) -> dict:
+        from grayson.checks.regression import RegressionStore
+
+        return RegressionStore(checks_dir).inventory(tables)
+
+    @mcp.tool(description="One check's run history, newest first.")
     def checks_show(check_id: str) -> list[dict]:
         return [r.model_dump() for r in ChecksStore(checks_dir).history(check_id)]
 

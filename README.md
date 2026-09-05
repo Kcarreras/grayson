@@ -28,6 +28,7 @@ to run on:
 - a human console for every judgment call
 - a git-shared team library, so each investigation makes the next one smarter
 - fixes documented beyond any agent's context window
+- reviewed regression checks that turn investigation queries into repeatable tests
 
 grayson itself never calls an LLM. Every guarantee is enforced by code, not
 by prompts.
@@ -95,6 +96,23 @@ flowchart LR
     APP -->|"MCP"| CA["Collaborators' agents<br/>(no harness, no warehouse)"]
 ```
 
+## Turn a fix into a repeatable check
+
+An investigation should leave more than a write-up. After finding duplicate
+orders, save the executed query as a **regression check** with an explicit rule:
+`DUPLICATE_ORDERS = 0`. Review its SQL and expectation in the console, then
+activate it for the team.
+
+Future sessions discover relevant checks and can replay them with one action,
+through the same scope, timeout, and budget controls as any investigation query.
+Every replay produces fresh query evidence and a pass, fail, or error result.
+Definitions and history travel in the existing team library; agents in any
+harness can propose and run checks, while people own activation and retirement.
+
+Use **Save as regression check** on an executed query, or follow the
+[CLI and MCP walkthrough](docs/REGRESSIONS.md). Existing workspaces and libraries
+need no migration to use it.
+
 ## Getting started
 
 Requires [uv](https://docs.astral.sh/uv/) and, for real warehouses only, the
@@ -147,12 +165,16 @@ Recipes, the Docker image, and the trust model of each:
 
 ## Going deeper
 
+Already using Grayson or SeekQL? Follow the [upgrade guide](docs/UPGRADING.md)
+to refresh harness instructions and check your library without starting over.
+
 | Doc | What's in it |
 |---|---|
 | [docs/SESSIONS.md](docs/SESSIONS.md) | Running sessions: harness setup, the loop in detail, charts, guard profiles and settings |
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | Workflow templates: the core seven, required vs suggested checks, forking and ownership, lint |
 | [docs/LIBRARY.md](docs/LIBRARY.md) | The team library: knowledge provenance, standing and pruning, the knowledge policy, user ids, records that compound, knowledge-only access |
 | [docs/CHECKS.md](docs/CHECKS.md) | Feeding external checks (dbt, Airflow, …) in as pre-vetted leads |
+| [docs/REGRESSIONS.md](docs/REGRESSIONS.md) | Turning executed investigation queries into reviewed, reusable regression checks |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment recipes: solo, knowledge appliance, credential-isolated server |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, adversarial review log, bypass and containment |
 | [docs/SPEC.md](docs/SPEC.md) | The full design spec |

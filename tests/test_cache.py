@@ -102,6 +102,13 @@ def test_local_query_max_rows(store):
     assert len(rows) == 2
 
 
+def test_local_query_handles_uri_characters_in_workspace_path(tmp_path):
+    store = CacheStore(tmp_path / "QA #1 & #2")
+    store.save("q_0001", ROWS, sql="SELECT * FROM DB.S.T", source_tables=[], truncated=False)
+    _, rows = query_artifacts(store.data_dir, "SELECT COUNT(*) FROM q_0001")
+    assert rows == [(len(ROWS),)]
+
+
 def test_compare_uses_real_table_count_not_sidecar(store, tmp_path):
     import json
 
@@ -125,6 +132,20 @@ def test_compare_truncated_never_identical(tmp_path):
     result = compare_artifacts(s, "q_0001", "q_0002")
     assert result["identical"] is False
     assert result["counts_truncated"] is True
+
+
+def test_compare_refuses_purged_results_even_with_matching_sidecars(store):
+    store.save("q_0002", ROWS, sql="x", source_tables=[], truncated=False)
+    store.drop_all_data()
+    with pytest.raises(KeyError, match="cached rows unavailable"):
+        compare_artifacts(store, "q_0001", "q_0002")
+
+
+def test_compare_can_still_compare_genuinely_empty_results(store):
+    for qid in ("q_0002", "q_0003"):
+        store.save(qid, [], sql="x", source_tables=[], truncated=False)
+    result = compare_artifacts(store, "q_0002", "q_0003")
+    assert result["identical"] and result["before_empty"] and result["after_empty"]
 
 
 BAD_LOCAL = [

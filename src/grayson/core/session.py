@@ -369,12 +369,14 @@ class Session:
         finally:
             con.close()
 
-    def events(self, limit: int = 100) -> list[dict]:
+    def events(self, limit: int = 100, event_type: str | None = None) -> list[dict]:
         con = self._con()
         try:
             rows = con.execute(
-                "SELECT ts, actor, type, payload FROM events ORDER BY id DESC LIMIT ?",
-                (limit,),
+                "SELECT ts, actor, type, payload FROM events "
+                + ("WHERE type = ? " if event_type is not None else "")
+                + "ORDER BY id DESC LIMIT ?",
+                (event_type, limit) if event_type is not None else (limit,),
             ).fetchall()
             return [
                 {"ts": r[0], "actor": r[1], "type": r[2], "payload": json.loads(r[3])} for r in rows

@@ -11,6 +11,18 @@ GITIGNORE_BLOCK = "\n# grayson session state and cached warehouse data\n.grayson
 REGISTRY_TEMPLATE = "# QA view library registry (managed by `grayson views`)\nviews: []\n"
 
 
+class LegacyWorkspaceError(FileNotFoundError):
+    """An existing SeekQL workspace must be upgraded, not initialized again."""
+
+
+def _legacy_message(root: Path) -> str:
+    return (
+        f"legacy SeekQL workspace at {root} — preserve its configuration and sessions; "
+        "follow docs/UPGRADING.md (SeekQL rename) before running grayson here. "
+        "Do not run init or reseed the sandbox."
+    )
+
+
 class Workspace:
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -25,6 +37,8 @@ class Workspace:
         for candidate in [cur, *cur.parents]:
             if (candidate / CONFIG_FILENAME).is_file():
                 return cls(candidate)
+            if (candidate / "seekql.toml").is_file():
+                raise LegacyWorkspaceError(_legacy_message(candidate))
         raise FileNotFoundError(
             f"no {CONFIG_FILENAME} found in {cur} or any parent — run `grayson init` first"
         )
@@ -36,6 +50,8 @@ class Workspace:
         config_path = path / CONFIG_FILENAME
         if config_path.exists():
             raise FileExistsError(f"{config_path} already exists")
+        if (path / "seekql.toml").exists() or (path / ".seekql").exists():
+            raise FileExistsError(_legacy_message(path))
         config_path.write_text(CONFIG_TEMPLATE, encoding="utf-8")
         (path / ".grayson" / "sessions").mkdir(parents=True, exist_ok=True)
         (path / "knowledge").mkdir(exist_ok=True)

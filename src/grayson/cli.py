@@ -27,7 +27,7 @@ from grayson.knowledge import KnowledgeStore, completeness, describe_drift, drif
 from grayson.util import parse_table_list, write_json
 from grayson.views import ViewEntry, ViewRegistry, enter_session_scope
 from grayson.workflows import WorkflowNotFound, get_workflow, list_workflows
-from grayson.workspace import Workspace
+from grayson.workspace import LegacyWorkspaceError, Workspace
 
 app = typer.Typer(
     name="grayson",
@@ -192,6 +192,8 @@ def _refuse_nested_workspace(path: Path) -> None:
     """Workspaces must not nest — sessions/config would silently split by cwd."""
     try:
         existing = Workspace.find(path.resolve().parent)
+    except LegacyWorkspaceError as e:
+        fail(str(e))
     except FileNotFoundError:
         return
     fail(
@@ -276,6 +278,8 @@ def setup() -> None:
     try:
         ws = Workspace.find()
         say(f"Workspace: {ws.root}")
+    except LegacyWorkspaceError as e:
+        fail(str(e))
     except FileNotFoundError:
         say("No workspace here. (For a no-Snowflake demo, use `grayson sandbox init` instead.)")
         if not typer.confirm(f"Initialize a grayson workspace in {Path.cwd()}?", default=True):
@@ -762,6 +766,9 @@ def session_start(
     from grayson.checks import ChecksStore
 
     result["external_checks"] = ChecksStore(ws.checks_dir).summary(tables or None)
+    from grayson.checks.regression import RegressionStore
+
+    result["regression_checks"] = RegressionStore(ws.checks_dir).inventory(tables or None)
     result["hints"] = [
         "human console (interventions, reviews, approvals): grayson ui serve",
         f'run a guarded query: grayson query run {session.id} -q "SELECT ..."',
@@ -2992,13 +2999,118 @@ def knowledge_verify(
 # -- checks --------------------------------------------------------------
 
 
+@checks_app.command("regressions")
+def checks_regressions(tables: list[str] = typer.Option([], "--table", "-t")) -> None:
+    """Reusable regression checks and their human-review state."""
+    from grayson.checks.regression import RegressionStore
+
+    emit(RegressionStore(_workspace().checks_dir).inventory(tables or None))
+
+
+@checks_app.command("definition")
+def checks_definition(check_id: str) -> None:
+    """Show a check's SQL, expectation, source evidence, and approval."""
+    from grayson.checks.regression import RegressionStore
+
+    try:
+        emit(RegressionStore(_workspace().checks_dir).read(check_id).view())
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@checks_app.command("propose")
+def checks_propose(
+    session_id: str,
+    qid: str,
+    check_id: str = typer.Option(..., "--id"),
+    name: str = typer.Option(..., "--name"),
+    description: str = typer.Option(..., "--description", help="What regression this prevents."),
+    expect: str = typer.Option("no_rows", "--expect", help="no_rows | scalar"),
+    column: str = typer.Option("", "--column"),
+    operator: str = typer.Option(
+        "eq", "--operator", help="eq | ne | lt | lte | gt | gte | between"
+    ),
+    value: str | None = typer.Option(None, "--value"),
+    upper: str | None = typer.Option(None, "--upper"),
+) -> None:
+    """Turn an executed query into a proposed check for human review."""
+    from grayson.checks.regression import propose_check
+
+    try:
+        emit(
+            propose_check(
+                _session(session_id),
+                qid,
+                check_id,
+                name,
+                description,
+                {
+                    "kind": expect,
+                    "column": column,
+                    "operator": operator,
+                    "value": value,
+                    "upper": upper,
+                },
+            )
+        )
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+def _decide_regression(check_id: str, action: str) -> None:
+    from grayson.checks.regression import RegressionStore, decide_check
+
+    ws = _workspace()
+    try:
+        check = RegressionStore(ws.checks_dir).read(check_id)
+        typer.echo(json.dumps(check.view(), indent=2), err=True)
+        require_interactive(
+            f"{action} a regression check",
+            f"{action.capitalize()} '{check.name}' with this SQL and expectation?",
+        )
+        emit(decide_check(ws, check_id, action, check.digest(), actor="user"))
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@checks_app.command("activate")
+def checks_activate(check_id: str) -> None:
+    """Review and activate a check (human terminal or console only)."""
+    _decide_regression(check_id, "activate")
+
+
+@checks_app.command("retire")
+def checks_retire(check_id: str) -> None:
+    """Stop replaying a check while retaining its definition and history."""
+    _decide_regression(check_id, "retire")
+
+
+@checks_app.command("run")
+def checks_run(
+    session_id: str,
+    check_ids: list[str] = typer.Option(
+        [], "--check", help="Repeat to select checks; default: active checks on session targets."
+    ),
+) -> None:
+    """Rerun approved checks through this session's guard. Nonzero exit on fail or error."""
+    from grayson.checks.regression import run_checks
+
+    try:
+        report = run_checks(_session(session_id), check_ids or None)
+    except (ValueError, OSError) as e:
+        fail(str(e))
+    emit(report)
+    if not report["ok"]:
+        raise typer.Exit(1)
+
+
 @checks_app.command("status")
 def checks_status(
     tables: list[str] = typer.Option(
         [], "--table", "-t", help="Only checks touching these tables."
     ),
 ) -> None:
-    """Latest result per external check, failures and overdue runs called out."""
+    """Latest result per check, failures and overdue runs called out."""
     from grayson.checks import ChecksStore
 
     emit(ChecksStore(_workspace().checks_dir).summary(list(tables) or None))
@@ -3010,7 +3122,7 @@ def checks_list(
         [], "--table", "-t", help="Only checks touching these tables."
     ),
 ) -> None:
-    """Latest run of every external check (full result payloads)."""
+    """Latest run of every check (full result payloads)."""
     from grayson.checks import ChecksStore
 
     emit(
@@ -3506,7 +3618,9 @@ def library_policy_set(
 
 
 @library_app.command("migrate")
-def library_migrate_cmd() -> None:
+def library_migrate_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the migration without writing."),
+) -> None:
     """Rewrite the library's knowledge docs to the current format.
 
     A deliberate, human-run step — never implicit: it requires a clean git tree
@@ -3515,14 +3629,18 @@ def library_migrate_cmd() -> None:
     from grayson.knowledge import KNOWLEDGE_FORMAT
     from grayson.library import migrate_library
 
-    require_interactive(
-        "migrating the library format",
-        f"Rewrite this library's knowledge docs to format {KNOWLEDGE_FORMAT}?",
-    )
+    if not dry_run:
+        require_interactive(
+            "migrating the library format",
+            f"Rewrite this library's knowledge docs to format {KNOWLEDGE_FORMAT}?",
+        )
     try:
-        emit(migrate_library(_workspace()))
+        report = migrate_library(_workspace(), dry_run=dry_run)
     except (RuntimeError, OSError) as e:
         fail(str(e))
+    emit(report)
+    if report["errors"]:
+        raise typer.Exit(1)
 
 
 admins_app = typer.Typer(
@@ -3747,6 +3865,35 @@ def records_delete_cmd(
 
 
 # -- harness -------------------------------------------------------------
+
+
+@harness_app.command("status")
+def harness_instructions_status(
+    path: Path = typer.Option(Path("."), "--path", help="Repo root holding harness instructions."),
+) -> None:
+    """Check all harness instructions against this installed grayson, without writing."""
+    from grayson.harness import HARNESSES
+    from grayson.harness.update import harness_status
+
+    try:
+        emit({"harnesses": [harness_status(path.resolve(), h) for h in sorted(HARNESSES)]})
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@harness_app.command("update")
+def harness_update(
+    harness: str = typer.Argument(..., help="cursor | claude-code | codex | copilot"),
+    path: Path = typer.Option(Path("."), "--path", help="Repo root holding harness instructions."),
+    apply: bool = typer.Option(False, "--apply", help="Apply the previewed changes, with backups."),
+) -> None:
+    """Preview updated instructions; --apply saves them. MCP and permissions stay as configured."""
+    from grayson.harness.update import update_harness
+
+    try:
+        emit(update_harness(path.resolve(), harness, apply=apply))
+    except (ValueError, OSError) as e:
+        fail(str(e))
 
 
 @harness_app.command("init")

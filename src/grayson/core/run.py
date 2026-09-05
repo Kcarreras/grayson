@@ -61,11 +61,11 @@ def run_statement(
             "warnings": verdict.warnings,
         }
 
-    executor = executor or get_executor(session.connection, session.workspace.root)
     settings = session.guard_settings
     # Any raise between here and the terminal update would otherwise strand the
     # audit row at 'pending'. Catch, record the failure, and re-report.
     try:
+        executor = executor or get_executor(session.connection, session.workspace.root)
         result = executor.execute(verdict.executed_sql or sql, settings.timeout_seconds)
     except Exception as e:  # noqa: BLE001 — must not drop the audit row on any failure
         session.update_query(

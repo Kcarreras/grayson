@@ -8,6 +8,7 @@ section) that teaches an agent how to drive grayson.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 PROTOCOL = """\
@@ -111,6 +112,22 @@ they are equivalent. Never query Snowflake except through grayson.
    refresh any the setup flags. Need another registered view later?
    `grayson views use <sid> <name>` brings it into scope. Note the session id; use it
    in every later command.
+2a. Test what the team already learned: session start lists `regression_checks`.
+   Run its active checks with `grayson checks run <sid>` (MCP: `checks_run`) before
+   diagnosing a known problem from scratch. Each approved SQL/expectation pair
+   runs through the same guard and returns new query ids you can cite. A failing
+   check means its expectation was violated, not that the old root cause returned;
+   investigate it. An error (schema changed, guard refused, missing result) is never
+   a pass. Tests do not complete checkpoints or accept findings for you.
+   After fixing or diagnosing a repeatable issue, turn its evidence query into a
+   proposed regression check: `grayson checks propose <sid> <qid> --id orders_no_dupes
+   --name "Orders remain unique" --description "Catch recurrence of duplicate order ids"`.
+   Default expectation: the query returns no violating rows. For a scalar metric,
+   use `--expect scalar --column N --operator eq --value 0` (also lt/lte/gt/gte/ne,
+   or between with --upper). Choose an explicit business expectation with the user;
+   never adopt today's number as a correctness threshold just because it is on file.
+   The user reviews SQL and expectation in the console's Checks page and activates
+   it; agents can propose and replay checks, never activate or retire them.
 2b. Profile first: `grayson profile table <sid> DB.SCHEMA.TABLE` returns a table's
    whole descriptive battery — per-column nulls, cardinality, ranges, key candidates,
    value frequencies — in three or four guarded queries whose ids are evidence. Do
@@ -403,71 +420,76 @@ _SKILL_DIRS = {
 _SKILL_NAME = "grayson-workflow-author"
 
 
-def _write_workflow_author_skill(root: Path, harness: str) -> str:
-    """The workflow-authoring skill, at the harness's native skills location."""
-    if harness in _SKILL_DIRS:
-        target = root / _SKILL_DIRS[harness] / _SKILL_NAME / "SKILL.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        front = f"---\nname: {_SKILL_NAME}\ndescription: {WORKFLOW_AUTHOR_DESCRIPTION}\n---\n\n"
-        target.write_text(front + WORKFLOW_AUTHOR, encoding="utf-8")
-        return str(target.relative_to(root))
-    # codex has no skills mechanism: a second marked section in AGENTS.md
-    return _append_section(
-        root / "AGENTS.md", WORKFLOW_AUTHOR, root, mark="grayson-workflow-author"
-    )
+INSTRUCTION_PATHS = {
+    "cursor": ".cursor/rules/grayson.mdc",
+    "claude-code": "CLAUDE.md",
+    "copilot": ".github/copilot-instructions.md",
+    "codex": "AGENTS.md",
+}
 
 
-def generate_harness(root: Path, harness: str, with_mcp: bool = True) -> dict:
+def plan_harness(root: Path, harness: str, with_mcp: bool = True) -> dict[str, str]:
+    """Render every output before writing any file, including shared sections."""
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness '{harness}' (known: {', '.join(sorted(HARNESSES))})")
     body = PROTOCOL + (MCP_NOTE if with_mcp else "")
-    written: list[str] = []
-
+    rel = INSTRUCTION_PATHS[harness]
+    target = root / rel
+    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
     if harness == "cursor":
-        target = root / ".cursor" / "rules" / "grayson.mdc"
-        target.parent.mkdir(parents=True, exist_ok=True)
         front = (
             "---\ndescription: grayson agentic SQL QA protocol\nglobs:\nalwaysApply: false\n---\n\n"
         )
-        target.write_text(front + body, encoding="utf-8")
-        written.append(str(target.relative_to(root)))
-    elif harness == "claude-code":
-        target = root / "CLAUDE.md"
-        written.append(_append_section(target, body, root))
-    elif harness == "copilot":
-        # read by every Copilot surface: VS Code agent mode, Chat, coding
-        # agent, code review
-        target = root / ".github" / "copilot-instructions.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        written.append(_append_section(target, body, root))
-    else:  # codex
-        target = root / "AGENTS.md"
-        written.append(_append_section(target, body, root))
-
-    written.append(_write_workflow_author_skill(root, harness))
-
-    # standalone copies for reference regardless of harness
-    ref_dir = root / ".grayson"
-    ref_dir.mkdir(parents=True, exist_ok=True)
-    (ref_dir / "PROTOCOL.md").write_text(body, encoding="utf-8")
-    written.append(str((ref_dir / "PROTOCOL.md").relative_to(root)))
-    (ref_dir / "WORKFLOW_AUTHOR.md").write_text(WORKFLOW_AUTHOR, encoding="utf-8")
-    written.append(str((ref_dir / "WORKFLOW_AUTHOR.md").relative_to(root)))
-    return {"harness": harness, "written": written}
-
-
-def _append_section(target: Path, body: str, root: Path, mark: str = "grayson") -> str:
-    """Write/replace one marker-delimited section, leaving the rest of the file
-    (other grayson sections included) untouched."""
-    start, end = f"<!-- {mark}:start -->", f"<!-- {mark}:end -->"
-    section = f"{start}\n{body}\n{end}\n"
-    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if start in existing and end in existing:
-        pre = existing.split(start)[0]
-        post = existing.split(end, 1)[1]
-        target.write_text(pre + section + post, encoding="utf-8")
+        rendered = front + body
     else:
-        joined = (existing.rstrip() + "\n\n" if existing.strip() else "") + section
-        target.write_text(joined, encoding="utf-8")
-    return str(target.relative_to(root))
+        rendered = _replace_section(existing, body, target)
+    files = {rel: rendered}
+    if harness in _SKILL_DIRS:
+        skill = (_SKILL_DIRS[harness] / _SKILL_NAME / "SKILL.md").as_posix()
+        front = f"---\nname: {_SKILL_NAME}\ndescription: {WORKFLOW_AUTHOR_DESCRIPTION}\n---\n\n"
+        files[skill] = front + WORKFLOW_AUTHOR
+    else:
+        files[rel] = _replace_section(rendered, WORKFLOW_AUTHOR, target, "grayson-workflow-author")
+    files[".grayson/PROTOCOL.md"] = body
+    files[".grayson/WORKFLOW_AUTHOR.md"] = WORKFLOW_AUTHOR
+    return files
+
+
+def generate_harness(root: Path, harness: str, with_mcp: bool = True) -> dict:
+    files = plan_harness(root, harness, with_mcp)
+    from grayson.harness.update import apply_plan
+
+    return {"harness": harness, "written": list(files), **apply_plan(root, files)}
+
+
+def _replace_section(existing: str, body: str, target: Path, mark: str = "grayson") -> str:
+    """Replace exactly one well-formed section; retain all surrounding text.
+
+    Recognize the pre-rename markers too, without leaving two conflicting
+    protocols installed. Ambiguous or broken markers need a human repair.
+    """
+    start, end = f"<!-- {mark}:start -->", f"<!-- {mark}:end -->"
+    legacy_start, legacy_end = start.replace("grayson", "seekql"), end.replace("grayson", "seekql")
+    pairs = [
+        (a, b)
+        for a, b in ((start, end), (legacy_start, legacy_end))
+        if a in existing or b in existing
+    ]
+    section = f"{start}\n{body}\n{end}"
+    if not pairs:
+        separator = "" if not existing else ("\n" if existing.endswith("\n") else "\n\n")
+        return existing + separator + section + "\n"
+    a, b = pairs[0]
+    if (
+        len(pairs) != 1
+        or existing.count(a) != 1
+        or existing.count(b) != 1
+        or existing.index(a) > existing.index(b)
+    ):
+        raise ValueError(
+            f"{target}: damaged or duplicate {mark} markers — repair them before updating"
+        )
+    inside = existing[existing.index(a) + len(a) : existing.index(b)]
+    if re.search(r"<!-- (?:grayson|seekql)(?:-workflow-author)?:(?:start|end) -->", inside):
+        raise ValueError(f"{target}: nested harness markers — repair them before updating")
+    return existing[: existing.index(a)] + section + existing[existing.index(b) + len(b) :]

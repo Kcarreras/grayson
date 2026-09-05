@@ -1,9 +1,9 @@
 # Security posture & review log
 
-grayson runs agent-authored SQL against a production warehouse under the user's own
-Snowflake role. The query guard is designed to be the airtight wall even when no
-read-only role is available. This document records the threat model and the adversarial
-reviews the code has passed.
+grayson runs agent-authored SQL against a production warehouse under the configured
+Snowflake role. The query guard enforces parser-level restrictions; it does not replace
+warehouse privileges or isolation of the agent. This document records the threat model,
+adversarial reviews, and the residual risks of each layer.
 
 ## Threat model
 
@@ -24,8 +24,9 @@ reviews the code has passed.
    unqualified names blocked in strict mode; `GET_DDL` parsed and scope-checked as the
    metadata read it is (bulk and non-literal forms blocked in strict mode, other object
    kinds denied); per-statement cost caps (auto-LIMIT, timeout, budget).
-2. **Snowflake role** (defense in depth) — a read-only role is preferred when available;
-   the guard is built to hold under the user's normal role regardless.
+2. **Snowflake role** (defense in depth) — use a dedicated read-only role. Parser
+   validation does not reduce the privileges of the configured connection, and the
+   callable-UDF risk below remains a separate consideration.
 3. **Local analysis** (`cache/local.py`) — cached-result queries run on a read-only
    SQLite connection (`mode=ro`), single SELECT only, artifact tables only, a function
    denylist, `trusted_schema=OFF`, and a wall-clock interrupt watchdog.
@@ -192,8 +193,9 @@ The line that held: scope still widens only by a user action, and every widening
 
 ## Bypass and containment (where the guard's authority ends)
 
-The guard is airtight for statements that pass **through** grayson. It is not a
-sandbox around the agent: the agent runs under the user's OS account, and the
+The guard validates statements that pass **through** grayson, subject to the parser
+and callable-UDF limits above. It is not a sandbox around the agent: the agent runs
+under the user's OS account, and the
 Snowflake CLI's named connection (credentials, cached tokens, key files) is
 reachable by any process running as that user. An agent with unrestricted shell
 access could call `snow` directly and skip the guard, the audit trail, and the
