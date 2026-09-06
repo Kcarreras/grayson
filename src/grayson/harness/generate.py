@@ -223,8 +223,35 @@ they are equivalent. Never query Snowflake except through grayson.
    `purpose` in its payload: once the user has run the DDL and you mark the proposal
    applied, grayson registers the view in the library and adds it to your scope
    automatically — no separate registration step.
-7. Verify: re-run the anomaly/parity query and record before/after evidence:
-   `grayson proposal verify <sid> <pid> --before q_0003 --after q_0050 --verdict pass`.
+7. Before fix approval, propose an explicit success contract with
+   `grayson criteria set <sid> <pid> criteria.yaml` (format: 1, criteria: a list of
+   id, name, source_qid and expectation). Use the regression engine's scalar or
+   no_rows expectation; relative_percent: 0.1 freezes bounds within 0.1% of the
+   source observation. Include both the intended fix and preservation checks.
+   A no-missing-customer query establishes identity preservation; equal counts
+   alone do not. The user reviews the fix, SQL and bounds together in the console.
+   After approval and application, `grayson criteria run <sid> <pid>` executes
+   fresh queries and computes pass/fail/unproven. Never supply a verdict for a
+   contracted fix. `grayson criteria promote <sid> <pid> <criterion_id> <check_id>`
+   preserves a passing rule as a proposed regression check for human activation.
+   Existing fixes without a contract retain `proposal verify --before --after
+   --verdict`; that verdict is an analytical judgment. Optional `machine_claims`
+   on findings uses the same format-1 criteria envelope against cited evidence;
+   every assertion must pass, and relative_percent is not allowed on claims.
+7a. Start from changes: `grayson impact plan <sid>` connects detected changes to
+   explicit dbt/recorded-definition dependencies, assumptions, history and checks.
+   `--table DB.S.ORDERS` selects a change explicitly. Review source freshness and
+   unknown coverage. Launch with `grayson impact launch <sid> <digest>`; resume
+   the returned session with session brief and `impact run-checks <new_sid>`.
+   Relationships are leads, not proof of dependency or test coverage. You do the
+   reasoning over the scoped plan; Grayson does not call an LLM.
+7b. For releases/migrations, `grayson comparison create <sid> comparison.yaml`
+   declares two existing sessions/environments, tables, keys, mappings, filters
+   and tolerances. `comparison show` previews SQL; `comparison run` executes six
+   guarded queries and returns evidence-linked missing records, duplicate keys,
+   changed values, aggregates and concentrations. Read incomplete coverage and
+   sequential observation times before making a release recommendation. Retrieve
+   or export with `comparison report`. See docs/ASSURANCE.md for schemas/examples.
 8. Advance stages as you go (`grayson session advance <sid> --to review`) so the
    console's stage strip tracks your progress. Your first executed query moves
    setup to analysis automatically; every later transition is yours to declare,

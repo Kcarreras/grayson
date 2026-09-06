@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}grayson — Success criteria{% endblock %}
+{% block head %}<style>.elform label {display:flex;flex-direction:column;gap:6px;} .criterion-row .grid {grid-template-columns:repeat(2,minmax(0,1fr));} @media(max-width:650px){.criterion-row .grid{grid-template-columns:1fr;}}</style>{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>Fix verification</nav>
+<div class="pagehead"><h1>{{ p.title }}</h1><span class="badge plain">{{ p.status | replace('_', ' ') }}</span></div>
+<p class="lede">Agree on what success means. Then verify it with fresh evidence.</p>
+{% if error %}<div class="banner" role="alert">{{ error }}</div>{% endif %}
+{% if contract %}
+<h2>Success contract <span class="h-count">{{ contract.criteria | length }} {{ 'criterion' if contract.criteria | length == 1 else 'criteria' }} · {{ contract.connection }}</span></h2>
+{% for c in contract.criteria %}
+<div class="card"><div class="row split"><span class="otitle">{{ loop.index }}. {{ c.name }}</span><span class="badge {{ 'ok' if contract.review_current else 'attn' }}">{{ 'approved' if contract.review_current else 'awaiting review' }}</span></div>
+<p style="margin-top:10px">{{ c.expectation_text }}</p>
+<div class="small muted">Baseline: {{ c.baseline.observed }} · {{ c.baseline.observed_at }} · <a href="/session/{{ s.id }}/query/{{ c.source_qid }}?t={{ token }}">{{ c.source_qid }}</a>{% if c.relative_percent is not none %} · ±{{ c.relative_percent }}% of this baseline{% endif %}</div>
+<details class="inlinefold"><summary>Review SQL and scope</summary><pre>{{ c.sql | sqlhl }}</pre><p class="small muted">{{ c.tables | join(', ') }}</p></details></div>
+{% endfor %}
+{% if p.status == 'proposed' %}
+<div class="card attn"><h2 style="margin-top:0">Review the fix and its success criteria</h2><p class="mono">{{ p.payload.target_file or p.payload.run_target }}</p>{% if p.payload.rationale %}<p>{{ p.payload.rationale }}</p>{% endif %}
+{% if p.kind == 'file_diff' %}{% if p.payload.diff %}<div class="overline">File diff</div><pre>{{ p.payload.diff }}</pre>{% endif %}{% if p.payload.new_content %}<div class="overline">Full replacement content</div><pre>{{ p.payload.new_content }}</pre>{% endif %}{% else %}<pre>{{ p.payload.ddl }}</pre>{% endif %}
+{% if p.payload.view_name %}<p class="small">Registers view {{ p.payload.view_name }} from {{ p.payload.source_tables | join(', ') }}.</p>{% endif %}
+<form method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}"><input type="hidden" name="digest" value="{{ contract.digest }}"><button class="btn primary" type="submit">Approve fix and these criteria</button></form></div>
+{% elif p.status == 'approved' %}
+<form class="card" method="post" action="/session/{{ s.id }}/criteria/{{ p.pid }}/applied?t={{ token }}"><p>After the approved change is applied, record it here to unlock fresh verification.</p><button class="btn" type="submit">Mark fix applied</button></form>
+{% elif s.stage != 'closed' %}
+<form method="post" action="/session/{{ s.id }}/criteria/{{ p.pid }}/run?t={{ token }}"><button class="btn primary" type="submit">Run fresh verification</button><span class="small muted"> Uses {{ contract.criteria | length }} guarded queries.</span></form>
+{% endif %}
+{% endif %}
+{% if p.verification and p.verification.mode == 'criteria' %}
+<h2>Verification results <span class="badge {{ 'ok' if p.verification.verdict == 'pass' else 'bad' if p.verification.verdict == 'fail' else 'attn' }}">{{ p.verification.verdict }}</span></h2>
+<div class="tiles">{% for status, count in p.verification.counts.items() %}<div class="tile"><div class="num">{{ count }}</div><div class="lbl">{{ status }}</div></div>{% endfor %}</div>
+{% for r in p.verification.results %}<div class="card"><div class="row split"><span class="otitle">{{ r.name }}</span><span class="badge {{ 'ok' if r.status == 'pass' else 'bad' if r.status == 'fail' else 'attn' }}">{{ r.status }}</span></div><p>{{ r.details }}</p><p class="small muted">{{ r.connection }} · {{ r.observed_at }} · <a href="/session/{{ s.id }}/query/{{ r.qid }}?t={{ token }}">View evidence {{ r.qid }}</a></p>
+{% if r.status == 'pass' %}<details class="inlinefold"><summary>Keep this as a regression check</summary><form class="elform" method="post" action="/session/{{ s.id }}/criteria/{{ p.pid }}/promote?t={{ token }}"><input type="hidden" name="criterion_id" value="{{ r.id }}"><label>Check ID<input name="check_id" required pattern="[a-z][a-z0-9_-]{0,63}" value="{{ r.id }}"></label><button class="btn" type="submit">Save exact expectation for review</button><p class="small muted">Preserves this SQL and these bounds. Activate it after review in Checks.</p></form></details>{% endif %}</div>{% endfor %}
+{% endif %}
+{% if p.status == 'proposed' %}
+<details {% if not contract %}open{% endif %}><summary class="otitle">{{ 'Replace' if contract else 'Define' }} success criteria</summary>
+<p class="small muted">Choose executed evidence and a precise rule for each outcome. Use a no-rows query for missing customers; a total count alone cannot prove that the same customers remain.</p>
+<form id="criteria-form" method="post" action="/session/{{ s.id }}/criteria/{{ p.pid }}/set?t={{ token }}">
+<div id="criterion-list">{% for entry in draft %}{% set rule = entry.expectation or {} %}<fieldset class="card criterion-row"><legend>Criterion</legend><div class="grid">
+<label>Name<input name="name" required placeholder="Duplicate IDs reach zero" value="{{ entry.name or '' }}"></label><label>ID<input name="criterion_id" required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="duplicate_ids" value="{{ entry.id or '' }}"></label>
+<label>Executed baseline<select name="source_qid" required>{% if entry.source_qid and entry.source_qid not in queries | map(attribute='qid') | list %}<option value="{{ entry.source_qid }}" selected>{{ entry.source_qid }} · Existing baseline</option>{% endif %}{% for q in queries %}<option value="{{ q.qid }}" {{ 'selected' if q.qid == entry.source_qid }}>{{ q.qid }} · {{ q.label or q.sql_raw[:80] }}</option>{% endfor %}</select></label>
+<label>Rule<select name="kind"><option value="scalar" {{ 'selected' if rule.kind == 'scalar' }}>One numeric value</option><option value="no_rows" {{ 'selected' if rule.kind == 'no_rows' }}>No violating rows</option></select></label>
+<label>Result column<input name="column" placeholder="DUPLICATE_IDS" value="{{ rule.column or '' }}"></label><label>Operator<select name="operator">{% for value, label in [('eq','Equals'),('ne','Does not equal'),('lte','At most'),('gte','At least'),('lt','Less than'),('gt','Greater than'),('between','Between, inclusive')] %}<option value="{{ value }}" {{ 'selected' if rule.operator == value }}>{{ label }}</option>{% endfor %}</select></label>
+<label>Value / lower bound<input name="value" value="{{ rule.value if rule.value is defined and rule.value is not none else '0' }}" inputmode="decimal"></label><label>Upper bound, for between<input name="upper" inputmode="decimal" value="{{ rule.upper if rule.upper is defined and rule.upper is not none else '' }}"></label>
+<label>Optional tolerance from baseline (%)<input name="relative_percent" inputmode="decimal" placeholder="0.1" value="{{ entry.relative_percent if entry.relative_percent is defined and entry.relative_percent is not none else '' }}"><span class="small muted">Replaces numeric bounds with a fixed range around the observed baseline.</span></label>
+</div><button type="button" class="btn sm remove-criterion">Remove criterion</button></fieldset>{% endfor %}</div>
+<div class="row"><button id="add-criterion" class="btn" type="button">Add criterion</button><button class="btn primary" type="submit">Preview success contract</button></div></form></details>
+<script>
+const list = document.getElementById('criterion-list');
+document.getElementById('add-criterion').addEventListener('click', () => { const row = list.firstElementChild.cloneNode(true); row.querySelectorAll('input').forEach(i => i.value = i.name === 'value' ? '0' : ''); list.appendChild(row); row.querySelector('input').focus(); });
+list.addEventListener('click', e => { if(e.target.classList.contains('remove-criterion') && list.children.length > 1) e.target.closest('fieldset').remove(); });
+</script>
+{% endif %}
+{% endblock %}

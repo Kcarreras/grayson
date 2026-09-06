@@ -234,6 +234,21 @@ def record_finding(
     except (ValidationError, ValueError) as e:
         raise EnforcementError(f"finding failed schema '{tpl.findings_schema}': {e}") from e
     _validate_evidence(session, finding.evidence)
+    if finding.machine_claims is not None:
+        from grayson.core.criteria import prepare
+
+        try:
+            claims = prepare(session, finding.machine_claims)
+            for claim in claims["criteria"]:
+                if claim["source_qid"] not in finding.evidence:
+                    raise ValueError("machine claims must use the finding's cited evidence")
+                if claim["relative_percent"] is not None:
+                    raise ValueError("finding claims need an explicit expectation, not a baseline")
+                if claim["baseline"]["status"] != "pass":
+                    raise ValueError(f"machine claim '{claim['name']}' does not pass")
+            finding.machine_claims = claims
+        except (ValueError, OSError) as e:
+            raise EnforcementError(str(e)) from e
     if finding.supersedes:
         from grayson.records import get_library_record, parse_record_ref
 
@@ -270,7 +285,7 @@ def record_finding(
         severity=finding.severity,
         confidence=finding.confidence,
         title=finding.title,
-        payload=finding.model_dump(),
+        payload=finding.model_dump(exclude_none=True),
         worker=worker,
     )
     if finding.supersedes:

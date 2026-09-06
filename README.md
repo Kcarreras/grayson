@@ -113,6 +113,18 @@ Use **Save as regression check** on an executed query, or follow the
 [CLI and MCP walkthrough](docs/REGRESSIONS.md). Existing workspaces and libraries
 need no migration to use it.
 
+## Verify fixes, investigate changes, compare releases
+
+Define explicit success criteria before approving a fix, then let Grayson compute
+pass/fail/unproven from fresh queries. Preserve a passed criterion as a regression
+check without changing its expectation. Use **Investigate changes** to connect
+recorded changes to explicit dependencies, assumptions and checks, or **Compare
+releases** for mapped record parity, aggregate tolerances and evidence-linked
+mismatch reports. Each workflow is available through CLI, MCP and console.
+
+These are optional, versioned additions: existing sessions and library formats
+remain usable. See [the contracts and walkthroughs](docs/ASSURANCE.md).
+
 ## Getting started
 
 Requires [uv](https://docs.astral.sh/uv/) and, for real warehouses only, the

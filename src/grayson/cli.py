@@ -2307,10 +2307,22 @@ def proposal_show(session_id: str, pid: str) -> None:
 @proposal_app.command("approve")
 def proposal_approve(session_id: str, pid: str) -> None:
     """Approve a proposal (a user action). The harness agent then applies it."""
-    require_interactive("approving a fix proposal")
+    if not _stdin_is_tty():
+        require_interactive("approving a fix proposal")
     try:
-        emit(proposals_engine.decide(_session(session_id), pid, approve=True))
-    except ProposalError as e:
+        from grayson.core.criteria import contract
+
+        s = _session(session_id)
+        criteria = contract(s, pid)
+        if criteria:
+            typer.echo(json.dumps(s.proposal(pid), indent=2), err=True)
+        require_interactive("approving a fix proposal")
+        emit(
+            proposals_engine.decide(
+                s, pid, approve=True, digest=criteria["digest"] if criteria else ""
+            )
+        )
+    except (ProposalError, ValueError) as e:
         fail(str(e))
 
 
@@ -4311,6 +4323,11 @@ def ui_serve(
     from grayson.ui.server import serve
 
     serve(_workspace(), host=host, port=port, use_token=not no_token, open_browser=open_browser)
+
+
+from grayson.assurance_cli import register as _register_assurance  # noqa: E402
+
+_register_assurance(app, _session, _workspace, emit, fail)
 
 
 def main() -> None:

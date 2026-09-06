@@ -1,5 +1,9 @@
 # Regression checks: make investigations repeatable
 
+Fix success criteria can become regression checks without redefining their
+expectations. See [evidence contracts](ASSURANCE.md#1-approve-success-criteria-before-a-fix)
+for the approve → verify → promote workflow.
+
 A fixed bug should be easier to catch the next time. Grayson can turn an
 executed investigation query into a reviewed check, keep it in the team library,
 and replay it in later sessions with fresh evidence.

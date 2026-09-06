@@ -73,6 +73,7 @@ def _session_base(sid: str, meta: dict) -> dict:
         "session_title": meta.get("title", ""),
         "workflow": meta.get("workflow", ""),
         "stage": meta.get("stage", ""),
+        "targets": json.loads(meta.get("targets") or "[]"),
     }
 
 
@@ -262,7 +263,9 @@ def publish_proposal(session: Session, pid: str) -> None:
         p,
         f"grayson records: proposal {pid} ({session.id})",
         evidence=evidence_snapshot(
-            session, [verification.get("before_qid"), verification.get("after_qid")]
+            session,
+            verification.get("evidence")
+            or [verification.get("before_qid"), verification.get("after_qid")],
         ),
     )
 
@@ -604,7 +607,10 @@ def get_record(workspace: Workspace, session_id: str, kind: str, record_id: str)
             cited = (item.get("payload") or {}).get("evidence") or []
         else:
             verification = item.get("verification") or {}
-            cited = [verification.get("before_qid"), verification.get("after_qid")]
+            cited = verification.get("evidence") or [
+                verification.get("before_qid"),
+                verification.get("after_qid"),
+            ]
         return {
             "session_id": session_id,
             "kind": kind,

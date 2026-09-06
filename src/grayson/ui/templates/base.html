@@ -154,6 +154,12 @@ header { border-bottom: 1px solid var(--border); background: var(--panel);
 .tab:hover { color: var(--ink); text-decoration: none; background: var(--panel2); }
 .tab.active { color: var(--act); background: var(--act-soft); }
 .themebtn { border: none; background: transparent; cursor: pointer; font-family: inherit; }
+@media (max-width: 700px) {
+  .nav { height: auto; min-height: 52px; flex-wrap: wrap; padding: 8px 0; }
+  .nav > .grow { display: none; }
+  .nav > .brand { margin-right: 8px; }
+  .nav .tab { white-space: nowrap; padding: 6px 8px; font-size: var(--t-sm); }
+}
 main { max-width: 1140px; margin: 0 auto; padding: 24px 22px 60px; }
 
 /* ---- surfaces -------------------------------------------------------- */

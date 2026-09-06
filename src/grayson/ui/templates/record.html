@@ -68,6 +68,7 @@
 {% endif %}
 <div class="card">
   {{ agent_text(record.payload.summary) }}
+  {% if record.payload.machine_claims %}<h2>Machine-checked assertions</h2>{% for c in record.payload.machine_claims.criteria %}<p><span class="badge ok">pass</span> {{ c.name }} · {{ c.expectation_text }} · observed {{ c.baseline.observed }} {{ evq(c.source_qid) }}</p>{% endfor %}{% endif %}
   {% if record.payload.extra %}
   <dl class="props">
     {% for k, v in record.payload.extra.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v }}</dd>{% endfor %}
@@ -185,13 +186,17 @@
   <h2>Verification</h2>
   <div class="row">
     <span class="badge {{ 'ok' if record.verification.verdict == 'pass' else 'bad' }}">{{ record.verification.verdict }}</span>
-    <span class="muted small">rows {{ record.verification.comparison.before.row_count }}
+    {% if record.verification.mode != 'criteria' %}<span class="muted small">rows {{ record.verification.comparison.before.row_count }}
       → {{ record.verification.comparison.after.row_count }}</span>
+    {% endif %}
     {{ evq(record.verification.before_qid) }}
     <span class="faint">→</span>
     {{ evq(record.verification.after_qid) }}
   </div>
-  {{ evidence_block([record.verification.before_qid, record.verification.after_qid]) }}
+  {% if record.verification.mode == 'criteria' %}
+  <div class="scroll"><table><thead><tr><th>Criterion</th><th>Expectation</th><th>Observed</th><th>Result</th><th>Evidence</th></tr></thead><tbody>{% for r in record.verification.results %}<tr><td>{{ r.name }}</td><td>{{ r.expectation_text }}</td><td>{{ r.observed if r.observed is not none else 'Unavailable' }}</td><td><span class="badge {{ 'ok' if r.status == 'pass' else 'bad' if r.status == 'fail' else 'attn' }}">{{ r.status }}</span></td><td>{{ evq(r.qid) }}</td></tr>{% endfor %}</tbody></table></div>
+  {{ evidence_block(record.verification.evidence) }}
+  {% else %}{{ evidence_block([record.verification.before_qid, record.verification.after_qid]) }}{% endif %}
   {% if record.verification.note %}<div class="ink2 small" style="margin-top: 6px;">{{ record.verification.note }}</div>{% endif %}
   {% endif %}
 </div>

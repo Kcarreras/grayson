@@ -18,6 +18,7 @@ the deterministic sections below it.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -43,6 +44,7 @@ REPORT_SECTIONS = (
     "checkpoints",
     "findings",
     "proposals",
+    "comparisons",
     "interventions",
 )
 
@@ -119,7 +121,7 @@ DEFAULT_PROFILE_YAML = """\
 #   every number but summarizes query-id lists (ids stay in the JSON report).
 # sections render in this order — remove one to drop it. Known sections:
 #   narrative, setup_inputs, queries, charts, checkpoints, findings,
-#   proposals, interventions.
+#   proposals, comparisons, interventions.
 # charts: text embeds each chart's terminal rendering (greppable, diffable);
 #   svg writes charts/<chart_id>.svg beside the report and embeds it as an
 #   image, so the published report shows the picture on the git host; both
@@ -136,6 +138,7 @@ sections:
   - checkpoints
   - findings
   - proposals
+  - comparisons
   - interventions
 header: ""
 footer: ""
@@ -152,6 +155,10 @@ def build_report(session: Session, overrides_dir: Path | None = None) -> dict:
         "checkpoints": session.checkpoints(),
         "findings": session.findings(),
         "proposals": session.proposals(),
+        "investigation_plan_v1": json.loads(session.get_meta("investigation_plan_v1") or "null"),
+        "comparison_runs_v1": [
+            e["payload"] for e in session.events(20, event_type="comparison_run")
+        ],
         "charts": _collect_charts(session),
         "narrative": session.get_meta("report_narrative", "") or "",
         "interventions": {
@@ -385,6 +392,11 @@ def _sec_proposals(report: dict, profile: ReportProfile) -> list[str]:
         verified = f" — verification: {verdict}" if verdict else ""
         linked = f" (fixes {p['finding_fid']})" if p.get("finding_fid") else ""
         lines.append(f"- **{p['pid']}** [{p['status']}] {p['title']}{linked}{verified}")
+        for result in (p.get("verification") or {}).get("results", []):
+            lines.append(
+                f"  - {result['name']}: **{result['status']}** — {result['details']} "
+                f"(evidence {result['source_qid']} → {result['qid']})"
+            )
     if not report["proposals"]:
         lines.append("(none)")
     return [*lines, ""]
@@ -400,7 +412,39 @@ def _sec_interventions(report: dict, profile: ReportProfile) -> list[str]:
     ]
 
 
+def _sec_comparisons(report: dict, profile: ReportProfile) -> list[str]:
+    runs = report.get("comparison_runs_v1") or []
+    if not runs:
+        return []
+    lines = ["## Comparisons", ""]
+    for run in runs:
+        lines.extend(
+            [
+                f"### {run['name']} — {run['verdict']}",
+                "",
+                f"Record coverage: {run['coverage']['record_parity']}. "
+                f"{run['coverage']['snapshot']}",
+                "",
+            ]
+        )
+        for side in ("left", "right"):
+            src = run[side]
+            lines.append(
+                f"- {src['label']}: {src['table']} on {src['connection']}; "
+                + ", ".join(
+                    f"{e['session_id']}/{e['qid']} at {e['observed_at']}" for e in src["evidence"]
+                )
+            )
+        lines.extend(
+            f"- {r['name']}: **{r['status']}** (observed {r['observed']}, allowed {r['allowed']})"
+            for r in run["results"]
+        )
+        lines.append("")
+    return lines
+
+
 _SECTION_RENDERERS = {
+    "comparisons": _sec_comparisons,
     "narrative": _sec_narrative,
     "setup_inputs": _sec_setup_inputs,
     "queries": _sec_queries,

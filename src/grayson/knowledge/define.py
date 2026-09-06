@@ -228,6 +228,10 @@ def record_definition(
         )
     if not entry.get("kind"):
         warnings.append("kind unknown: pass --kind (dbt_model, view, ddl, job, ...)")
+    if seen.get("text") and Path(entry["path"]).suffix.lower() == ".sql":
+        from grayson.knowledge.impact import sql_dependencies
+
+        entry["dependencies_v1"] = sql_dependencies(seen["text"], utcnow(), entry["path"])
     doc = store.upsert_definition(fqn, entry, by=by)
     written = next(d for d in doc["definitions"] if d.get("path") == entry["path"])
     return {
