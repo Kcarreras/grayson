@@ -121,7 +121,7 @@ DEFAULT_PROFILE_YAML = """\
 #   every number but summarizes query-id lists (ids stay in the JSON report).
 # sections render in this order — remove one to drop it. Known sections:
 #   narrative, setup_inputs, queries, charts, checkpoints, findings,
-#   proposals, interventions.
+#   proposals, comparisons, interventions.
 # charts: text embeds each chart's terminal rendering (greppable, diffable);
 #   svg writes charts/<chart_id>.svg beside the report and embeds it as an
 #   image, so the published report shows the picture on the git host; both
@@ -138,6 +138,7 @@ sections:
   - checkpoints
   - findings
   - proposals
+  - comparisons
   - interventions
 header: ""
 footer: ""

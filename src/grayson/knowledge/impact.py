@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import sqlglot
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
@@ -37,9 +37,14 @@ class DependencyObservation(BaseModel):
     captured_at: str
     observed_at: str | None = None
     edges: list[DependencyEdge]
+    prior_edges: list[DependencyEdge] = Field(default_factory=list)
     definitions: dict[str, dict]
     unresolved: list[dict]
     changes: list[dict]
+
+
+def _edge_key(edge: dict) -> tuple:
+    return tuple(edge.get(k) for k in ("upstream", "downstream", "source", "kind", "node"))
 
 
 def sql_dependencies(sql: str, captured_at: str, source: str) -> dict:
@@ -141,7 +146,8 @@ def ingest_manifest(store: KnowledgeStore, manifest: dict, repo: str | None = No
                     }
                 )
     old = (previous or {}).get("definitions", {})
-    changes = []
+    # Imports observe changes; they do not acknowledge earlier change evidence.
+    changes = list((previous or {}).get("changes", []))
     for table in sorted(set(old) | set(definitions)):
         before, after = old.get(table), definitions.get(table)
         if previous and before != after:
@@ -159,6 +165,18 @@ def ingest_manifest(store: KnowledgeStore, manifest: dict, repo: str | None = No
                     "source": source,
                 }
             )
+    # Retain disappearing links with their original observation time. A rename
+    # or removal still needs the old downstream path, even after later refreshes.
+    current_keys = {_edge_key(e) for e in edges}
+    prior_edges = {_edge_key(e): e for e in (previous or {}).get("prior_edges", [])}
+    for edge in (previous or {}).get("edges", []):
+        if _edge_key(edge) not in current_keys:
+            prior_edges[_edge_key(edge)] = {
+                **edge,
+                "state": "prior",
+                "removed_at": observed_at,
+                "removed_captured_at": captured_at,
+            }
     value = {
         **(previous or {}),
         "format": 1,
@@ -166,6 +184,7 @@ def ingest_manifest(store: KnowledgeStore, manifest: dict, repo: str | None = No
         "captured_at": captured_at,
         "observed_at": observed_at,
         "edges": edges,
+        "prior_edges": list(prior_edges.values()),
         "definitions": definitions,
         "unresolved": unresolved,
         "changes": changes,
@@ -207,7 +226,13 @@ def build_plan(
             if observation.get("format") != 1:
                 raise ValueError("unsupported dependency format")
             DependencyObservation.model_validate(observation)
-            edges.extend(observation["edges"])
+            edges.extend({**e, "state": "current"} for e in observation["edges"])
+            current_keys = {_edge_key(e) for e in observation["edges"]}
+            edges.extend(
+                {**e, "state": "prior"}
+                for e in observation.get("prior_edges", [])
+                if _edge_key(e) not in current_keys
+            )
             changes.extend(observation["changes"])
             observations.append(
                 {
@@ -402,7 +427,8 @@ def build_plan(
             "Record findings and propose explicit success criteria for any fix.",
         ],
         "coverage_note": "Explicit dependencies only. Missing edges, old observations, and table "
-        "overlap cannot establish complete downstream or behavioral coverage.",
+        "overlap cannot establish complete downstream or behavioral coverage. Prior manifest "
+        "links describe earlier topology and remain leads for potential impact.",
     }
     plan["digest"] = digest({k: v for k, v in plan.items() if k != "generated_at"})
     old = json.loads(session.get_meta("impact_plan_v1") or "null")

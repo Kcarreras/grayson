@@ -91,6 +91,12 @@ An older manifest cannot replace a newer observation. SQL definitions recorded
 with `knowledge define`, or DDL captured by `knowledge sync`, contribute fully
 qualified references; unresolved names remain visible instead of being guessed.
 
+Routine imports preserve detected changes, including when the same manifest is
+imported again. Removed dependency links retain their original observation times
+and are labeled **Prior manifest**, so renamed or removed relations can still
+lead to downstream investigations. These historical links describe potential
+impact from earlier topology; they do not claim the dependency still exists.
+
 ```bash
 grayson impact plan latest
 grayson impact plan latest --table DB.S.ORDERS --freshness-days 7
@@ -197,9 +203,11 @@ The record-level counts describe unique, non-null matching keys.
 
 Record parity is incomplete if either extract hits a guard/local cap, loses its
 cache, changes shape, or disagrees with the separately observed row count.
-Missing-key and changed-value checks then remain unproven; full-relation summary
-checks may still pass or fail independently. A demonstrated failure wins over
-unproven checks, but a pass requires all declared checks to pass. Unmapped
+Missing-key checks then remain unproven. Changed-value checks also cannot pass,
+but observed mismatches above the allowed count still fail when full-relation
+duplicate checks prove that matching keys are unique in both environments.
+Full-relation summary checks may still pass or fail independently. A demonstrated
+failure wins over unproven checks, but a pass requires all declared checks to pass. Unmapped
 columns are explicitly outside coverage. Large releases may need narrower
 equivalent filters or higher human-configured guard limits for full row parity.
 

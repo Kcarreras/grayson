@@ -100,6 +100,11 @@ success criteria. Current clients require human approval of contracted fixes
 and compute their verdict from fresh results; older clients do not enforce
 that contract, so use updated clients for sessions adopting these features.
 
+New libraries include `comparisons` in the default report profile. Existing
+profiles keep their explicit section lists: add `comparisons` to `sections`
+in the library's `reports/default.yaml` (or another selected profile) to include
+comparison evidence in Markdown reports. JSON reports include it regardless.
+
 ## SeekQL rename
 
 Older releases used `seekql.toml`, `.seekql/`, and the `seekql` command. Grayson

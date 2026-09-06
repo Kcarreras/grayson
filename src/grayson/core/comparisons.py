@@ -317,8 +317,11 @@ def run(owner: Session, comparison_id: str, *, executors: dict | None = None) ->
     right = _capture(owner, definition, spec, "right", (executors or {}).get("right"))
     results, errors = [], [*left["errors"], *right["errors"]]
 
-    def result(name, observed, allowed, complete=True, details=""):
-        status = "unproven" if not complete else "pass" if observed <= allowed else "fail"
+    def result(name, observed, allowed, complete=True, details="", *, failure_proven=False):
+        if failure_proven and observed is not None and observed > allowed:
+            status = "fail"
+        else:
+            status = "unproven" if not complete else "pass" if observed <= allowed else "fail"
         labels = {
             "left_null_keys": "Baseline · null keys",
             "right_null_keys": "Candidate · null keys",
@@ -438,12 +441,20 @@ def run(owner: Session, comparison_id: str, *, executors: dict | None = None) ->
             concentrate(a, "changed_values")
     result("missing_left", len(only_right), spec.allowed_missing_left, complete)
     result("missing_right", len(only_left), spec.allowed_missing_right, complete)
+    # A capped extract gives a lower bound on changed records only when unseen
+    # duplicate keys cannot invalidate the observed one-to-one matches.
+    unique_keys = all(
+        r["status"] == "pass"
+        for r in results
+        if r["name"] in {"left_duplicate_keys", "right_duplicate_keys"}
+    )
     result(
         "changed_rows",
         len(changed),
         spec.allowed_changed_rows,
         complete and not ambiguous and not unknown_values,
         f"{ambiguous} ambiguous keys; {unknown_values} non-numeric observations",
+        failure_proven=unique_keys,
     )
     statuses = [r["status"] for r in [*results, *aggregates]]
     verdict = "fail" if "fail" in statuses else "unproven" if "unproven" in statuses else "pass"
@@ -471,8 +482,9 @@ def run(owner: Session, comparison_id: str, *, executors: dict | None = None) ->
             "mapped_columns": canonical,
             "unmapped_columns": "not compared",
             "snapshot": "Sequential observations, not an atomic cross-environment snapshot.",
-            "note": "Missing keys and changed values are unproven when extracts are "
-            "incomplete. Aggregates and key-quality summaries scan each filtered "
+            "note": "Incomplete extracts cannot prove parity or missing keys. Observed value "
+            "mismatches can still fail when full-relation checks prove unique matching keys. "
+            "Aggregates and key-quality summaries scan each filtered "
             "relation independently. Use stable release inputs or snapshot tables "
             "when concurrent writes could change the data.",
         },

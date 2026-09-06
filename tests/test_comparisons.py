@@ -269,3 +269,67 @@ def test_mcp_runs_same_comparison_and_preserves_failed_verdict(pair, monkeypatch
     )
     assert report["verdict"] == "fail"
     assert report == comparisons.latest_report(pair[0], "orders_release")
+
+
+@pytest.mark.parametrize("cap", ["guard", "local"])
+@pytest.mark.parametrize("allowed, expected", [(0, "fail"), (1, "unproven")])
+def test_capped_extract_preserves_proven_value_failures(pair, cap, allowed, expected):
+    if cap == "guard":
+        for s in pair:
+            s.set_meta("guard", GuardSettings(auto_limit=2).model_dump_json())
+    report = run(
+        pair,
+        [(1, "100", "UK"), (2, "100", "UK"), (3, "100", "UK")],
+        [(1, "100", "US"), (2, "100", "UK"), (3, "100", "UK")],
+        max_rows=2 if cap == "local" else 1000,
+        columns=[{"left": "REGION", "right": "REGION"}],
+        allowed_changed_rows=allowed,
+    )
+    results = {r["name"]: r for r in report["results"]}
+    assert report["coverage"]["record_parity"] == "incomplete"
+    assert results["changed_rows"]["observed"] == 1
+    assert results["changed_rows"]["status"] == expected
+    assert report["verdict"] == expected
+    assert results["missing_left"]["status"] == results["missing_right"]["status"] == "unproven"
+
+
+def test_capped_extract_does_not_prove_missing_or_ambiguous_matches(pair):
+    rows = [(1, "100", "UK"), (2, "100", "UK"), (3, "100", "UK"), (4, "100", "UK")]
+    report = run(pair, rows, list(reversed(rows)), max_rows=2)
+    results = {r["name"]: r for r in report["results"]}
+    assert results["missing_left"]["observed"] == results["missing_right"]["observed"] == 2
+    assert report["verdict"] == "unproven"
+    # The second occurrence of key 1 is outside the extract. It makes the match ambiguous.
+    report = comparisons.run(
+        pair[0],
+        "orders_release",
+        executors={
+            "left": Warehouse(rows),
+            "right": Warehouse([(1, "100", "US"), *rows[1:], rows[0]], True),
+        },
+    )
+    results = {r["name"]: r for r in report["results"]}
+    assert results["changed_rows"]["observed"] == 1
+    assert results["changed_rows"]["status"] == "unproven"
+
+
+def test_scaffolded_profile_includes_comparison_evidence_and_honors_custom_sections(pair):
+    from grayson.library import init_library
+    from grayson.report import REPORT_SECTIONS, load_profile
+
+    library = pair[0].workspace.reports_dir.parent
+    init_library(library)
+    assert load_profile(library / "reports").sections == list(REPORT_SECTIONS)
+    report = run(pair, [(1, "100", "UK")], [(1, "110", "UK")])
+    result = CliRunner().invoke(app, ["session", "report", pair[0].id, "--markdown"])
+    assert result.exit_code == 0, result.output
+    markdown = json.loads(result.stdout)["markdown"]
+    assert "Orders release" in markdown and "changed_rows" in markdown
+    assert report["left"]["evidence"][0]["qid"] in markdown
+    # Explicit existing/custom section lists remain authoritative and are not rewritten.
+    profile = library / "reports" / "default.yaml"
+    profile.write_text("sections: [findings]\n", encoding="utf-8")
+    init_library(library)
+    result = CliRunner().invoke(app, ["session", "report", pair[0].id, "--markdown"])
+    assert "Orders release" not in json.loads(result.stdout)["markdown"]
+    assert profile.read_text(encoding="utf-8") == "sections: [findings]\n"
