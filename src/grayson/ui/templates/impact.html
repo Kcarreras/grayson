@@ -4,7 +4,7 @@
 {% block content %}
 <nav class="crumbs"><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>Change impact</nav>
 <h1>Start with what changed</h1><p class="lede">Trace recorded dependencies, revisit assumptions, and run the checks that matter.</p>
-{% if error %}<div class="banner" role="alert">{{ error }}</div>{% endif %}
+
 <form class="card elform" method="post" action="/session/{{ s.id }}/impact/plan?t={{ token }}" style="margin-top:20px"><div class="grid"><label>Changed tables<input name="tables" placeholder="Detect changes in this session's scope" value="{{ plan.changed_tables | join(', ') if plan else '' }}"><span class="small muted">Optional, fully qualified names separated by commas.</span></label><label>Observation freshness window (days)<input name="freshness_days" type="number" min="1" max="3650" value="{{ plan.freshness_days if plan else 7 }}"></label></div><button class="btn primary" type="submit">{{ 'Refresh investigation plan' if plan else 'Build investigation plan' }}</button></form>
 {% if plan %}
 <div class="tiles"><div class="tile"><div class="num">{{ plan.changed_tables | length }}</div><div class="lbl">Changed tables</div></div><div class="tile"><div class="num">{{ plan.affected_tables | length }}</div><div class="lbl">Potentially affected</div></div><div class="tile"><div class="num">{{ plan.checks | length }}</div><div class="lbl">Approved checks</div></div><div class="tile"><div class="num">{{ plan.coverage | selectattr('status', 'equalto', 'unknown') | list | length }}</div><div class="lbl">Tables without checks</div></div></div>

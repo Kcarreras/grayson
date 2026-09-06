@@ -350,6 +350,22 @@ def test_assets_only_cached_hard_when_version_stamped(client):
     assert client.get("/static/graph.js?v=0.0.0").headers["cache-control"] == "no-cache"
 
 
+def test_console_assets_revalidate_without_resending_the_bundle(client):
+    for asset, media_type in (("console.css", "text/css"), ("console.js", "javascript")):
+        first = client.get(f"/static/{asset}")
+        assert first.status_code == 200
+        assert media_type in first.headers["content-type"]
+        etag = first.headers["etag"]
+        cached = client.get(f"/static/{asset}", headers={"If-None-Match": etag})
+        assert cached.status_code == 304
+        assert cached.content == b""
+        assert cached.headers["cache-control"] == "no-cache"
+        changed = client.get(f"/static/{asset}", headers={"If-None-Match": '"old-build"'})
+        assert changed.status_code == 200 and changed.content == first.content
+    hostile = client.get("/static/console.js", headers={"Host": "evil.example"})
+    assert hostile.status_code == 403
+
+
 def test_hostile_library_content_cannot_inject_script(client, workspace):
     # Relationship fields are written by agents; the canvas payload and the
     # fallback table both render them, and neither may emit live markup.

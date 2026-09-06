@@ -128,12 +128,16 @@ def test_session_delete_requires_confirmation(workspace, fake_snow_env, sid, mon
 def test_ui_pages_auto_refresh(workspace, fake_snow_env, sid):
     client = TestClient(build_app(workspace, token="tok"), base_url="http://127.0.0.1")
     dash = client.get("/?t=tok")
-    assert 'http-equiv="refresh"' in dash.text
+    assert 'http-equiv="refresh"' not in dash.text
+    assert "data-live" in dash.text
     detail = client.get(f"/session/{sid}?t=tok")
     # the session page refreshes by script instead: it waits while a field has
     # focus or a chart is enlarged, so a half-typed note is never lost
     assert 'http-equiv="refresh"' not in detail.text
-    assert "location.reload()" in detail.text
+    assert "data-live" in detail.text
+    script = client.get("/static/console.js")
+    assert script.status_code == 200
+    assert "location.reload()" in script.text
     # the intervention form page must NOT refresh (it would clear user input)
     from grayson.core.session import Session
     from grayson.interventions import build_request
@@ -143,3 +147,4 @@ def test_ui_pages_auto_refresh(workspace, fake_snow_env, sid):
     iid = s.add_intervention("choose", "pick", "", build_request("choose", {"options": ["a", "b"]}))
     form = client.get(f"/session/{sid}/intervention/{iid}?t=tok")
     assert 'http-equiv="refresh"' not in form.text
+    assert "data-live" not in form.text

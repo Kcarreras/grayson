@@ -92,7 +92,7 @@
   <div>
     <h2 id="fields">Fields {{ help("findings_fields") }}</h2>
     <div class="card">
-      <table class="fieldtable">
+      <div class="scroll"><table class="fieldtable">
         <thead><tr><th>field</th><th>holds</th><th></th></tr></thead>
         <tbody>
         {% for e in spec.required_extra %}
@@ -119,18 +119,18 @@
         <tr><td colspan="3" class="faint">No fields beyond the base — findings need title, severity, confidence, summary and evidence only.</td></tr>
         {% endfor %}
         </tbody>
-      </table>
+      </table></div>
       {% if editable %}
       <details class="editfold" style="margin-top: 12px;" data-fold="add-field"><summary>Add a field</summary>{{ field_form(none) }}</details>
       {% endif %}
       <details class="inlinefold" style="margin-top: 12px;" data-fold="base-fields">
         <summary>Base fields</summary>
-        <table class="fieldtable" style="margin-top: 6px;"><tbody>
+        <div class="scroll"><table class="fieldtable" style="margin-top: 6px;"><tbody>
           {% for b in spec.base_fields %}
           <tr><td class="k">{{ b.key }}{% if b.required %} <span class="attn-text">*</span>{% endif %}</td>
             <td>{{ b.description }}<div class="faint small">{{ b.rule }}</div></td></tr>
           {% endfor %}
-        </tbody></table>
+        </tbody></table></div>
         <div class="overline" style="margin-top: 10px;">Enforced calibration</div>
         <ul class="small muted" style="margin: 4px 0 0; padding-left: 18px;">{% for rule in spec.enforced %}<li>{{ rule }}</li>{% endfor %}</ul>
       </details>
@@ -152,7 +152,7 @@
       <div style="margin-top: 12px;">
         <div class="overline"><span class="mono">{{ spec.discriminator }} = {{ value }}</span> needs</div>
         {% if fields %}
-        <table class="fieldtable" style="margin-top: 4px;"><tbody>
+        <div class="scroll"><table class="fieldtable" style="margin-top: 4px;"><tbody>
           {% for f in fields %}
           <tr><td class="k">{{ f.key }}</td>
             <td>{{ f.description }}{% if f.choices %} <span class="faint">({{ f.choices | join(" | ") }})</span>{% endif %}</td>
@@ -166,7 +166,7 @@
           </td></tr>
           {% endif %}
           {% endfor %}
-        </tbody></table>
+        </tbody></table></div>
         {% else %}<div class="faint small" style="margin-top: 4px;">No further fields.</div>{% endif %}
         {% if editable and schema and schema.discriminator %}
         <details class="editfold" style="margin-top: 6px;"><summary>Add a field to this branch</summary>{{ field_form(none, "", value) }}</details>

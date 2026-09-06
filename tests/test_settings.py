@@ -166,7 +166,10 @@ def test_settings_bad_value_shows_error(client):
 def test_theme_toggle_present(client):
     page = client.get(f"/?t={TOKEN}").text
     assert "grayson_theme" in page  # pre-paint stamp + toggle script
-    assert 'data-theme="light"' in page  # pinned-theme token block exists
+    assert "/static/console.css" in page
+    css = client.get("/static/console.css")
+    assert css.status_code == 200
+    assert 'data-theme="light"' in css.text  # pinned-theme token block exists
 
 
 # -- library bootstrap from an empty remote ------------------------------

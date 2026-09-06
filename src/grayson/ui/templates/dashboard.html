@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stage_bar, outcome %}
+{% from "_macros.html" import stage_bar, outcome, list_tools %}
 {% block title %}grayson — sessions{% endblock %}
 {# live view: agents file interventions/findings while this page is open #}
-{% block head %}<meta http-equiv="refresh" content="10">{% endblock %}
 {% block content %}
-<h1>Sessions</h1>
+<div class="pagehead">
+  <div class="titles"><div class="eyebrow">Your investigation workspace</div><h1>Sessions</h1>
+    <p class="lede">Follow the evidence. See what needs your attention and keep investigations moving.</p></div>
+  <div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>
+</div>
 
 <div class="tiles">
   <div class="tile"><div class="num">{{ active | length }}</div><div class="lbl">Active sessions</div></div>
@@ -15,21 +18,29 @@
     <div class="lbl">Proposals to decide</div></div>
 </div>
 
-<h2>Active {{ help("stage") }}</h2>
+<h2 id="active-sessions">Active sessions <span class="h-count">{{ active | length }}</span> {{ help("stage") }}</h2>
 {% if not active %}
-<div class="card empty">No active sessions. Your agent starts one with
-  <code>grayson session start --workflow &lt;name&gt; --table DB.SCHEMA.TABLE</code>.</div>
+<div class="card empty"><b>Ready for your next investigation</b>
+  <p>No active sessions. Ask your agent to start a workflow against the tables you want to investigate.</p>
+  <p class="small">Choose a workflow to see its checkpoints and required inputs.</p>
+  <a class="btn secondary mt-3" href="/workflows?t={{ token }}">Explore workflows →</a>
+  <details class="inlinefold mt-3"><summary>Start from the command line</summary>
+  <pre>grayson session start --workflow &lt;name&gt; --table DB.SCHEMA.TABLE</pre></details></div>
+{% else %}
+{{ list_tools("sessions", [("attention", "desc", "Needs attention first"), ("created", "desc", "Newest first"), ("title", "asc", "Title A–Z")], [("attention", "needs your input")], "Find a session, workflow, or table…", false) }}
 {% endif %}
-<div class="grid">
+<div class="session-list" data-list="sessions" data-noun="session">
 {% for row in active %}
 {% set s = row.summary %}
-<div class="card {{ 'attn' if row.open_interventions or row.pending_proposals }}">
+<div class="card session-card {{ 'attn' if row.open_interventions or row.pending_proposals }}" data-item
+  data-tags="{{ 'attention' if row.open_interventions or row.pending_proposals }}"
+  data-s-attention="{{ row.open_interventions + row.pending_proposals }}" data-s-created="{{ s.created_at }}" data-s-title="{{ s.title or s.id }}">
+  <div>
   <div class="row split">
-    <a href="/session/{{ s.id }}?t={{ token }}"><span class="otitle">{{ s.title or s.id }}</span></a>
+    <a class="session-name" href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a>
     <span class="badge plain">{{ s.workflow }}</span>
   </div>
-  <div class="faint mono small" style="margin: 2px 0 10px;">{{ s.id }}</div>
-  <div class="row">
+  <div class="session-meta">
     {% if row.open_interventions %}
       <span class="badge attn">{{ row.open_interventions }} question{{ "s" if row.open_interventions != 1 }} for you</span>{% endif %}
     {% if row.pending_proposals %}
@@ -40,22 +51,29 @@
     {% if row.findings %}<span class="badge plain">{{ row.findings }} finding{{ "s" if row.findings != 1 }}</span>{% endif %}
   </div>
   {# long fully-qualified names wrap inside the card instead of overflowing it #}
-  <div class="muted small mono" style="margin-top: 10px; overflow-wrap: anywhere;">
+  <div class="muted small mono session-targets">
     {{ s.targets | join(", ") or "no target tables" }}</div>
+  <div class="faint small mt-2">Created {{ s.created_at }} · <span class="mono">{{ s.id }}</span></div>
+  </div>
+  <div class="session-side">
+    <a class="btn secondary sm" href="/session/{{ s.id }}?t={{ token }}" aria-label="Open {{ s.title or s.id }}">Open session →</a>
   {{ stage_bar(s.stage, stages) }}
+  </div>
 </div>
 {% endfor %}
 </div>
 
 {% if historical %}
-<details class="fold" style="margin-top: 26px;">
+<details class="fold" id="closed-sessions" data-fold="closed-sessions" style="margin-top: 32px;" {% if not active %}open{% endif %}>
   <summary>Closed sessions ({{ historical | length }})</summary>
   <div class="fold-body scroll">
+  {{ list_tools("history", [("created", "desc", "Newest first"), ("title", "asc", "Title A–Z")], [], "Find a closed session…", false) }}
   <table>
-    <tr><th>Session</th><th>Workflow</th><th>Target tables</th><th>Outcome</th><th>Findings</th><th>Created</th></tr>
+    <thead><tr><th>Session</th><th>Workflow</th><th>Target tables</th><th>Outcome</th><th>Findings</th><th>Created</th></tr></thead>
+    <tbody data-list="history" data-noun="session">
     {% for row in historical %}
     {% set s = row.summary %}
-    <tr>
+    <tr data-item data-s-created="{{ s.created_at }}" data-s-title="{{ s.title or s.id }}">
       <td><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a>
         <div class="faint mono small">{{ s.id }}</div></td>
       <td class="mono">{{ s.workflow }}</td>
@@ -68,6 +86,7 @@
       <td class="muted mono small">{{ s.created_at }}</td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
   </div>
 </details>

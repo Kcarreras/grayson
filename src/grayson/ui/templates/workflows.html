@@ -16,7 +16,7 @@
 .wfmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: var(--t-sm);
   color: var(--muted); border-top: 1px solid var(--border-soft); padding-top: 8px; }
 .wftags { display: flex; gap: 4px; flex-wrap: wrap; }
-.schemagrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.schemagrid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
 .newform { display: grid; gap: 8px; grid-template-columns: minmax(200px, 1fr) minmax(180px, 1fr) max-content;
   align-items: center; }
 @media (max-width: 720px) { .newform { grid-template-columns: 1fr; } }
@@ -26,7 +26,8 @@
 <div class="pagehead">
   <div class="titles">
     <div class="titlerow"><h1>Workflows {{ help("workflows") }}</h1></div>
-    <div class="lede">{{ core_count }} core, {{ team_count }} in the team library.
+    <p class="lede">A clear path from question to evidence. Choose a workflow or adapt one for your team.</p>
+    <div class="small muted">{{ core_count }} core, {{ team_count }} in the team library.
       {% if user_id %}Your id: <span class="chip">{{ user_id }}</span>
       {% else %}No user id set — run <code>grayson user set &lt;id&gt;</code> to sign your
       workflows and facts.{% endif %}</div>

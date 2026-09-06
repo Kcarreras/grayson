@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import severity, proposal_status, query_status, outcome, agent_text, stage_timeline %}
+{% from "_macros.html" import severity, proposal_status, query_status, outcome, agent_text, stage_timeline, list_tools %}
 {% block title %}grayson — {{ s.title or s.id }}{% endblock %}
 {# live view: refresh so agent activity appears without manual reloads. The
    intervention form page deliberately has no refresh (it would clear input). #}
@@ -27,8 +27,9 @@
         </form>
       </details>
     </div>
-    <div class="muted small">created <span class="mono">{{ s.created_at }}</span></div>
+    <div class="muted small">Created <span class="mono">{{ s.created_at }}</span></div>
   </div>
+  {% if s.stage != 'closed' and not error %}<div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>{% endif %}
 </div>
 
 {{ stage_timeline(s, stages, readiness, findings) }}
@@ -51,6 +52,15 @@
   <div class="tile"><div class="num">0</div><div class="lbl">Awaiting your input</div></div>
   {% endif %}
 </div>
+
+<nav class="section-nav" aria-label="Session sections">
+  {% if open_iv %}<a href="#awaiting">Needs your input · {{ open_iv | length }}</a>{% endif %}
+  {% if charts %}<a href="#analysis">Analysis</a>{% endif %}
+  <a href="#checkpoints">Checkpoints</a><a href="#findings">Findings</a>
+  {% if proposals %}<a href="#proposals">Fix proposals</a>{% endif %}<a href="#queries">Query log</a><a href="#actions">Session actions</a>
+  <a class="nav-action" href="/session/{{ s.id }}/impact?t={{ token }}">Investigate changes ↗</a>
+  <a class="nav-action" href="/session/{{ s.id }}/comparisons?t={{ token }}">Compare releases ↗</a>
+</nav>
 
 {% if s.stage == "closed" and s.outcome %}
 <div class="card" style="margin: 12px 0;">
@@ -77,7 +87,9 @@
 </div>
 {% endif %}
 
-<div class="kv" style="margin: 12px 0;">
+<details class="fold session-controls" data-fold="session-controls">
+<summary>Scope and guard settings <span class="h-count">{{ s.targets | length }} target table{{ 's' if s.targets | length != 1 }} · {{ s.guard_profile }} · strict scope {{ 'on' if s.strict_scope else 'off' }}</span></summary>
+<div class="fold-body"><div class="kv">
   <div class="item"><b>Target tables</b> <span class="mono">{{ s.targets | join(", ") or "—" }}</span> {{ help("target_tables") }}</div>
   {% if s.stage != "closed" %}
   {# the guard snapshot IS the control while the session is open: one place to
@@ -115,6 +127,7 @@
   <div class="item"><b>Also in scope</b> <span class="mono">{{ s.scope_extra | join(", ") or "—" }}</span> {{ help("scope") }}</div>
   {% endif %}
 </div>
+</div></details>
 
 {% if open_iv %}
 <h2 id="awaiting">Needs your input {{ help("interventions") }}</h2>
@@ -150,7 +163,7 @@
 {% endif %}
 
 {% if charts %}
-<h2>Analysis charts {{ help("charts") }}</h2>
+<h2 id="analysis">Analysis charts {{ help("charts") }}</h2>
 <div class="chartgrid">
 {% for c in charts %}
 {# newest four stay open; older tiles collapse to their title row. A manual
@@ -196,7 +209,6 @@
 </div>
 {% endif %}
 
-<div class="row" style="margin-top:20px"><a class="btn" href="/session/{{ s.id }}/impact?t={{ token }}">Investigate changes</a><a class="btn" href="/session/{{ s.id }}/comparisons?t={{ token }}">Compare releases</a></div>
 {% if investigation_plan %}<div class="card mt-2"><div class="otitle">Investigation plan</div><p class="small muted">{{ investigation_plan.coverage_note }}</p><ol>{% for step in investigation_plan.steps %}<li>{{ step }}</li>{% endfor %}</ol>{% if investigation_plan.checks and s.stage != 'closed' %}<form method="post" action="/session/{{ s.id }}/impact/run-checks?t={{ token }}"><button class="btn" type="submit">Run {{ investigation_plan.checks | length }} selected checks</button></form>{% endif %}</div>{% endif %}
 {% set active_regressions = regression_checks.checks | selectattr('review_current') | list %}
 {% if active_regressions or regression_runs %}
@@ -359,7 +371,7 @@
 {% if not findings %}<div class="card empty">No findings recorded yet.</div>{% endif %}
 
 {% if proposals %}
-<h2>Fix proposals {{ help("proposals") }}</h2>
+<h2 id="proposals">Fix proposals {{ help("proposals") }}</h2>
 {% for p in proposals %}
 <div class="card {{ 'attn' if p.status == 'proposed' }}">
   <div class="row split">
@@ -417,23 +429,28 @@
 {% endif %}
 
 <h2 id="queries">Query log {{ help("guard") }}</h2>
+{% if queries %}
+{{ list_tools("queries", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first"), ("duration", "desc", "Slowest first"), ("rows", "desc", "Most rows")], [("executed", "executed"), ("rejected", "rejected"), ("error", "errors")], "Find a query, purpose, or worker…", false) }}
+{% endif %}
 <div class="card scroll" style="max-height: 360px; overflow-y: auto;">
 <table>
 {% set has_worker = queries | selectattr("worker") | list | length > 0 %}
 {% set has_label = queries | selectattr("label") | list | length > 0 %}
-<tr><th>Query</th><th>Status</th><th>Rows</th><th>ms</th>{% if has_worker %}<th>Worker</th>{% endif %}{% if has_label %}<th>Purpose {{ help("purpose") }}</th>{% endif %}</tr>
+<thead><tr><th data-sortkey="id">Query</th><th>Status</th><th data-sortkey="rows">Rows</th><th data-sortkey="duration">Time (ms)</th>{% if has_worker %}<th>Worker</th>{% endif %}{% if has_label %}<th>Purpose {{ help("purpose") }}</th>{% endif %}</tr></thead>
+<tbody data-list="queries" data-noun="query">
 {% for q in queries %}
-<tr>
+<tr data-item data-s-id="{{ q.qid }}" data-s-duration="{{ q.duration_ms or 0 }}" data-s-rows="{{ q.row_count or 0 }}" data-tags="{{ q.status if q.status in ['executed', 'rejected'] else 'error' }}">
   <td class="mono">{{ qc(q.qid) }}</td>
   <td>{{ query_status(q.status) }}
       {% if q.guard_rule %}<div class="faint mono small">{{ q.guard_rule }}</div>{% endif %}</td>
   <td class="num">{{ q.row_count if q.row_count is not none else "" }}{% if q.truncated %} <span class="faint">(capped)</span>{% endif %}</td>
-  <td class="num muted">{{ q.duration_ms or "" }}</td>
+  <td class="num muted">{{ q.duration_ms if q.duration_ms is not none else '—' }}</td>
   {% if has_worker %}<td class="muted mono small">{{ q.worker or "—" }}</td>{% endif %}
   {% if has_label %}<td class="muted small">{{ q.label or "—" }}</td>{% endif %}
 </tr>
 {% endfor %}
 {% if not queries %}<tr><td colspan="4" class="muted">No queries yet.</td></tr>{% endif %}
+</tbody>
 </table>
 </div>
 
@@ -459,18 +476,14 @@
     <span class="overline">Session actions</span>
     <div class="seg" role="tablist" aria-label="Session actions">
       {% if open_session %}
-      <input type="radio" class="seg-r" name="sact" id="sact-close" value="close">
-      <label class="seg-b" for="sact-close" role="tab" title="Record the outcome and publish the report">Close</label>
-      <input type="radio" class="seg-r" name="sact" id="sact-abandon" value="abandon">
-      <label class="seg-b" for="sact-abandon" role="tab" title="End without a result">Abandon</label>
-      <input type="radio" class="seg-r" name="sact" id="sact-stage" value="stage">
-      <label class="seg-b" for="sact-stage" role="tab" title="Move the stage by hand">Set stage</label>
+      <button type="button" class="seg-b" id="sact-close" role="tab" data-act-select="close" aria-selected="false" title="Record the outcome and publish the report">Close</button>
+      <button type="button" class="seg-b" id="sact-abandon" role="tab" data-act-select="abandon" aria-selected="false" title="End without a result">Abandon</button>
+      <button type="button" class="seg-b" id="sact-stage" role="tab" data-act-select="stage" aria-selected="false" title="Move the stage by hand">Set stage</button>
       {% endif %}
-      <input type="radio" class="seg-r" name="sact" id="sact-delete" value="delete">
-      <label class="seg-b danger" for="sact-delete" role="tab" title="Remove the session from this workspace">Delete</label>
+      <button type="button" class="seg-b danger" id="sact-delete" role="tab" data-act-select="delete" aria-selected="false" title="Remove the session from this workspace">Delete</button>
     </div>
     <span class="muted small seg-hint">Pick one to see what it does. Nothing happens until you confirm.</span>
-    <button type="button" class="btn ghost sm seg-cancel" hidden title="Put the panel away">✕</button>
+    <button type="button" class="btn ghost sm seg-cancel" hidden title="Put the panel away" aria-label="Close session action panel">✕</button>
   </div>
 
   {% if open_session %}
@@ -548,15 +561,17 @@
     <b id="lb-title" class="otitle"></b>
     <span class="row">
       <span id="lb-pos" class="faint small"></span>
-      <button type="button" class="btn ghost sm" id="lb-prev" title="Previous chart (←)">←</button>
-      <button type="button" class="btn ghost sm" id="lb-next" title="Next chart (→)">→</button>
+      <button type="button" class="btn ghost sm" id="lb-prev" title="Previous chart (←)" aria-label="Previous chart">←</button>
+      <button type="button" class="btn ghost sm" id="lb-next" title="Next chart (→)" aria-label="Next chart">→</button>
       <a class="btn secondary sm" id="lb-open" href="#">Data &amp; query</a>
-      <button type="button" class="btn ghost sm" id="lb-close" title="Close (Esc)">✕</button>
+      <button type="button" class="btn ghost sm" id="lb-close" title="Close (Esc)" aria-label="Close enlarged chart">✕</button>
     </span>
   </div>
   <div id="lb-body" class="lb-body"></div>
   <div id="lb-caption" class="faint small mt-2"></div>
 </dialog>
+{% endblock %}
+{% block scripts %}
 <script>
 /* Chart lightbox: any chart tile enlarges in place; ← → walk the charts in the
    order the agent made them, so the analysis can be told as a sequence. The
@@ -600,7 +615,13 @@
     if (!dlg.open) dlg.showModal();
   }
   tiles.forEach(function (tile, i) {
+    tile.tabIndex = 0;
+    tile.setAttribute("role", "button");
+    tile.setAttribute("aria-label", "Enlarge chart: " + tile.dataset.title);
     tile.addEventListener("click", function () { show(i); });
+    tile.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); show(i); }
+    });
   });
   document.getElementById("lb-prev").addEventListener("click", function () { show(at - 1); });
   document.getElementById("lb-next").addEventListener("click", function () { show(at + 1); });
@@ -611,18 +632,5 @@
     else if (e.key === "ArrowRight") { show(at + 1); e.preventDefault(); }
   });
 })();
-{% if not error %}
-/* Live view: reload every 10s so agent activity appears — but never while a
-   chart is enlarged or a field has focus (a half-typed note is not to be lost). */
-(function () {
-  function busy() {
-    var el = document.activeElement;
-    var typing = el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
-    return typing || !!document.querySelector("dialog[open]");
-  }
-  function tick() { if (busy()) setTimeout(tick, 3000); else location.reload(); }
-  setTimeout(tick, 10000);
-})();
-{% endif %}
 </script>
 {% endblock %}
