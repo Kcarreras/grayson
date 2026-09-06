@@ -196,6 +196,8 @@
 </div>
 {% endif %}
 
+<div class="row" style="margin-top:20px"><a class="btn" href="/session/{{ s.id }}/impact?t={{ token }}">Investigate changes</a><a class="btn" href="/session/{{ s.id }}/comparisons?t={{ token }}">Compare releases</a></div>
+{% if investigation_plan %}<div class="card mt-2"><div class="otitle">Investigation plan</div><p class="small muted">{{ investigation_plan.coverage_note }}</p><ol>{% for step in investigation_plan.steps %}<li>{{ step }}</li>{% endfor %}</ol>{% if investigation_plan.checks and s.stage != 'closed' %}<form method="post" action="/session/{{ s.id }}/impact/run-checks?t={{ token }}"><button class="btn" type="submit">Run {{ investigation_plan.checks | length }} selected checks</button></form>{% endif %}</div>{% endif %}
 {% set active_regressions = regression_checks.checks | selectattr('review_current') | list %}
 {% if active_regressions or regression_runs %}
 <details class="section" id="regressions" data-fold="regressions" open>
@@ -316,6 +318,7 @@
   </div>
   {% endif %}
   {{ agent_text(f.payload.summary) }}
+  {% if f.payload.machine_claims %}<div class="card mt-2"><div class="overline">Machine-checked assertions</div>{% for c in f.payload.machine_claims.criteria %}<p><span class="badge ok">pass</span> {{ c.name }} · {{ c.expectation_text }} · observed {{ c.baseline.observed }} {{ qc(c.source_qid) }}</p>{% endfor %}</div>{% endif %}
   {% if f.payload.extra %}
   <dl class="props">
     {% for k, v in f.payload.extra.items() %}<dt>{{ k | replace("_", " ") }}</dt><dd>{{ v | para }}</dd>{% endfor %}
@@ -387,7 +390,10 @@
       <summary>Show DDL ({{ p.payload.ddl.splitlines() | length }} lines)</summary>
       <pre>{{ p.payload.ddl }}</pre></details>
   {% endif %}
-  {% if p.verification %}
+  <div class="row mt-2"><a class="btn sm" href="/session/{{ s.id }}/criteria/{{ p.pid }}?t={{ token }}">{{ 'Review success criteria' if p.payload.success_criteria else 'Define success criteria' }}</a></div>
+  {% if p.verification and p.verification.mode == 'criteria' %}
+    <p class="small mt-2">Computed verification: <strong>{{ p.verification.verdict }}</strong> · {{ p.verification.counts.pass }} passed · {{ p.verification.counts.fail }} failed · {{ p.verification.counts.unproven }} unproven</p>
+  {% elif p.verification %}
     <div class="row mt-2">
       <span class="overline">Verification {{ help("verification") }}</span>
       <span class="badge {{ 'ok' if p.verification.verdict == 'pass' else 'bad' }}">{{ p.verification.verdict }}</span>
@@ -399,8 +405,9 @@
   {% endif %}
   {% if p.status == "proposed" %}
   <div class="row" style="margin-top: 12px; gap: 14px;">
-    <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}">
+    {% if not p.payload.success_criteria %}<form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}">
       <button class="btn confirm sm" type="submit">Approve proposal</button></form>
+    {% endif %}
     <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/reject?t={{ token }}">
       <button class="btn danger sm" type="submit">Reject proposal</button></form>
   </div>

@@ -80,14 +80,28 @@ def record_proposal(
     worker: str | None = None,
 ) -> dict:
     body = build_proposal_payload(kind, payload)
+    if payload.get("success_criteria") is not None:
+        from grayson.core.criteria import prepare
+
+        try:
+            body["success_criteria"] = prepare(session, payload["success_criteria"])
+        except (ValueError, OSError) as e:
+            raise ProposalError(str(e)) from e
     if finding_fid is not None and session.finding(finding_fid) is None:
         raise ProposalError(f"proposal references unknown finding '{finding_fid}'")
     pid = session.add_proposal(kind, title, body, finding_fid, worker)
     return session.proposal(pid)
 
 
-def decide(session: Session, pid: str, approve: bool, actor: str = "user") -> dict:
+def decide(
+    session: Session, pid: str, approve: bool, actor: str = "user", digest: str = ""
+) -> dict:
     try:
+        from grayson.core import criteria
+
+        if approve and criteria.contract(session, pid):
+            criteria.approve(session, pid, digest, actor)
+            return session.proposal(pid)
         session.decide_proposal(pid, "approved" if approve else "rejected", actor)
     except (KeyError, ValueError) as e:
         raise ProposalError(str(e.args[0] if e.args else e)) from e
@@ -102,6 +116,14 @@ def mark_applied(session: Session, pid: str, actor: str = "agent") -> dict:
         raise ProposalError(
             f"proposal '{pid}' must be approved before it is applied (status={p['status']})"
         )
+    from grayson.core.criteria import contract
+    from grayson.util import utcnow
+
+    criteria = contract(session, pid)
+    if criteria:
+        if not criteria["review_current"]:
+            raise ProposalError("fix or success criteria changed since approval")
+        session.set_meta(f"criteria_applied:{pid}", utcnow())
     session.set_proposal_status(pid, "applied", actor)
     out = session.proposal(pid)
     if p["kind"] == "ddl_snippet" and p["payload"].get("view_name"):
@@ -166,6 +188,10 @@ def verify(
     p = session.proposal(pid)
     if p is None:
         raise ProposalError(f"no proposal '{pid}'")
+    if p["payload"].get("success_criteria") is not None:
+        raise ProposalError(
+            "this fix has success criteria; use criteria run for a computed verdict"
+        )
     # Verification comes after the user approved and the fix was applied — it must
     # not be a back door that stamps an un-approved (or rejected) proposal 'verified'.
     if p["status"] not in {"approved", "applied", "verification_failed"}:
@@ -218,7 +244,12 @@ def verify(
 
 
 def _record_verified_fix(
-    session: Session, proposal: dict, before_qid: str, after_qid: str, actor: str
+    session: Session,
+    proposal: dict,
+    before_qid: str,
+    after_qid: str,
+    actor: str,
+    evidence: list[str] | None = None,
 ) -> list[dict]:
     """A verified fix becomes a fact on the tables it touched — dated, evidence-
     linked, data_inferred. The published record already holds the full story
@@ -228,10 +259,9 @@ def _record_verified_fix(
     (one fact per proposal per table)."""
     from grayson.knowledge import KnowledgeStore
 
+    evidence = evidence or [before_qid, after_qid]
     touched = {
-        t.upper()
-        for qid, tables in session.query_tables_many([before_qid, after_qid]).items()
-        for t in tables
+        t.upper() for qid, tables in session.query_tables_many(evidence).items() for t in tables
     }
     targets = [t.upper() for t in session.targets]
     tables = [t for t in targets if t in touched] or targets
@@ -257,7 +287,7 @@ def _record_verified_fix(
                 fact_id=fact_id,
                 status="data_inferred",
                 created_by=actor,
-                evidence=[f"session {session.id} {q}" for q in (before_qid, after_qid)],
+                evidence=[f"session {session.id} {q}" for q in evidence],
                 # anchored to the published record: if that record is removed or
                 # superseded the fact goes stale, and `knowledge verify` can re-run
                 # the record's after-query against the warehouse

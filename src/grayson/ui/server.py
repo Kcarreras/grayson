@@ -1895,6 +1895,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "findings": s.findings(),
             "interventions": s.interventions(),
             "proposals": s.proposals(),
+            "investigation_plan": json.loads(s.get_meta("investigation_plan_v1") or "null"),
             "queries": queries,
             "qsql": {q["qid"]: q.get("sql_raw") or "" for q in queries},
             "events": s.events(40),
@@ -2184,7 +2185,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         return _redirect(f"/session/{sid}")
 
     @app.post("/session/{sid}/proposal/{pid}/{decision}")
-    def decide_proposal(request: Request, sid: str, pid: str, decision: str) -> Any:
+    def decide_proposal(
+        request: Request, sid: str, pid: str, decision: str, digest: str = Form("")
+    ) -> Any:
         _check(request)
         s = _session(sid)
         if decision not in {"approve", "reject"}:
@@ -2193,13 +2196,16 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         from grayson.core.proposals import ProposalError
 
         try:
-            proposals_engine.decide(s, pid, approve=(decision == "approve"))
+            proposals_engine.decide(s, pid, approve=(decision == "approve"), digest=digest)
         except ProposalError as e:
             return templates.TemplateResponse(
                 request, "session.html", _session_context(s, str(e)), status_code=400
             )
         return _redirect(f"/session/{sid}")
 
+    from grayson.ui.assurance import register
+
+    register(app, workspace, templates, _check, _session, _redirect)
     return app
 
 

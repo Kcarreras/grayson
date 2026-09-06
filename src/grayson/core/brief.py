@@ -72,6 +72,10 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
         "created_at": summary["created_at"],
         "connection": summary["connection"],
         "targets": summary["targets"],
+        "investigation_plan_v1": json.loads(session.get_meta("investigation_plan_v1") or "null"),
+        "comparison_runs_v1": [
+            e["payload"] for e in session.events(5, event_type="comparison_run")
+        ],
         "regression_runs": [e["payload"] for e in session.events(20, event_type="regression_run")],
         "scope_extra": summary["scope_extra"],
         "strict_scope": summary["strict_scope"],
@@ -133,11 +137,14 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
                 "title": p["title"],
                 "status": p["status"],
                 "finding": p.get("finding_fid"),
+                "success_criteria": p["payload"].get("success_criteria"),
                 "verification": (
                     {
                         "verdict": p["verification"].get("verdict"),
                         "before": p["verification"].get("before_qid"),
                         "after": p["verification"].get("after_qid"),
+                        "mode": p["verification"].get("mode", "analytical"),
+                        "results": p["verification"].get("results", []),
                     }
                     if p.get("verification")
                     else None
@@ -197,6 +204,18 @@ def render_brief(brief: dict) -> str:
     if brief["scope_extra"]:
         scope += f"  (+ granted scope: {', '.join(brief['scope_extra'])})"
     lines.append(f"targets: {scope}" + ("  · strict scope" if brief["strict_scope"] else ""))
+    if brief.get("investigation_plan_v1"):
+        plan = brief["investigation_plan_v1"]
+        lines.extend(
+            [
+                "",
+                "## Investigation plan",
+                plan["coverage_note"],
+                *[f"- {step}" for step in plan["steps"]],
+                "Selected checks: " + ", ".join(c["id"] for c in plan["checks"]),
+                "Use impact run-checks to replay this selection with fresh evidence.",
+            ]
+        )
     budget = f"{g['budget_used']} used"
     if g.get("budget_cap"):
         budget += f" of {g['budget_cap']} cap"
@@ -280,6 +299,15 @@ def render_brief(brief: dict) -> str:
                 v = p["verification"]
                 line += f"; verified {v['verdict']} ({v['before']} → {v['after']})"
             lines.append(line)
+
+    if brief.get("comparison_runs_v1"):
+        lines += ["", "## Comparisons"]
+        for result in brief["comparison_runs_v1"]:
+            lines.append(
+                f"- {result['id']}: {result['verdict']}; record coverage "
+                f"{result['coverage']['record_parity']}. Retrieve comparison report "
+                "for the per-criterion results and evidence."
+            )
 
     q = brief["queries"]
     shown = len(q["recent"])

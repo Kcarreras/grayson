@@ -90,6 +90,16 @@ existing executed queries as useful; a person reviews each before activation.
 Source sessions and cached rows stay local. Teammates can replay a shared check
 without copying the original session.
 
+## Adopting evidence contracts and comparisons
+
+[Success criteria, change-impact plans, and release comparisons](ASSURANCE.md)
+use optional format-1 additions. No session or library migration is required.
+Refresh harness instructions and restart MCP/console to enable the new tools.
+Existing analytical fix verification remains available on proposals without
+success criteria. Current clients require human approval of contracted fixes
+and compute their verdict from fresh results; older clients do not enforce
+that contract, so use updated clients for sessions adopting these features.
+
 ## SeekQL rename
 
 Older releases used `seekql.toml`, `.seekql/`, and the `seekql` command. Grayson

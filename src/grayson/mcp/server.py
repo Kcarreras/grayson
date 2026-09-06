@@ -94,6 +94,18 @@ Ending a session is the user's too: closing, abandoning a broken or irrelevant o
 deleting it or its published records have no tools here on purpose — say what is wrong
 and ask.
 An empty knowledge library, cache, or view registry is normal in a fresh workspace.
+Before approving a fix, use criteria_set to propose explicit success criteria from
+executed evidence. Users approve the SQL and expectations with the fix in console/CLI.
+After proposal_applied, criteria_run computes pass/fail/unproven using fresh results.
+criteria_promote preserves a passed expectation as a proposed regression check.
+Findings may carry machine_claims (the format-1 criteria envelope); every explicit
+assertion must pass on cited evidence. Semantic interpretation remains your responsibility.
+Use impact_plan to connect detected changes to explicit dependency observations,
+assumptions, history and approved checks. Show freshness and unknown coverage; launch
+with impact_launch and reason over the returned session's plan using session_brief.
+Use comparison_create/show/run/report for releases or migrations: declare keys,
+mappings, filters and tolerances. Capped extracts leave record parity unproven even
+when full-relation aggregate checks pass. Observation times are sequential, not atomic.
 """
 
 
@@ -1345,6 +1357,9 @@ def build_server(workspace: Workspace) -> Any:
 
         return config_summary(workspace.root)
 
+    from grayson.mcp.assurance import register
+
+    register(mcp, _session, workspace, _err)
     return mcp
 
 

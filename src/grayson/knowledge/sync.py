@@ -114,6 +114,9 @@ def capture_ddl(
         "a dated copy of the warehouse's definition — the warehouse is the authority",
     )
     entry = {"kind": "ddl", "source": "GET_DDL", **snap}
+    from grayson.knowledge.impact import sql_dependencies
+
+    entry["dependencies_v1"] = sql_dependencies(text, snap["captured_at"], "GET_DDL")
     if qid:
         entry["evidence"] = [qid]
     store.upsert_definition(fqn, entry)

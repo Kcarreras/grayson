@@ -134,6 +134,15 @@ BASE_FIELDS: list[dict] = [
         "description": "Workflow-specific fields: the schema below says which.",
     },
 ]
+BASE_FIELDS.append(
+    {
+        "key": "machine_claims",
+        "rule": "optional format-1 criteria envelope",
+        "required": False,
+        "description": "Explicit numeric/no-rows assertions evaluated against cited queries. "
+        "Every assertion must pass before the finding can be recorded.",
+    }
+)
 BASE_FIELD_KEYS: frozenset[str] = frozenset(f["key"] for f in BASE_FIELDS)
 
 #: severities that have to name what they affect. A severe finding that cannot
@@ -174,6 +183,7 @@ class Finding(BaseModel):
     proposed_remediation: str = ""
     open_questions: list[str] = Field(default_factory=list)
     extra: dict = Field(default_factory=dict)
+    machine_claims: dict | None = None
     #: fid of an earlier finding this one corrects. A proposal only: the actual
     #: supersession executes inside the user's accept action, never agent-side.
     supersedes: str | None = None

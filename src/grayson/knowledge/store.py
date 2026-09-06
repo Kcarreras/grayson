@@ -686,6 +686,39 @@ class KnowledgeStore:
         _validate_definition(entry[0])
         _stamp_definition(entry[0], by)
         doc = self.read(fqn)
+        previous = next(
+            (
+                d
+                for d in doc["definitions"]
+                if (entry[0].get("path") and d.get("path") == entry[0]["path"])
+                or (
+                    not entry[0].get("path")
+                    and not d.get("path")
+                    and d.get("kind") == entry[0].get("kind")
+                )
+            ),
+            None,
+        )
+        if previous:
+            for extension in ("dependencies_v1", "change_v1"):
+                value = previous.get(extension)
+                if value and value.get("format") != 1:
+                    raise ValueError(f"unsupported {extension} format; definition preserved")
+            if previous.get("change_v1"):
+                entry[0].setdefault("change_v1", previous["change_v1"])
+        if (
+            previous
+            and previous.get("hash")
+            and entry[0].get("hash")
+            and previous["hash"] != entry[0]["hash"]
+        ):
+            entry[0]["change_v1"] = {
+                "format": 1,
+                "before": previous["hash"],
+                "after": entry[0]["hash"],
+                "observed_at": entry[0]["captured_at"],
+                "source": entry[0].get("path") or entry[0].get("snapshot"),
+            }
         doc["definitions"] = _merge_definitions(doc["definitions"], entry)
         self._write(fqn, doc)
         return self.read(fqn)
@@ -778,11 +811,25 @@ class KnowledgeStore:
             else:
                 removed.append(name)
         doc["columns"] = merged
+        previous_structure = doc.get("structure", {})
+        change = previous_structure.get("change_v1")
+        if change and change.get("format") != 1:
+            raise ValueError("unsupported schema change format; structure preserved")
         doc["structure"] = {
+            **previous_structure,
             "observed_at": utcnow(),
             "source": source,
             **({"evidence": list(evidence)} if evidence else {}),
         }
+        if drift["status"] != "unrecorded" and any(
+            drift[k] for k in ("added", "dropped", "type_changed")
+        ):
+            doc["structure"]["change_v1"] = {
+                "format": 1,
+                "observed_at": doc["structure"]["observed_at"],
+                "source": source,
+                **{k: drift[k] for k in ("added", "dropped", "type_changed")},
+            }
         self._write(fqn, doc)
         return {
             "table": doc["table"],

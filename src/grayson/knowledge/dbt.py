@@ -38,7 +38,11 @@ def looks_like_dbt_manifest(data: object) -> bool:
 
 
 def _node_fqn(node: dict) -> str:
-    parts = [node.get("database"), node.get("schema"), node.get("alias") or node.get("name")]
+    parts = [
+        node.get("database"),
+        node.get("schema"),
+        node.get("alias") or node.get("identifier") or node.get("name"),
+    ]
     return ".".join(str(p) for p in parts if p).upper()
 
 
@@ -69,6 +73,9 @@ def ingest_dbt_definitions(
     name hundreds of models the team never investigates, and a library doc per
     model would bury the ones that matter."""
     nodes = definition_nodes(manifest)
+    from grayson.knowledge.impact import ingest_manifest
+
+    dependencies = ingest_manifest(store, manifest, repo)
     wanted: set[str]
     if everything:
         wanted = set(nodes)
@@ -135,6 +142,7 @@ def ingest_dbt_definitions(
         "snapshots": snapshots,
         "not_in_manifest": not_in_manifest,
         "models_in_manifest": len(nodes),
+        "dependencies_v1": dependencies,
     }
 
 
