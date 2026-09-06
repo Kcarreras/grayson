@@ -2,8 +2,10 @@
 {% block title %}grayson — settings{% endblock %}
 {% block content %}
 <h1>Settings {{ help("settings") }}</h1>
+<p class="lede">Manage your workspace, investigation defaults, and the boundaries agents work within.</p>
+<nav class="section-nav" aria-label="Settings sections"><a href="#workspace-settings">Workspace</a><a href="#guard-profiles">Guard profiles</a><a href="#workflow-defaults">Workflow defaults</a><a href="#knowledge-policy">Knowledge policy</a><a href="#team-library">Team library</a></nav>
 
-<h2>Workspace</h2>
+<h2 id="workspace-settings">Workspace</h2>
 <div class="card">
 <form method="post" action="/settings/general?t={{ token }}">
   <dl class="props" style="align-items: center;">
@@ -31,7 +33,7 @@
 </form>
 </div>
 
-<h2>Guard profiles {{ help("guard_profile") }}</h2>
+<h2 id="guard-profiles">Guard profiles {{ help("guard_profile") }}</h2>
 <div class="card scroll">
 <table>
 <tr><th>Profile</th><th>Auto-limit rows</th><th>Timeout (s)</th>
@@ -53,7 +55,7 @@
 <div class="faint small mt-2">0 = off. Applies to new sessions; a running session changes its guard on its own page.</div>
 </div>
 
-<h2>Per-workflow session defaults {{ help("workflow_defaults") }}</h2>
+<h2 id="workflow-defaults">Per-workflow session defaults {{ help("workflow_defaults") }}</h2>
 <div class="card scroll">
 <table>
 <tr><th>Workflow</th><th>Guard profile</th><th>Strict scope</th><th></th></tr>
@@ -81,7 +83,7 @@
 {% endfor %}
 </div>
 
-<h2>Knowledge policy {{ help("knowledge_policy") }}</h2>
+<h2 id="knowledge-policy">Knowledge policy {{ help("knowledge_policy") }}</h2>
 <div class="card" data-knowledge-policy>
   <dl class="props">
     <dt>Preset</dt>
@@ -108,7 +110,7 @@
     — the team library's file when one is linked, this workspace's otherwise; agents read it, never change it.</div>
 </div>
 
-<h2>Team library</h2>
+<h2 id="team-library">Team library</h2>
 <div class="card">
 {% if cfg.library.path %}
   <dl class="props">

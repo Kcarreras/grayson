@@ -3,11 +3,12 @@
 {% block title %}grayson — records{% endblock %}
 {% block content %}
 <h1>Records {{ help("records") }}</h1>
+<p class="lede">Find past findings, fixes, and reports. Carry the evidence into your next investigation.</p>
 
 <form class="searchrow" method="get" action="/records">
   <input type="hidden" name="t" value="{{ token }}">
-  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search titles, summaries, payloads…">
-  <select name="kind" style="width: auto;">
+  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search titles, summaries, payloads…" aria-label="Search records">
+  <select name="kind" style="width: auto;" aria-label="Record type">
     <option value="" {{ "selected" if not kind }}>Everything</option>
     <option value="finding" {{ "selected" if kind == "finding" }}>Findings only</option>
     <option value="proposal" {{ "selected" if kind == "proposal" }}>Proposals only</option>
@@ -18,7 +19,9 @@
 </form>
 
 {% if not records %}
-<div class="card empty">{% if q %}Nothing matches “{{ q }}”.{% else %}No records yet.{% endif %}</div>
+<div class="card empty">{% if q or kind %}<b>No matching records</b>Try a broader search or clear the filters.
+{% else %}<b>Your investigations build a shared memory</b>Accepted findings, approved fixes, and session reports appear here as your team completes its work.
+<p class="mt-3"><a href="/?t={{ token }}">Go to sessions →</a></p>{% endif %}</div>
 {% else %}
 {# severity rank for sorting #}
 {% set sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1} %}

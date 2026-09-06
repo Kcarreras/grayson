@@ -57,6 +57,38 @@ def test_dashboard_lists_session(client, session):
     assert session.id in r.text
 
 
+def test_session_navigation_targets_exist_without_optional_content(client, session):
+    """An empty investigation must not expose dead chart/proposal jumps."""
+    import re
+
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    ids = set(re.findall(r'\bid="([^"]+)"', page))
+    jumps = set(re.findall(r'href="#([^"]+)"', page))
+    assert jumps <= ids
+    assert "proposals" not in jumps
+    assert "analysis" not in jumps
+    assert {"queries", "checkpoints", "findings", "actions"} <= jumps
+
+
+def test_session_list_exposes_attention_and_search_metadata(client, session):
+    iid = session.add_intervention(
+        "choose", "Choose a rule", "", build_request("choose", {"options": ["a", "b"]})
+    )
+    page = client.get(f"/?t={TOKEN}").text
+    assert 'data-list="sessions"' in page
+    assert 'data-tags="attention"' in page
+    assert 'data-s-attention="1"' in page
+    assert 'aria-label="Filter sessions"' in page
+    assert iid not in page  # the card links to the session, not a hidden decision form
+
+
+def test_closed_sessions_do_not_poll_for_live_updates(client, session):
+    session.set_meta("stage", "closed")
+    page = client.get(f"/session/{session.id}?t={TOKEN}")
+    assert page.status_code == 200
+    assert "data-live" not in page.text
+
+
 def test_session_detail(client, session):
     r = client.get(f"/session/{session.id}?t={TOKEN}")
     assert r.status_code == 200
@@ -643,7 +675,9 @@ def test_chart_labels_detail_and_inline_svg(client, session):
     # the tile: the shared date/time parts are captioned once; the console
     # carries the tooltip script for anything still shortened
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
-    assert 'data-shared="2026-08-…T00:00:00"' in page and "viz-tip" in page
+    assert 'data-shared="2026-08-…T00:00:00"' in page
+    assert "/static/console.js" in page
+    assert "viz-tip" in client.get("/static/console.js").text
     # the chart page renders the detail size, and its download matches it
     detail = client.get(f"/session/{session.id}/chart/{spec['chart_id']}?t={TOKEN}").text
     assert 'viewBox="0 0 1000 440"' in detail

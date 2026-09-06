@@ -54,7 +54,8 @@ _COOKIE = "grayson_token"
 def _help_widget(key: str) -> Markup:
     text = GLOSSARY.get(key, key)
     return Markup(
-        '<span class="help" tabindex="0"><span class="h-i">i</span>'
+        f'<span class="help" tabindex="0" role="note" aria-label="{escape(text)}">'
+        '<span class="h-i" aria-hidden="true">i</span>'
         f'<span class="h-pop">{escape(text)}</span></span>'
     )
 
@@ -143,7 +144,13 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         # stale bundle until the cache expires.
         immutable = request.query_params.get("v") == __version__
         cache = "public, max-age=31536000, immutable" if immutable else "no-cache"
-        return FileResponse(target, headers={"Cache-Control": cache})
+        response = FileResponse(target, stat_result=target.stat(), headers={"Cache-Control": cache})
+        if request.headers.get("if-none-match") == response.headers.get("etag"):
+            return Response(
+                status_code=304,
+                headers={"ETag": response.headers["etag"], "Cache-Control": cache},
+            )
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request) -> Any:

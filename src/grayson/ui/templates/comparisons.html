@@ -3,20 +3,21 @@
 {% block head %}<style>
 .comparison-sides { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 .comparison-sides > fieldset { min-width:0; }
-.mapping-row { display:grid; grid-template-columns:1fr 1fr 1.2fr .75fr .75fr auto; gap:10px; align-items:end; }
+.mapping-row { display:grid; grid-template-columns:1fr 1fr 1.2fr .75fr .75fr auto; gap:12px; align-items:end; }
 .mapping-row label { min-width:0; }.mapping-row input,.mapping-row select { width:100%; }
 .elform label { display:flex; flex-direction:column; gap:6px; }
 .elform > .card.grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .comparison-sides label + label { margin-top:12px; }
 @media(max-width:760px) { .comparison-sides,.elform > .card.grid { grid-template-columns:1fr; }.mapping-row { grid-template-columns:1fr 1fr; } }
+@media(min-width:761px) and (max-width:1200px) { .mapping-row { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 </style>{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>Comparisons</nav>
 <h1>Make the release decision with evidence</h1><p class="lede">Compare environments, pipelines, or time windows with a shared definition of acceptable change.</p>
-{% if error %}<div class="banner" role="alert">{{ error }}</div>{% endif %}
+
 {% if comparisons %}<h2>Saved comparisons</h2><div class="grid">{% for c in comparisons %}{% if c.error %}<div class="banner">{{ c.id }}: {{ c.error }}</div>{% else %}<a class="card" href="/session/{{ s.id }}/comparisons/{{ c.spec.id }}?t={{ token }}"><span class="otitle">{{ c.spec.name }}</span><p class="small muted">{{ c.spec.left.label }} → {{ c.spec.right.label }}</p><span class="chip">{{ c.spec['keys'] | length }} matching key{{ 's' if c.spec['keys'] | length != 1 }}</span><span class="chip">{{ c.spec.columns | length }} compared column{{ 's' if c.spec.columns | length != 1 }}</span></a>{% endif %}{% endfor %}</div>{% endif %}
 {% if s.stage != 'closed' %}
-<h2>Define a comparison</h2>
+<h2><span class="step-number">1</span> Define the environments</h2>
 <form class="elform" method="post" action="/session/{{ s.id }}/comparisons/create?t={{ token }}">
 <div class="card grid"><label>Comparison name<input name="name" required maxlength="160" placeholder="Orders pipeline · release candidate" value="{{ form.get('name', '') }}"></label><label>Comparison ID<input name="id" required pattern="[a-z][a-z0-9_-]{0,63}" placeholder="orders_release_01" value="{{ form.get('id', '') }}"><span class="small muted">Use a new ID when the comparison contract changes.</span></label></div>
 <div class="comparison-sides">{% for side, title in [('left', 'Baseline'), ('right', 'Candidate')] %}<fieldset class="card"><legend>{{ title }}</legend>
@@ -26,7 +27,7 @@
 <label>Filter, optional<textarea name="{{ side }}_filter" rows="2" placeholder="ORDER_DATE >= '2026-08-01' AND ORDER_DATE < '2026-09-01'">{{ form.get(side ~ '_filter', '') }}</textarea></label>
 <label>Window description, optional<input name="{{ side }}_window" placeholder="August 2026 · completed orders" value="{{ form.get(side ~ '_window', '') }}"><span class="small muted">A label for the report. The filter above selects the actual records.</span></label>
 </fieldset>{% endfor %}</div>
-<h2>Match records and compare values</h2><p class="small muted">Declare at least one matching key. Numeric tolerance is the larger of the absolute amount or the percentage of the baseline value. Nulls match only nulls; null keys and duplicate keys fail key integrity.</p>
+<h2><span class="step-number">2</span> Match records and compare values</h2><p class="small muted">Declare at least one matching key. Numeric tolerance is the larger of the absolute amount or the percentage of the baseline value. Nulls match only nulls; null keys and duplicate keys fail key integrity.</p>
 <div id="mapping-list">
 {% set existing = form.getlist('column_left') if form and form.getlist is defined else [''] %}
 {% for left in existing %}<div class="card mapping-row">
@@ -35,7 +36,7 @@
 <label>Compare as<select name="column_kind">{% for value, label in [('key', 'Matching key'), ('exact', 'Exact value'), ('numeric', 'Numeric value'), ('sum', 'Numeric value + total')] %}<option value="{{ value }}" {{ 'selected' if form and form.getlist('column_kind')[loop.index0] == value }}>{{ label }}</option>{% endfor %}</select></label>
 <label>Absolute ±<input name="absolute_tolerance" value="{{ form.getlist('absolute_tolerance')[loop.index0] if form else '0' }}" inputmode="decimal"></label><label>Relative ± %<input name="relative_percent" value="{{ form.getlist('relative_percent')[loop.index0] if form else '0' }}" inputmode="decimal"></label><button class="btn sm remove-mapping" type="button" aria-label="Remove column mapping">Remove</button>
 </div>{% endfor %}</div><button class="btn" id="add-mapping" type="button">Add column mapping</button>
-<h2>Acceptable differences</h2><div class="card grid">
+<h2><span class="step-number">3</span> Set acceptable differences</h2><div class="card grid">
 {% for key, label in [('allowed_missing_left', 'Candidate-only keys allowed'), ('allowed_missing_right', 'Baseline-only keys allowed'), ('allowed_changed_rows', 'Changed records allowed'), ('row_count_tolerance', 'Row-count difference allowed')] %}<label>{{ label }}<input name="{{ key }}" type="number" min="0" value="{{ form.get(key, '0') }}"></label>{% endfor %}
 <label>Group mismatches by<input name="group_by" placeholder="REGION, ORDER_MONTH" value="{{ form.get('group_by', '') }}"><span class="small muted">Mapped baseline column names, separated by commas.</span></label></div>
 <details><summary class="otitle">Coverage and evidence limits</summary><div class="card grid"><label>Maximum records to compare locally<input name="max_rows" type="number" min="1" max="1000000" value="{{ form.get('max_rows', '100000') }}"></label><label>Examples per mismatch type<input name="example_limit" type="number" min="1" max="100" value="{{ form.get('example_limit', '20') }}"></label><p class="small muted">Warehouse guard limits still apply. Full-table summaries run separately. Capped extracts leave record parity unproven. Observation times and coverage are included in every report.</p></div></details>
@@ -43,8 +44,25 @@
 </form>
 <script>
 const mappings = document.getElementById('mapping-list');
-document.getElementById('add-mapping').addEventListener('click', () => { const row=mappings.firstElementChild.cloneNode(true); row.querySelectorAll('input').forEach(i => i.value=i.name.includes('tolerance') || i.name==='relative_percent' ? '0' : ''); row.querySelector('select').value='exact'; mappings.appendChild(row); row.querySelector('input').focus(); });
-mappings.addEventListener('click', e => { if(e.target.classList.contains('remove-mapping') && mappings.children.length>1) e.target.closest('.mapping-row').remove(); });
+function updateMappings() {
+  mappings.querySelectorAll('.remove-mapping').forEach(button => {
+    button.disabled = mappings.children.length === 1;
+    button.title = button.disabled ? 'At least one matching key is required' : 'Remove this mapping';
+  });
+}
+document.getElementById('add-mapping').addEventListener('click', () => {
+  const row = mappings.firstElementChild.cloneNode(true);
+  row.querySelectorAll('input').forEach(input => input.value = input.name.includes('tolerance') || input.name === 'relative_percent' ? '0' : '');
+  row.querySelector('select').value = 'exact'; mappings.appendChild(row); updateMappings(); row.querySelector('input').focus();
+});
+mappings.addEventListener('click', event => {
+  if (event.target.classList.contains('remove-mapping') && mappings.children.length > 1) {
+    const row = event.target.closest('.mapping-row');
+    const next = row.nextElementSibling || row.previousElementSibling;
+    row.remove(); updateMappings(); next.querySelector('input').focus();
+  }
+});
+updateMappings();
 </script>
 {% endif %}
 {% endblock %}

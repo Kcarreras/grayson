@@ -5,10 +5,11 @@
 {% block title %}grayson — knowledge{% endblock %}
 {% block content %}
 <h1>Knowledge Library {{ help("knowledge") }}</h1>
+<p class="lede">The context behind your data: tables, relationships, and what your team has learned.</p>
 
 <form class="searchrow" method="get" action="/knowledge">
   <input type="hidden" name="t" value="{{ token }}">
-  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search tables and facts…">
+  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search tables and facts…" aria-label="Search the knowledge library">
   <button class="btn secondary sm" type="submit">Search</button>
   {% if q %}<a class="btn ghost sm" href="/knowledge?t={{ token }}">Clear</a>{% endif %}
 </form>
@@ -29,10 +30,10 @@
 {% if graph %}
 {# the map is the tallest thing on the page: it folds, and the fold is
    remembered. graph.js refits the canvas when the fold opens. #}
-<details class="section" id="schema-map" data-fold="schema-map" open>
-<summary><h2>Schema map
-  <span class="h-count">{{ graph.nodes | length }} tables · {{ graph.edges | length }} relationships</span></h2></summary>
-{{ relgraph(graph, token, "relgraph-library", 520) }}
+<details class="fold" id="schema-map" data-fold="schema-map">
+<summary>Schema map
+  <span class="h-count">{{ graph.nodes | length }} tables · {{ graph.edges | length }} relationships</span></summary>
+{{ relgraph(graph, token, "relgraph-library", 380) }}
 </details>
 {% endif %}
 

@@ -3,6 +3,7 @@
 {% block title %}grayson — checks{% endblock %}
 {% block content %}
 <h1>Checks</h1>
+<p class="lede">Catch regressions early. Review reusable checks and see where the latest results need attention.</p>
 
 <div class="pagehead" style="margin: 18px 0 10px;">
   <div><h2 style="margin: 0;">Regression library</h2>
@@ -13,9 +14,10 @@
 {% for e in regressions.errors %}<div class="small">{{ e.file }}: {{ e.error }}</div>{% endfor %}</div>
 {% endif %}
 {% if regressions.checks %}
+{{ list_tools("regression-library", [("name", "asc", "Name A–Z"), ("review", "asc", "Needs review first")], [("review", "needs review"), ("active", "active"), ("retired", "retired")], "Find a regression check or table…", false) }}
 <div class="card scroll"><table>
   <thead><tr><th>Regression</th><th>Expectation</th><th>Review</th><th>Tables</th></tr></thead>
-  <tbody>{% for c in regressions.checks %}<tr>
+  <tbody data-list="regression-library" data-noun="regression">{% for c in regressions.checks %}<tr data-item data-s-name="{{ c.name }}" data-s-review="{{ 1 if c.review_current else 2 if c.state == 'retired' else 0 }}" data-tags="{{ 'active' if c.review_current else 'retired' if c.state == 'retired' else 'review' }}">
     <td><a href="/checks/regression/{{ c.id }}?t={{ token }}">{{ c.name }}</a>
       <div class="muted small">{{ c.description }}</div></td>
     <td class="small">{{ c.expectation_text }}</td>
@@ -31,7 +33,7 @@
   <p class="small faint">Nothing runs in the background. Replays use a session's scope, query budget, and audit trail.</p>
 </div>
 {% endif %}
-<h2 style="margin-top: 28px;">Latest results</h2>
+<h2 id="latest-results" style="margin-top: 28px;">Latest results</h2>
 
 <div class="tiles">
   <div class="tile"><div class="num">{{ summary.total_checks }}</div><div class="lbl">Checks on file</div></div>

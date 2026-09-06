@@ -275,7 +275,7 @@
         <span class="faint small">{{ schema.required_extra | selectattr("required") | list | length }} required in <span class="mono">extra</span></span>
       </div>
 
-      <table class="fieldtable" style="margin-top: 10px;">
+      <div class="scroll"><table class="fieldtable" style="margin-top: 10px;">
         <thead><tr><th>field</th><th>holds</th><th></th></tr></thead>
         <tbody>
         {% for e in schema.required_extra %}
@@ -306,7 +306,7 @@
         <tr><td colspan="3" class="faint">No fields beyond the base — findings need title, severity, confidence, summary and evidence only.</td></tr>
         {% endfor %}
         </tbody>
-      </table>
+      </table></div>
 
       {% if schema.conditional_extra %}
       <div style="margin-top: 12px;">
@@ -341,14 +341,14 @@
 
       <details class="inlinefold" style="margin-top: 12px;" data-fold="base-fields">
         <summary>Base fields</summary>
-        <table class="fieldtable" style="margin-top: 6px;">
+        <div class="scroll"><table class="fieldtable" style="margin-top: 6px;">
           <tbody>
           {% for b in schema.base_fields %}
           <tr><td class="k">{{ b.key }}{% if b.required %} <span class="attn-text">*</span>{% endif %}</td>
             <td>{{ b.description }}<div class="faint small">{{ b.rule }}</div></td></tr>
           {% endfor %}
           </tbody>
-        </table>
+        </table></div>
         <div class="overline" style="margin-top: 10px;">Enforced calibration</div>
         <ul class="small muted" style="margin: 4px 0 0; padding-left: 18px;">
           {% for rule in schema.enforced %}<li>{{ rule }}</li>{% endfor %}

@@ -6,7 +6,7 @@
   <a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>
   <span class="mono">{{ q.qid }}</span></nav>
 <div class="pagehead">
-  <div class="titlerow"><h1 class="mono">{{ q.qid }}</h1></div>
+  <div class="titles"><h1>{{ q.label or q.qid }}</h1><span class="mono muted">{{ q.qid }}</span></div>
   <span class="actions">{{ query_status(q.status) }}</span>
 </div>
 
@@ -72,9 +72,22 @@
   </div>
 </details>
 <script>
-document.getElementById('regression-kind').addEventListener('change', function () {
-  document.getElementById('regression-scalar').hidden = this.value !== 'scalar';
-});
+(function () {
+  var kind = document.getElementById('regression-kind');
+  var scalar = document.getElementById('regression-scalar');
+  var operator = scalar.querySelector('[name="operator"]');
+  var upper = scalar.querySelector('[name="upper"]');
+  function update() {
+    var numeric = kind.value === 'scalar';
+    scalar.hidden = !numeric;
+    scalar.querySelectorAll('input, select').forEach(function (field) { field.disabled = !numeric; });
+    scalar.querySelector('[name="column"]').required = numeric;
+    scalar.querySelector('[name="value"]').required = numeric;
+    upper.closest('label').hidden = operator.value !== 'between';
+    upper.required = numeric && operator.value === 'between';
+  }
+  kind.addEventListener('change', update); operator.addEventListener('change', update); update();
+})();
 </script>
 {% endif %}
 {% endblock %}

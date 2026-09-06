@@ -60,7 +60,7 @@
 {% set reached = stages.index(s.stage) %}
 {% set accepted = findings | selectattr("accepted") | rejectattr("superseded_by") | list | length %}
 {% set closed = s.stage == "closed" %}
-<div class="timeline" data-stage="{{ reached }}" data-session="{{ s.id }}">
+<div class="timeline" data-stage="{{ reached }}" data-session="{{ s.id }}" tabindex="0" role="group" aria-label="Session progress: {{ s.stage }}. {{ reached + 1 }} of {{ stages | length }} stages.">
   {% for st in stages %}
   {% set state = "now" if loop.index0 == reached else "done" if loop.index0 < reached else "todo" %}
   <div class="tl-step {{ state }}{% if closed and st == 'closed' %} final {{ s.outcome or '' }}{% endif %}" style="--i: {{ loop.index0 }};">
@@ -98,7 +98,7 @@
    data-s-<key> sort values and data-tags. State is remembered per page. #}
 {% macro list_tools(id, sorts, filters=[], placeholder="Filter this list…", foldable=true) -%}
 <div class="listtools" data-list-tools="{{ id }}">
-  <input type="search" class="lt-q" placeholder="{{ placeholder }}" aria-label="Filter this list">
+  <input type="search" class="lt-q" placeholder="{{ placeholder }}" aria-label="Filter {{ id }}" autocomplete="off">
   <label class="lt-sort"><span class="overline">Sort</span>
     <select aria-label="Sort order">
       {% for s in sorts %}<option value="{{ s[0] }}:{{ s[1] }}">{{ s[2] }}</option>{% endfor %}
@@ -108,7 +108,8 @@
     {% for f in filters %}<button type="button" class="chip fchip" data-tag="{{ f[0] }}" aria-pressed="false">{{ f[1] }} <span class="lt-n"></span></button>{% endfor %}
   </span>
   {% endif %}
-  <span class="faint small lt-count"></span>
+  <span class="faint small lt-count" role="status" aria-live="polite" aria-atomic="true"></span>
+  <button type="button" class="btn ghost sm lt-reset" hidden>Clear filters</button>
   {% if foldable %}
   <span class="lt-fold">
     <button type="button" class="btn ghost sm lt-expand" title="Open every item shown">Expand all</button>

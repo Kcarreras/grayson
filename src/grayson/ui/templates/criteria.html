@@ -5,18 +5,18 @@
 <nav class="crumbs"><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>Fix verification</nav>
 <div class="pagehead"><h1>{{ p.title }}</h1><span class="badge plain">{{ p.status | replace('_', ' ') }}</span></div>
 <p class="lede">Agree on what success means. Then verify it with fresh evidence.</p>
-{% if error %}<div class="banner" role="alert">{{ error }}</div>{% endif %}
+
 {% if contract %}
 <h2>Success contract <span class="h-count">{{ contract.criteria | length }} {{ 'criterion' if contract.criteria | length == 1 else 'criteria' }} · {{ contract.connection }}</span></h2>
 {% for c in contract.criteria %}
 <div class="card"><div class="row split"><span class="otitle">{{ loop.index }}. {{ c.name }}</span><span class="badge {{ 'ok' if contract.review_current else 'attn' }}">{{ 'approved' if contract.review_current else 'awaiting review' }}</span></div>
 <p style="margin-top:10px">{{ c.expectation_text }}</p>
 <div class="small muted">Baseline: {{ c.baseline.observed }} · {{ c.baseline.observed_at }} · <a href="/session/{{ s.id }}/query/{{ c.source_qid }}?t={{ token }}">{{ c.source_qid }}</a>{% if c.relative_percent is not none %} · ±{{ c.relative_percent }}% of this baseline{% endif %}</div>
-<details class="inlinefold"><summary>Review SQL and scope</summary><pre>{{ c.sql | sqlhl }}</pre><p class="small muted">{{ c.tables | join(', ') }}</p></details></div>
+<details class="inlinefold"><summary>Review SQL and scope</summary><pre class="sql">{{ c.sql | sqlhl }}</pre><p class="small muted">{{ c.tables | join(', ') }}</p></details></div>
 {% endfor %}
 {% if p.status == 'proposed' %}
 <div class="card attn"><h2 style="margin-top:0">Review the fix and its success criteria</h2><p class="mono">{{ p.payload.target_file or p.payload.run_target }}</p>{% if p.payload.rationale %}<p>{{ p.payload.rationale }}</p>{% endif %}
-{% if p.kind == 'file_diff' %}{% if p.payload.diff %}<div class="overline">File diff</div><pre>{{ p.payload.diff }}</pre>{% endif %}{% if p.payload.new_content %}<div class="overline">Full replacement content</div><pre>{{ p.payload.new_content }}</pre>{% endif %}{% else %}<pre>{{ p.payload.ddl }}</pre>{% endif %}
+{% if p.kind == 'file_diff' %}{% if p.payload.diff %}<div class="overline">File diff</div><pre>{{ p.payload.diff }}</pre>{% endif %}{% if p.payload.new_content %}<div class="overline">Full replacement content</div><pre>{{ p.payload.new_content }}</pre>{% endif %}{% else %}<pre class="sql">{{ p.payload.ddl }}</pre>{% endif %}
 {% if p.payload.view_name %}<p class="small">Registers view {{ p.payload.view_name }} from {{ p.payload.source_tables | join(', ') }}.</p>{% endif %}
 <form method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}"><input type="hidden" name="digest" value="{{ contract.digest }}"><button class="btn primary" type="submit">Approve fix and these criteria</button></form></div>
 {% elif p.status == 'approved' %}
