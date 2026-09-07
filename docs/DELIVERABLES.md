@@ -40,6 +40,17 @@ const dataset = grayson.dataset("sales");   // columns, rows, limits, provenance
 const visual = grayson.visual("trend");     // declared title and dataset associations
 ```
 
+Integers outside JavaScript's safe range (±9,007,199,254,740,991) are decimal
+strings. Binary cells are base64 strings. Each transformed cell is listed in
+`dataset.cell_encodings` as `{row, column, encoding}`, with zero-based row
+indexes and encoding `integer-decimal` or `binary-base64`. Ordinary strings,
+safe integers, real numbers and nulls retain their JSON representation; empty
+binary values remain distinguishable from empty strings through the metadata.
+Use `BigInt(value)` for exact integer operations and `atob(value)` to decode
+binary; avoid converting decimal-encoded identifiers to `Number`. Fingerprints
+cover both the exported rows and encoding metadata, so encoded values cannot
+be confused with ordinary strings in the digest.
+
 Perform analytical aggregations and transformations in guarded SQL, then bind
 the resulting query. Use JavaScript for display, sorting, filtering, selection
 and exploration. Browser-derived scenarios should be labelled as assumptions

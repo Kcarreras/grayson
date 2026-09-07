@@ -1,3 +1,4 @@
+import hashlib
 import json
 from base64 import b64decode, b64encode
 from html.parser import HTMLParser
@@ -103,6 +104,50 @@ def test_freeform_source_preserves_raw_text_closing_tags(source):
     css = next(attrs["href"] for tag, attrs in inner.elements if tag == "link")
     assert b64decode(script.split(",", 1)[1]).decode() == spec["javascript"]
     assert b64decode(css.split(",", 1)[1]).decode() == spec["css"]
+
+
+def test_mcp_losslessly_encodes_large_integers_and_binary_cells(source):
+    session, spec = source
+    original = [
+        {"ID": 2**53 - 1, "BLOB": b"", "TEXT": "", "REAL": 1.25},
+        {"ID": 2**53 + 1, "BLOB": b"\x00\xff\x80", "TEXT": "9007199254740993", "REAL": None},
+        {"ID": -(2**63), "BLOB": None, "TEXT": "ordinary", "REAL": -0.5},
+        {"ID": 2**63 - 1, "BLOB": b"</script>", "TEXT": None, "REAL": 0.0},
+    ]
+    qid = run_statement(
+        session, "SELECT ID, BLOB, TEXT, REAL FROM DB.S.T1", executor=FakeExecutor(rows=original)
+    )["qid"]
+    spec["datasets"]["sales"] = {"qid": qid}
+    result = call_mcp(
+        build_server(session.workspace),
+        "session_deliverable",
+        {
+            "session_id": session.id,
+            "presentation": spec,
+        },
+    )
+    data = json.loads(Path(result["evidence"]).read_text())["datasets"]["sales"]
+    assert data["rows"][0]["ID"] == 2**53 - 1
+    assert data["rows"][1]["ID"] == "9007199254740993"
+    assert data["rows"][2]["ID"] == str(-(2**63))
+    assert data["rows"][3]["ID"] == str(2**63 - 1)
+    recovered = [dict(row) for row in data["rows"]]
+    for cell in data["cell_encodings"]:
+        row, column = cell["row"], cell["column"]
+        value = recovered[row][column]
+        recovered[row][column] = (
+            int(value) if cell["encoding"] == "integer-decimal" else b64decode(value)
+        )
+    assert recovered == original
+    payload = json.dumps(
+        {"rows": data["rows"], "cell_encodings": data["cell_encodings"]},
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    assert data["sha256"] == hashlib.sha256(payload.encode()).hexdigest()
+    html = Path(result["html"]).read_text(encoding="utf-8")
+    assert "Some cells use lossless string encodings" in html
 
 
 @pytest.mark.parametrize(

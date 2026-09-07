@@ -53,6 +53,26 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
 
 
+def _encode_rows(columns: list[str], rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Keep SQLite integers and binary values lossless across JSON.parse."""
+    encoded = []
+    encodings = []
+    for index, row in enumerate(rows):
+        output = {}
+        for column in columns:
+            value = row[column]
+            encoding = None
+            if isinstance(value, int) and abs(value) > 2**53 - 1:
+                value, encoding = str(value), "integer-decimal"
+            elif isinstance(value, bytes):
+                value, encoding = b64encode(value).decode("ascii"), "binary-base64"
+            output[column] = value
+            if encoding:
+                encodings.append({"row": index, "column": column, "encoding": encoding})
+        encoded.append(output)
+    return encoded, encodings
+
+
 def resolve_presentation(session: Session, content: dict) -> tuple[Presentation, dict]:
     """Only Grayson reads rows; the author supplies references, never dataset values."""
     spec = Presentation.model_validate(content)
@@ -86,17 +106,21 @@ def resolve_presentation(session: Session, content: dict) -> tuple[Presentation,
             raise ValueError(f"{name}: columns must be unique columns from {binding.qid}")
         indexes = [columns.index(column) for column in selected]
         values = [dict(zip(selected, [row[i] for i in indexes], strict=True)) for row in rows]
+        values, encodings = _encode_rows(selected, values)
         evidence = evidence_snapshot(session, [binding.qid])[0]
         datasets[name] = {
             "columns": selected,
             "rows": values,
+            "cell_encodings": encodings,
             "evidence": evidence,
             "exported_rows": len(values),
             "cached_rows": count or 0,
             "export_limited": (count or 0) > len(values),
             "source_truncated": bool(query.get("truncated")),
             "source_last_altered": sidecar.get("source_last_altered") or {},
-            "sha256": hashlib.sha256(_json(values).encode()).hexdigest(),
+            "sha256": hashlib.sha256(
+                _json({"rows": values, "cell_encodings": encodings}).encode()
+            ).hexdigest(),
         }
     manifest = {
         "format": 1,
@@ -168,6 +192,8 @@ they do not certify calculations, labels or marks drawn by presentation code.</p
 <details><summary>SQL, columns and fingerprint</summary>
 <pre>{{ dataset.evidence.sql_executed or dataset.evidence.sql }}</pre>
 <p>{{ dataset.columns|join(', ') }}</p><pre>SHA-256: {{ dataset.sha256 }}</pre></details>
+{% if dataset.cell_encodings %}<p>Some cells use lossless string encodings for large integers
+or binary values. See cell_encodings in the data and provenance file.</p>{% endif %}
 </article>{% endfor %}</aside></html>"""
 
 

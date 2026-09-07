@@ -467,6 +467,8 @@ def build_server(workspace: Workspace) -> Any:
         "visuals maps unique HTML container IDs to {title, datasets: [name], note?: str}. "
         "Use grayson.data(name) for frozen rows, grayson.dataset(name) for rows and limits, "
         "grayson.evidence(name) for SQL provenance. All APIs are synchronous. "
+        "Unsafe JS integers are decimal strings and binary cells are base64 strings; "
+        "grayson.dataset(name).cell_encodings lists their row/column/type. "
         "Compute analytical transformations in guarded SQL first; JS controls presentation "
         "and exploration. Inline any needed library code: external scripts/fetch are blocked. "
         "The custom page runs in a sandbox; Grayson retains separate inspectable evidence. "
