@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -10,6 +11,19 @@ from grayson.executor.snow import SNOW_CMD_ENV, ExecutionResult
 from grayson.workspace import Workspace
 
 FAKE_SNOW = Path(__file__).parent / "fake_snow.py"
+
+
+def call_mcp(server, name: str, args: dict):
+    """Invoke a tool and unpack its result without importing another test module."""
+    result = asyncio.run(server.call_tool(name, args))
+    structured = getattr(result, "structured_content", None)
+    if isinstance(structured, dict) and "result" in structured:
+        return structured["result"]  # scalars/lists wrapped as {"result": ...}
+    # dict returns arrive as JSON text content
+    content = getattr(result, "content", None) or []
+    if content and getattr(content[0], "text", None):
+        return json.loads(content[0].text)
+    return structured
 
 
 class FakeExecutor:

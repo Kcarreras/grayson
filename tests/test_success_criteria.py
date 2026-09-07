@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from conftest import FakeExecutor
+from conftest import FakeExecutor, call_mcp
 from grayson.checks.regression import RegressionStore
 from grayson.cli import app
 from grayson.config import GuardSettings
@@ -434,12 +434,11 @@ def test_query_picker_prioritizes_current_and_searches_pages_without_running_sql
 
 def test_mcp_drafts_file_and_generated_criteria_for_ui_review(s):
     draft(s)
-    from tests.test_mcp import _call
 
     path = s.workspace.root / "model.sql"
     path.write_text("before", encoding="utf-8")
     mcp = build_server(s.workspace)
-    result = _call(
+    result = call_mcp(
         mcp,
         "proposal_draft_file",
         {
@@ -463,5 +462,5 @@ def test_mcp_drafts_file_and_generated_criteria_for_ui_review(s):
     assert 'value="criterion_1"' in page
     assert page.count('class="help"') >= 10
     assert "Current session" in page
-    choices = _call(mcp, "criteria_queries", {"session_id": s.id})
+    choices = call_mcp(mcp, "criteria_queries", {"session_id": s.id})
     assert choices["sessions"][0]["current"]

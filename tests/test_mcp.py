@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from conftest import call_mcp as _call
 from grayson.mcp.server import build_server
 
 
@@ -18,20 +19,6 @@ def server(workspace, fake_snow_env):
 def _list_tools(server) -> set[str]:
     tools = asyncio.run(server.list_tools())
     return {getattr(t, "name", None) for t in tools}
-
-
-def _call(server, name: str, args: dict):
-    import json
-
-    result = asyncio.run(server.call_tool(name, args))
-    structured = getattr(result, "structured_content", None)
-    if isinstance(structured, dict) and "result" in structured:
-        return structured["result"]  # scalars/lists wrapped as {"result": ...}
-    # dict returns arrive as JSON text content
-    content = getattr(result, "content", None) or []
-    if content and getattr(content[0], "text", None):
-        return json.loads(content[0].text)
-    return structured
 
 
 def test_server_builds(server):

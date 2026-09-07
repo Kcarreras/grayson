@@ -7,6 +7,7 @@ import sqlglot
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from conftest import call_mcp
 from grayson.cli import app
 from grayson.config import GuardSettings
 from grayson.core import comparisons, engine
@@ -252,8 +253,6 @@ def test_future_report_is_not_overwritten(pair):
 
 
 def test_mcp_runs_same_comparison_and_preserves_failed_verdict(pair, monkeypatch):
-    from test_mcp import _call
-
     import grayson.core.run as queries
 
     warehouses = {
@@ -262,9 +261,9 @@ def test_mcp_runs_same_comparison_and_preserves_failed_verdict(pair, monkeypatch
     }
     monkeypatch.setattr(queries, "get_executor", lambda connection, root: warehouses[connection])
     mcp = build_server(pair[0].workspace)
-    out = _call(mcp, "comparison_create", {"session_id": pair[0].id, "spec": spec(pair)})
+    out = call_mcp(mcp, "comparison_create", {"session_id": pair[0].id, "spec": spec(pair)})
     assert out["spec"]["id"] == "orders_release"
-    report = _call(
+    report = call_mcp(
         mcp, "comparison_run", {"session_id": pair[0].id, "comparison_id": "orders_release"}
     )
     assert report["verdict"] == "fail"
