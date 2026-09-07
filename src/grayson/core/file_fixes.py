@@ -10,8 +10,8 @@ import difflib
 import hashlib
 import json
 import os
+import secrets
 import stat
-import tempfile
 from pathlib import Path
 
 from grayson.core.proposals import ProposalError
@@ -218,10 +218,13 @@ def apply(session: Session, pid: str, actor: str = "agent") -> dict:
             raise ProposalError("file fix or success criteria changed since approval")
         path = check_source(session, proposal)
         body = proposal["payload"]
-        with tempfile.NamedTemporaryFile(
-            dir=path.parent, prefix=f".{path.name}.", delete=False
-        ) as f:
-            tmp = Path(f.name)
+        candidate = path.with_name(f".{path.name}.{secrets.token_hex(16)}")
+        # New source files get ordinary creation permissions, filtered by the
+        # process umask. Existing files stay private until their mode is copied.
+        mode = 0o666 if body["file_change"]["before_sha256"] is None else 0o600
+        fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode)
+        tmp = candidate  # Only clean up a temporary file we successfully created.
+        with os.fdopen(fd, "wb") as f:
             f.write(body["new_content"].encode("utf-8"))
             f.flush()
             os.fsync(f.fileno())

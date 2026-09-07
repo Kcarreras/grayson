@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
+import subprocess
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -72,6 +75,67 @@ def test_create_is_only_written_after_approval(session):
     _approve(session, p)
     file_fixes.apply(session, p["pid"])
     assert source.read_text() == "select 1;"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX creation modes and umask")
+@pytest.mark.parametrize(
+    "existing_mode, mask, expected",
+    [
+        (None, 0o022, 0o644),
+        (None, 0o002, 0o664),
+        (None, 0o077, 0o600),
+        (0o640, 0o077, 0o640),
+        (0o755, 0o077, 0o755),
+    ],
+)
+def test_apply_respects_creation_umask_and_preserves_existing_mode(
+    session, existing_mode, mask, expected
+):
+    source = session.workspace.root / "model.sql"
+    if existing_mode is not None:
+        source.write_text("before")
+        source.chmod(existing_mode)
+    p = file_fixes.draft(session, "model.sql", "after", "Fix model")
+    _approve(session, p)
+    # Isolate the process-wide umask from other tests and their threads.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "from grayson.core import file_fixes\n"
+            "from grayson.core.session import Session\n"
+            "from grayson.workspace import Workspace\n"
+            "os.umask(int(sys.argv[4]))\n"
+            "file_fixes.apply(Session(Workspace(Path(sys.argv[1])), sys.argv[2]), sys.argv[3])\n",
+            str(session.workspace.root),
+            session.id,
+            p["pid"],
+            str(mask),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert source.read_text() == "after"
+    assert stat.S_IMODE(source.stat().st_mode) == expected
+    assert session.proposal(p["pid"])["status"] == "applied"
+
+
+def test_temporary_name_collision_does_not_overwrite_or_delete_other_file(session, monkeypatch):
+    p = file_fixes.draft(session, "new.sql", "after", "New model")
+    _approve(session, p)
+    collision = session.workspace.root / ".new.sql.collision"
+    collision.write_text("another writer's file")
+    monkeypatch.setattr(file_fixes.secrets, "token_hex", lambda _: "collision")
+    with pytest.raises(FileExistsError):
+        file_fixes.apply(session, p["pid"])
+    assert collision.read_text() == "another writer's file"
+    assert not (session.workspace.root / "new.sql").exists()
+    assert session.proposal(p["pid"])["status"] == "approved"
+    assert not (session.workspace.root / ".grayson/file-apply.lock").exists()
 
 
 def test_review_distinguishes_lines_without_final_newlines(session):
