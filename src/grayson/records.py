@@ -152,7 +152,7 @@ def _record_path(records_dir: Path, session_id: str, record_id: str) -> Path:
     return records_dir / session_id / f"{record_id}.json"
 
 
-def evidence_snapshot(session: Session, qids: list[str]) -> list[dict]:
+def evidence_snapshot(session: Session, qids: list[str | dict]) -> list[dict]:
     """The cited queries themselves — statement, executed form, timestamp,
     outcome, tables — in citation order, deduplicated, unknown ids skipped.
 
@@ -163,14 +163,25 @@ def evidence_snapshot(session: Session, qids: list[str]) -> list[dict]:
     proved it, not just their numbers. Results stay local — the statement and
     its stats are what a reviewer needs; rows can be large and sensitive."""
     out: list[dict] = []
-    for qid in dict.fromkeys(q for q in qids if q):
-        row = session.query_row(qid)
+    refs = dict.fromkeys(
+        (q.get("session_id") or session.id, q.get("qid"))
+        if isinstance(q, dict)
+        else (session.id, q)
+        for q in qids
+        if q
+    )
+    for sid, qid in refs:
+        try:
+            source = session if sid == session.id else Session(session.workspace, sid)
+            row = source.query_row(qid)
+        except (ValueError, OSError):
+            continue
         if row is None:
             continue
         executed = row.get("sql_executed")
         entry = {
             "qid": qid,
-            "session_id": session.id,
+            "session_id": sid,
             "ts": row.get("ts"),
             "status": row.get("status"),
             "sql": row.get("sql_raw") or "",
@@ -264,7 +275,8 @@ def publish_proposal(session: Session, pid: str) -> None:
         f"grayson records: proposal {pid} ({session.id})",
         evidence=evidence_snapshot(
             session,
-            verification.get("evidence")
+            verification.get("evidence_refs")
+            or verification.get("evidence")
             or [verification.get("before_qid"), verification.get("after_qid")],
         ),
     )
@@ -607,10 +619,14 @@ def get_record(workspace: Workspace, session_id: str, kind: str, record_id: str)
             cited = (item.get("payload") or {}).get("evidence") or []
         else:
             verification = item.get("verification") or {}
-            cited = verification.get("evidence") or [
-                verification.get("before_qid"),
-                verification.get("after_qid"),
-            ]
+            cited = (
+                verification.get("evidence_refs")
+                or verification.get("evidence")
+                or [
+                    verification.get("before_qid"),
+                    verification.get("after_qid"),
+                ]
+            )
         return {
             "session_id": session_id,
             "kind": kind,

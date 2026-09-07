@@ -12,6 +12,7 @@ from grayson.audit import reconcile, reconcile_check_result
 from grayson.cli import app
 from grayson.executor.snow import ExecutionResult
 from grayson.harness.permissions import (
+    _CURSOR_HOOK_COMMAND,
     COPILOT_AUTOAPPROVE_RULES,
     GUARD_DENY_RULES,
     apply_guard,
@@ -126,7 +127,12 @@ def test_cursor_manual_guidance_still_names_both_layers():
 def test_cursor_hooks_apply_status_remove_roundtrip(tmp_path):
     assert guard_status(tmp_path, harness="cursor")["applied"] is False
     result = apply_guard(tmp_path, harness="cursor")
-    assert result["added"] == ["beforeShellExecution", "beforeReadFile"]
+    assert result["added"] == [
+        "beforeShellExecution",
+        "beforeReadFile",
+        "preToolUse",
+        "beforeMCPExecution",
+    ]
     assert result["script_written"] is True
     hooks_file = tmp_path / ".cursor" / "hooks.json"
     script = tmp_path / ".cursor" / "hooks" / "grayson-guard.py"
@@ -134,15 +140,19 @@ def test_cursor_hooks_apply_status_remove_roundtrip(tmp_path):
     if os.name != "nt":  # Windows does not expose POSIX executable mode bits
         assert script.stat().st_mode & 0o111
     data = json.loads(hooks_file.read_text())
-    entry = {"command": "./.cursor/hooks/grayson-guard.py", "failClosed": True, "timeout": 10}
+    entry = {"command": _CURSOR_HOOK_COMMAND, "failClosed": True, "timeout": 10}
     assert entry in data["hooks"]["beforeShellExecution"]
     assert entry in data["hooks"]["beforeReadFile"]
+    assert entry in data["hooks"]["preToolUse"]
+    assert entry in data["hooks"]["beforeMCPExecution"]
+    if os.name == "nt":
+        assert (tmp_path / ".cursor/hooks/grayson-guard.cmd").is_file()
     status = guard_status(tmp_path, harness="cursor")
     assert status["applied"] is True and status["missing"] == []
     again = apply_guard(tmp_path, harness="cursor")
     assert again["added"] == [] and again["script_written"] is False  # idempotent
     removed = remove_guard(tmp_path, harness="cursor")
-    assert removed["removed"] == ["beforeShellExecution", "beforeReadFile"]
+    assert removed["removed"] == result["added"]
     assert removed["script_removed"] is True and not script.exists()
     assert guard_status(tmp_path, harness="cursor")["applied"] is False
 
@@ -247,7 +257,7 @@ def test_cursor_apply_upgrades_legacy_entry_in_place(tmp_path):
     )
     result = apply_guard(tmp_path, harness="cursor")
     assert result["upgraded"] == ["beforeShellExecution"]
-    assert result["added"] == ["beforeReadFile"]
+    assert result["added"] == ["beforeReadFile", "preToolUse", "beforeMCPExecution"]
     data = json.loads(hooks_file.read_text())
     entries = data["hooks"]["beforeShellExecution"]
     assert len(entries) == 1  # upgraded in place, not duplicated
@@ -255,6 +265,8 @@ def test_cursor_apply_upgrades_legacy_entry_in_place(tmp_path):
     assert remove_guard(tmp_path, harness="cursor")["removed"] == [
         "beforeShellExecution",
         "beforeReadFile",
+        "preToolUse",
+        "beforeMCPExecution",
     ]
     assert guard_status(tmp_path, harness="cursor")["applied"] is False
 
@@ -304,7 +316,12 @@ def test_cli_harness_init_cursor_with_guard(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0
     out = json.loads(result.output)
-    assert out["guard_permissions"]["added"] == ["beforeShellExecution", "beforeReadFile"]
+    assert out["guard_permissions"]["added"] == [
+        "beforeShellExecution",
+        "beforeReadFile",
+        "preToolUse",
+        "beforeMCPExecution",
+    ]
     assert "guard_guidance" not in out  # took the machine-written path
     assert (tmp_path / ".cursor" / "hooks.json").is_file()
     assert (tmp_path / ".cursor" / "hooks" / "grayson-guard.py").is_file()

@@ -96,6 +96,18 @@ and ask.
 An empty knowledge library, cache, or view registry is normal in a fresh workspace.
 Before approving a fix, use criteria_set to propose explicit success criteria from
 executed evidence. Users approve the SQL and expectations with the fix in console/CLI.
+Draft the criteria yourself; the person should review and edit them, not populate a blank
+form. IDs are generated if omitted. criteria_queries finds current-session baselines first
+and can search other sessions on the same connection. Include source_session with an
+external source_qid. Additional tables trigger a scope request; await the user's response.
+Saving criteria never grants scope or approves a fix.
+Local source files remain unchanged until approval. Use proposal_draft_file with
+the full replacement text to generate a reviewable diff without editing the source.
+After the user approves that proposal, call proposal_apply; it writes only the
+approved content and records application. Never edit first to generate a diff,
+even temporarily, and never use shell/editor tools to apply a fix around this gate.
+With the Cursor guard enabled, use these MCP tools while a Grayson session is open;
+shell calls and direct writes are blocked. Native source read/search tools remain usable.
 After proposal_applied, criteria_run computes pass/fail/unproven using fresh results.
 criteria_promote preserves a passed expectation as a proposed regression check.
 Findings may carry machine_claims (the format-1 criteria envelope); every explicit
@@ -791,7 +803,8 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="Draft a fix proposal (file_diff|ddl_snippet) linked to a finding. "
-        "The user approves; the harness agent applies file diffs."
+        "For local files use proposal_draft_file instead: it snapshots the source "
+        "without editing it and supports approval-gated application."
     )
     def proposal_add(
         session_id: str,
@@ -806,6 +819,52 @@ def build_server(workspace: Workspace) -> Any:
                 _session(session_id), kind, title, payload, finding, worker
             )
         except (ProposalError, FileNotFoundError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Draft a local file fix without changing the source. Supply target_file "
+        "relative to the workspace and the full new_content (UTF-8 text). Grayson captures "
+        "the original, generates the diff for UI review, and waits for human approval. "
+        "Include success_criteria (the criteria_set spec) to draft the fix and its outcomes "
+        "together for review. Then call proposal_apply; do not edit the source yourself."
+    )
+    def proposal_draft_file(
+        session_id: str,
+        target_file: str,
+        new_content: str,
+        title: str,
+        finding: str | None = None,
+        rationale: str = "",
+        worker: str | None = None,
+        success_criteria: dict | None = None,
+    ) -> dict:
+        from grayson.core import file_fixes
+
+        try:
+            return file_fixes.draft(
+                _session(session_id),
+                target_file,
+                new_content,
+                title,
+                finding,
+                rationale,
+                worker,
+                success_criteria,
+            )
+        except (ValueError, OSError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Apply exactly the local file content the user approved in the UI. "
+        "Requires a proposal_draft_file proposal, current approval, and unchanged source. "
+        "Writes the file and records application together; no editor or shell step is needed."
+    )
+    def proposal_apply(session_id: str, pid: str) -> dict:
+        from grayson.core import file_fixes
+
+        try:
+            return file_fixes.apply(_session(session_id), pid)
+        except (ValueError, OSError) as e:
             return _err(e)
 
     @mcp.tool(description="List fix proposals for the session.")

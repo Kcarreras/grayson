@@ -248,7 +248,7 @@
 <tr><th>Check</th><th>Status</th><th>Evidence {{ help("evidence") }}</th><th>Note</th></tr>
 {% for c in checkpoints %}
 <tr>
-  <td><span class="ink">{{ c.title }}</span><div class="muted mono">{{ c.key }}</div></td>
+  <td><span class="ink checkpoint-label" title="{{ c.description | trim or 'No description provided in this workflow.' }}">{{ c.title }}</span><div class="muted mono">{{ c.key }}</div></td>
   <td>{% if c.status == "complete" %}<span class="badge ok">complete</span>
       {% elif c.status == "waived" %}<span class="badge attn">waived</span>
       {% else %}<span class="badge todo">open</span>{% endif %}</td>
@@ -295,7 +295,7 @@
 <div class="card" style="margin-top: 10px;">
   <div class="overline mb-2">Suggested {{ help("suggested_checks") }}</div>
   <div class="row" style="gap: 6px; flex-wrap: wrap;">
-    {% for c in open_suggested %}<span class="badge plain">{{ c.title }}</span>{% endfor %}
+    {% for c in open_suggested %}<span class="badge plain checkpoint-label" title="{{ c.description | trim or 'No description provided in this workflow.' }}">{{ c.title }}</span>{% endfor %}
   </div>
 </div>
 {% endif %}
@@ -387,11 +387,12 @@
   {% endif %}
   {% if p.kind == "file_diff" %}
     <div class="muted small mono">target file: {{ p.payload.target_file }}</div>
+    {% if p.payload.file_change %}<p class="small">Grayson applies the exact approved content and checks that the source has not changed since this proposal was drafted.</p>{% endif %}
     {% if p.payload.diff %}
     <details class="inlinefold" style="margin-top: 6px;"><summary>Show diff</summary>
       <pre>{{ p.payload.diff }}</pre></details>
     {% endif %}
-    {% if p.payload.new_content %}
+    {% if p.payload.new_content or p.payload.file_change %}
     <details class="inlinefold" style="margin-top: 6px;">
       <summary>Show full replacement content (what gets applied)</summary>
       <pre>{{ p.payload.new_content }}</pre></details>
@@ -418,11 +419,17 @@
   {% if p.status == "proposed" %}
   <div class="row" style="margin-top: 12px; gap: 14px;">
     {% if not p.payload.success_criteria %}<form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}">
+      {% if p.payload.file_change %}<input type="hidden" name="digest" value="{{ file_fix_digests[p.pid] }}">{% endif %}
       <button class="btn confirm sm" type="submit">Approve proposal</button></form>
     {% endif %}
     <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/reject?t={{ token }}">
       <button class="btn danger sm" type="submit">Reject proposal</button></form>
   </div>
+  {% endif %}
+  {% if p.status == "approved" and p.payload.file_change and s.stage != "closed" %}
+  <form method="post" class="mt-2" action="/session/{{ s.id }}/proposal/{{ p.pid }}/apply?t={{ token }}">
+    <button class="btn primary sm" type="submit">Apply approved file fix</button>
+  </form>
   {% endif %}
 </div>
 {% endfor %}

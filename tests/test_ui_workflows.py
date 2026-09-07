@@ -8,7 +8,10 @@ import re
 
 import pytest
 from fastapi.testclient import TestClient
+from markupsafe import escape
 
+from grayson.core import engine
+from grayson.core.session import Session
 from grayson.identity import set_user_id
 from grayson.ui.server import build_app
 from grayson.workflows import get_workflow
@@ -312,6 +315,45 @@ def test_element_edit_reviews_then_saves(client, workspace):
     assert check.charts[0].kinds == ["histogram"]
     assert check.description == "How far it spreads."
     assert check.uses_inputs == ["anomaly_description"]
+
+
+@pytest.mark.parametrize(
+    ("which", "key"), [("required", "scope_blast_radius"), ("suggested", "onset_dating")]
+)
+def test_checkpoint_description_edit_updates_existing_session(client, workspace, which, key):
+    set_user_id("kcg")
+    create_workflow(workspace.workflows_dir, "mine", fork_of="bug-hunter", user_id="kcg")
+    tpl = get_workflow("mine", workspace.workflows_dir)
+    session = Session.create(
+        workspace,
+        workflow="mine",
+        targets=[],
+        guard=workspace.config.guard_profiles["moderate"].model_copy(),
+        guard_profile="moderate",
+    )
+    engine.seed_from_workflow(session, workspace.workflows_dir)
+    before = _get(client, f"/session/{session.id}").text
+    assert f'title="{escape(tpl.check(key).description.strip())}"' in before
+    description = 'Compare "before" & "after".\nExplain <script>alert(1)</script> as text.'
+    review = _element(
+        client,
+        "mine",
+        kind="check",
+        list=which,
+        action="upsert",
+        orig_key=key,
+        key=key,
+        title=tpl.check(key).title,
+        description=description,
+    )
+    assert review.status_code == 200
+    assert _confirm(client, "mine", review.text).status_code == 303
+    assert get_workflow("mine", workspace.workflows_dir).check(key).description == description
+    editor = _get(client, "/workflows/mine").text
+    assert f'<textarea name="description" rows="4">{escape(description)}</textarea>' in editor
+    page = _get(client, f"/session/{session.id}").text
+    assert f'title="{escape(description)}"' in page
+    assert "<script>alert(1)</script>" not in page
 
 
 def test_element_add_findings_field_with_choices(client, workspace):

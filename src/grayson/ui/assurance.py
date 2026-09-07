@@ -1,5 +1,6 @@
 """Console routes sharing the deterministic evidence engines."""
 
+import json
 from contextlib import suppress
 
 from fastapi import HTTPException, Request
@@ -9,25 +10,66 @@ from starlette.concurrency import run_in_threadpool
 def register(app, workspace, templates, check, session, redirect):
     from grayson.core import criteria
 
+    def criteria_context(s, pid, items=None, error=None):
+        spec = criteria.contract(s, pid)
+        draft = items or (spec["criteria"] if spec else [{"id": "criterion_1"}])
+        queries = criteria.query_choices(s)["queries"]
+        for item in draft:
+            sid = item.get("source_session") or s.id
+            qid = item.get("source_qid")
+            if not qid or any(q["session_id"] == sid and q["qid"] == qid for q in queries):
+                continue
+            with suppress(ValueError, OSError, HTTPException):
+                source = session(sid)
+                q = source.query_row(qid)
+                if q and q["status"] == "executed":
+                    tables = json.loads(q.get("tables_json") or "[]")
+                    queries.append(
+                        {
+                            "qid": qid,
+                            "session_id": sid,
+                            "session_title": source.summary()["title"] or sid,
+                            "current": sid == s.id,
+                            "label": q["label"] or q["sql_raw"][:100],
+                            "sql": q["sql_raw"],
+                            "tables": tables,
+                            "ts": q["ts"],
+                            "scope_required": sorted({t.upper() for t in tables} - s.scope_tables),
+                        }
+                    )
+        return {
+            "nav": "sessions",
+            "s": s.summary(),
+            "p": s.proposal(pid),
+            "contract": spec,
+            "draft": draft,
+            "queries": queries,
+            "query_sessions": criteria.query_sessions(s),
+            "error": error,
+        }
+
+    @app.get("/session/{sid}/criteria-queries")
+    def criteria_query_picker(
+        request: Request, sid: str, source_session: str = "", search: str = "", offset: int = 0
+    ):
+        check(request)
+        try:
+            return criteria.query_choices(session(sid), source_session, search, offset)
+        except (ValueError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+
     @app.get("/session/{sid}/criteria/{pid}")
     def criteria_page(request: Request, sid: str, pid: str):
         check(request)
         s = session(sid)
         try:
-            spec = criteria.contract(s, pid)
+            context = criteria_context(s, pid)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return templates.TemplateResponse(
             request,
             "criteria.html",
-            {
-                "nav": "sessions",
-                "s": s.summary(),
-                "p": s.proposal(pid),
-                "contract": spec,
-                "draft": spec["criteria"] if spec else [{}],
-                "queries": [q for q in s.query_log(100) if q["status"] == "executed"],
-            },
+            context,
         )
 
     @app.post("/session/{sid}/criteria/{pid}/{action}")
@@ -48,7 +90,9 @@ def register(app, workspace, templates, check, session, redirect):
                         rule.update(
                             column=value("column"), operator=value("operator"), value=value("value")
                         )
-                        if rule["operator"] == "between":
+                        if value("relative_percent"):
+                            rule.update(operator="eq", value="0")
+                        elif rule["operator"] == "between":
                             rule["upper"] = value("upper")
                     item = {
                         "id": value("criterion_id"),
@@ -56,12 +100,20 @@ def register(app, workspace, templates, check, session, redirect):
                         "source_qid": value("source_qid"),
                         "expectation": rule,
                     }
-                    if value("relative_percent"):
+                    if "::" in item["source_qid"]:
+                        item["source_session"], item["source_qid"] = item["source_qid"].split(
+                            "::", 1
+                        )
+                    if rule["kind"] == "scalar" and value("relative_percent"):
                         item["relative_percent"] = value("relative_percent")
                     items.append(item)
                 await run_in_threadpool(
                     criteria.set_criteria, s, pid, {"format": 1, "criteria": items}
                 )
+            elif action == "request-scope":
+                if s.stage == "closed" or s.proposal(pid)["status"] != "proposed":
+                    raise ValueError("scope requests require a pending fix in an open session")
+                await run_in_threadpool(criteria.request_scope, s, pid)
             elif action == "run":
                 await run_in_threadpool(criteria.run_verification, s, pid)
             elif action == "promote":
@@ -79,15 +131,7 @@ def register(app, workspace, templates, check, session, redirect):
             return templates.TemplateResponse(
                 request,
                 "criteria.html",
-                {
-                    "nav": "sessions",
-                    "s": s.summary(),
-                    "p": s.proposal(pid),
-                    "contract": criteria.contract(s, pid),
-                    "draft": items or [{}],
-                    "error": str(e),
-                    "queries": [q for q in s.query_log(100) if q["status"] == "executed"],
-                },
+                criteria_context(s, pid, items, str(e)),
                 status_code=400,
             )
         return redirect(f"/session/{sid}/criteria/{pid}")

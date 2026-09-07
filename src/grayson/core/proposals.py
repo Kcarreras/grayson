@@ -2,8 +2,8 @@
 
 A proposal is a concrete remediation an agent drafts for a finding — either a
 file diff against a work-repo definition file, or a standalone DDL snippet the
-user runs. grayson stores and gates proposals; it never writes outside its own
-workspace, so an approved file diff is applied by the harness agent, not grayson.
+user runs. Managed file fixes are drafted without touching source and applied
+by grayson inside its workspace, only after the user approves the exact content.
 
 Verification records deterministic before/after evidence that a fix worked, so
 "the fix resolved the issue" is a claim backed by re-run queries, not assertion.
@@ -84,12 +84,16 @@ def record_proposal(
         from grayson.core.criteria import prepare
 
         try:
-            body["success_criteria"] = prepare(session, payload["success_criteria"])
+            body["success_criteria"] = prepare(session, payload["success_criteria"], for_fix=True)
         except (ValueError, OSError) as e:
             raise ProposalError(str(e)) from e
     if finding_fid is not None and session.finding(finding_fid) is None:
         raise ProposalError(f"proposal references unknown finding '{finding_fid}'")
     pid = session.add_proposal(kind, title, body, finding_fid, worker)
+    if "success_criteria" in body:
+        from grayson.core.criteria import request_scope
+
+        request_scope(session, pid)
     return session.proposal(pid)
 
 
@@ -99,11 +103,20 @@ def decide(
     try:
         from grayson.core import criteria
 
+        proposal = session.proposal(pid)
+        if approve and proposal and proposal["payload"].get("file_change"):
+            from grayson.core import file_fixes
+
+            if session.stage == "closed":
+                raise ProposalError("cannot approve a file fix on a closed session")
+            file_fixes.check_source(session, proposal)
+            if not criteria.contract(session, pid):
+                return file_fixes.approve(session, pid, digest, actor)
         if approve and criteria.contract(session, pid):
             criteria.approve(session, pid, digest, actor)
             return session.proposal(pid)
         session.decide_proposal(pid, "approved" if approve else "rejected", actor)
-    except (KeyError, ValueError) as e:
+    except (KeyError, ValueError, OSError) as e:
         raise ProposalError(str(e.args[0] if e.args else e)) from e
     return session.proposal(pid)
 
@@ -112,6 +125,10 @@ def mark_applied(session: Session, pid: str, actor: str = "agent") -> dict:
     p = session.proposal(pid)
     if p is None:
         raise ProposalError(f"no proposal '{pid}'")
+    if p["payload"].get("file_change"):
+        raise ProposalError(
+            "use proposal apply (MCP: proposal_apply); Grayson writes and records this fix"
+        )
     if p["status"] != "approved":
         raise ProposalError(
             f"proposal '{pid}' must be approved before it is applied (status={p['status']})"
@@ -188,6 +205,10 @@ def verify(
     p = session.proposal(pid)
     if p is None:
         raise ProposalError(f"no proposal '{pid}'")
+    if p["payload"].get("file_change") and not session.get_meta(f"file_applied:{pid}"):
+        raise ProposalError(
+            "apply the approved file fix through proposal apply before verification"
+        )
     if p["payload"].get("success_criteria") is not None:
         raise ProposalError(
             "this fix has success criteria; use criteria run for a computed verdict"
@@ -250,6 +271,7 @@ def _record_verified_fix(
     after_qid: str,
     actor: str,
     evidence: list[str] | None = None,
+    evidence_refs: list[dict] | None = None,
 ) -> list[dict]:
     """A verified fix becomes a fact on the tables it touched — dated, evidence-
     linked, data_inferred. The published record already holds the full story
@@ -287,7 +309,9 @@ def _record_verified_fix(
                 fact_id=fact_id,
                 status="data_inferred",
                 created_by=actor,
-                evidence=[f"session {session.id} {q}" for q in evidence],
+                evidence=[f"session {ref['session_id']} {ref['qid']}" for ref in evidence_refs]
+                if evidence_refs
+                else [f"session {session.id} {q}" for q in evidence],
                 # anchored to the published record: if that record is removed or
                 # superseded the fact goes stale, and `knowledge verify` can re-run
                 # the record's after-query against the warehouse

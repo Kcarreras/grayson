@@ -108,6 +108,54 @@ def split_sections(text: str) -> list[dict]:
 #: Plain-language explanations for the inline help widgets. Keep each under
 #: ~35 words; the widget is orientation, not documentation.
 GLOSSARY: dict[str, str] = {
+    "criterion_name": (
+        "Describe the outcome this fix must achieve, or something it must preserve. "
+        "Your agent can draft these criteria for you to review and edit."
+    ),
+    "criterion_id": (
+        "A unique label for verification and regression checks. Generated for you; editable "
+        "before approval. Start with a lowercase letter, then use lowercase letters, numbers, "
+        "underscores or hyphens (64 characters maximum)."
+    ),
+    "criterion_source_session": (
+        "Start with the current session, or browse other sessions on the same connection. "
+        "Choose All sessions to search across them, current first. Query IDs are unique "
+        "only within their own session."
+    ),
+    "criterion_query": (
+        "Select an executed SELECT query as the historical baseline. Review its SQL, date "
+        "and tables. Additional tables require scope approval before the fix can be approved. "
+        "Selection runs no queries."
+    ),
+    "criterion_rule": (
+        "One numeric value checks a single complete result row. No violating rows passes "
+        "when the query returns zero rows. Use a query identifying missing or invalid records "
+        "to check their absence."
+    ),
+    "criterion_column": (
+        "The result column containing the number to test, usually a SQL alias such as "
+        "DUPLICATE_IDS. Numeric rules require exactly one complete result row. Not used "
+        "for the no-rows rule."
+    ),
+    "criterion_operator": (
+        "How the fresh result will be compared with your expected value. Between includes "
+        "both bounds. Relative tolerance replaces this comparison with fixed bounds around "
+        "the selected baseline."
+    ),
+    "criterion_value": (
+        "The expected numeric value, or the inclusive lower bound for Between. For example, "
+        "zero duplicate IDs. This describes the desired result after the fix, which can "
+        "differ from the current baseline."
+    ),
+    "criterion_upper": (
+        "The inclusive upper bound for Between. The fresh result must fall at or above "
+        "the lower bound and at or below this value."
+    ),
+    "criterion_tolerance": (
+        "Optional percentage around the historical baseline: 0.1 means ±0.1%. Replaces the "
+        "numeric operator and bounds with a fixed range calculated before approval. "
+        "Leave blank to use your explicit expected value."
+    ),
     "guard": (
         "Every statement an agent submits is parsed and checked before it runs. "
         "Only read statements (SELECT, SHOW, DESCRIBE, EXPLAIN) survive — "

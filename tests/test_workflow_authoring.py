@@ -127,7 +127,8 @@ def test_preview_renders_the_confirmation_form():
     from grayson.workflows.authoring import render_preview
     from grayson.workflows.registry import get_workflow
 
-    text = render_preview(get_workflow("bug-hunter", None))
+    tpl = get_workflow("bug-hunter", None)
+    text = render_preview(tpl)
     # everything a human needs to sign off: inputs, gates with order and the
     # answers they work from, breadth, and the session shape
     assert "bug-hunter" in text
@@ -135,6 +136,8 @@ def test_preview_renders_the_confirmation_form():
     assert "Required checks" in text and "after: replicate_anomaly" in text
     assert "uses: expectation" in text
     assert "Suggested checks" in text and "onset_dating" in text
+    for check in tpl.required_checks + tpl.suggested_checks:
+        assert " ".join(check.description.split()) in text
     assert "Session shape" in text and "bug_hunter_v1" in text
 
 

@@ -69,8 +69,10 @@
     <label>key <input type="text" name="key" value="{{ c.key if c else '' }}" pattern="[a-z][a-z0-9_]*" required placeholder="null_completeness"></label>
     <label>title <input type="text" name="title" value="{{ c.title if c else '' }}" required placeholder="Check nulls and completeness"></label>
   </div>
-  <label>description — the intent, as the agent should read it
-    <textarea name="description" rows="4">{{ c.description.strip() if c else '' }}</textarea></label>
+  <label>description — what to check and why
+    <textarea name="description" rows="4">{{ c.description.strip() if c else '' }}</textarea>
+    <span class="hint">Shown when you hover over this checkpoint in a session. Describe the intent
+      and what the evidence should demonstrate, for required and suggested checks alike.</span></label>
   <div class="two">
     <label>after (depends_on) <input type="text" name="depends_on" value="{{ c.depends_on | join(', ') if c else '' }}" placeholder="replicate_anomaly">
       <span class="hint">checkpoint keys, comma-separated{% if check_keys %}: {{ check_keys | join(", ") }}{% endif %}</span></label>

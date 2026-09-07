@@ -20,6 +20,8 @@ control that survives a full bypass (docs/SECURITY.md).
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 #: the rules grayson manages (exactly these strings are added and removed, so
@@ -66,14 +68,18 @@ HARNESS_GUIDANCE = {
         "hooks documentation for the script contract to define your own. A hook "
         "beats a denylist here because it can default-deny and normalize the "
         "command rather than matching one literal string.\n"
-        "Note the denylist and hooks govern the IDE agent; `cursor-agent` (the "
-        "Cursor CLI) has its own permission config, set separately — for "
-        "CLI-driven use, lean on the MCP server as the interface and configure "
-        "the CLI's own allow/deny rules to block `snow`.\n"
+        "For `cursor-agent` CLI use, verify hook support and permissions in the "
+        "deployed CLI version separately; prefer the MCP server as the interface "
+        "and configure its allow/deny rules to block `snow`.\n"
         "Point the agent at grayson via the Cursor rule (`grayson harness init "
         "cursor` — the CLI reads project rules too) and/or the MCP server, and "
         "pair with a read-only Snowflake role — the control that holds "
         "regardless of harness settings."
+        "\nLocal fix protection: while any Grayson session in this repo is open, "
+        "preToolUse/beforeMCPExecution also block direct file edits, shell calls, "
+        "and other MCP servers. Use native reads and Grayson's MCP tools. Draft "
+        "with proposal_draft_file, obtain approval in the console, then use "
+        "proposal_apply. Closing all sessions releases this editing restriction."
     ),
     "codex": (
         "Codex's OS-level sandbox is the enforcement layer:\n"
@@ -118,6 +124,8 @@ def guard_rules_display(harness: str) -> list[str]:
             f"{ev} hook → {_CURSOR_SCRIPT_REL} (hard-deny, fail-closed: `snow`/"
             "`snowsql`, connector imports, Snowflake credential and private-key "
             "reads, and `.grayson/` access)"
+            "; open sessions: native reads + Grayson MCP only; file fixes use "
+            "proposal_draft_file → UI approval → proposal_apply"
             for ev in _CURSOR_HOOK_EVENTS
         ]
     return list(GUARD_DENY_RULES)
@@ -310,12 +318,13 @@ def _copilot_remove_guard(root: Path) -> dict:
 # actions — stronger than a permission prompt. grayson writes the wiring plus
 # an executable hook script; declining the write leaves the manual path
 # (HARNESS_GUIDANCE["cursor"]: the app-settings command denylist, or a
-# hand-rolled hook). Hooks need a recent Cursor IDE and do not govern the
-# `cursor-agent` CLI.
+# hand-rolled hook). Hooks need a recent Cursor; validate CLI coverage separately.
 
-_CURSOR_HOOK_EVENTS = ("beforeShellExecution", "beforeReadFile")
+_CURSOR_HOOK_EVENTS = ("beforeShellExecution", "beforeReadFile", "preToolUse", "beforeMCPExecution")
 _CURSOR_SCRIPT_REL = ".cursor/hooks/grayson-guard.py"
-_CURSOR_HOOK_COMMAND = f"./{_CURSOR_SCRIPT_REL}"
+_CURSOR_LAUNCHER_REL = ".cursor/hooks/grayson-guard.cmd"
+_CURSOR_HOOK_COMMAND = f"./{_CURSOR_LAUNCHER_REL if os.name == 'nt' else _CURSOR_SCRIPT_REL}"
+_CURSOR_LAUNCHER = f'@echo off\n"{sys.executable.replace("%", "%%")}" "%~dp0grayson-guard.py"\n'
 # failClosed: Cursor's default is fail-OPEN — a crashed or slow guard waves
 # the action through, the wrong way for a guard to fail. With failClosed a
 # timeout denies, so the generous timeout costs a confusing refusal at worst,
@@ -323,11 +332,12 @@ _CURSOR_HOOK_COMMAND = f"./{_CURSOR_SCRIPT_REL}"
 _CURSOR_HOOK_ENTRY = {"command": _CURSOR_HOOK_COMMAND, "failClosed": True, "timeout": 10}
 
 _CURSOR_NOTE = (
-    "hard-deny, but version-dependent (recent Cursor IDE; hooks need an "
-    "executable script, so POSIX) and IDE-only — the cursor-agent CLI has its "
-    "own permission config; the hook fails CLOSED (a malformed event or a "
-    "crashed guard denies); pair with a read-only Snowflake role for the "
-    "guarantee that survives a bypass"
+    "hard-deny, but version-dependent (recent Cursor with preToolUse support); "
+    "validate CLI hook support separately. The hook fails CLOSED (a malformed event or a "
+    "crashed guard denies). During open sessions, shell calls, direct writes and "
+    "non-Grayson MCP tools are blocked; use native reads and Grayson MCP. "
+    "Hook controls mitigate accidental bypass; OS-level read-only source access "
+    "and isolated approval state are needed for containment."
 )
 
 
@@ -335,7 +345,10 @@ def _cursor_entry_is_ours(entry: object) -> bool:
     """Ours by command, whatever the entry's other keys: older grayson wrote
     `{command}` alone, this one adds failClosed/timeout, and apply upgrades
     the old shape in place instead of stacking a second registration."""
-    return isinstance(entry, dict) and entry.get("command") == _CURSOR_HOOK_COMMAND
+    return isinstance(entry, dict) and entry.get("command") in {
+        f"./{_CURSOR_SCRIPT_REL}",
+        f"./{_CURSOR_LAUNCHER_REL}",
+    }
 
 
 _CURSOR_HOOK_SCRIPT = r'''#!/usr/bin/env python3
@@ -359,7 +372,42 @@ visibility, not containment (docs/SECURITY.md).
 
 import json
 import re
+import sqlite3
 import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+READ_TOOLS = {"Read", "Grep", "Glob", "LS", "SemanticSearch"}
+COORDINATION_TOOLS = {"Task", "TodoWrite", "AskQuestion", "AskUserQuestion"}
+FILE_FIX_WHY = (
+    "a Grayson investigation is open: source files must remain unchanged until UI approval. "
+    "Use native Read/Grep tools and Grayson MCP. Draft replacement text with "
+    "proposal_draft_file, wait for the user's approval, then call proposal_apply. "
+    "Direct writes, shell execution, and other MCP servers are blocked during the investigation"
+)
+
+
+def investigation_open():
+    # Read-only SQLite connections avoid migrations or creating missing state.
+    # Inspect all sessions, not only sessions that already have a proposal: the
+    # premature edit often happens BEFORE proposal_add is called.
+    for state_dir in (".grayson", ".seekql"):
+        sessions = ROOT / state_dir / "sessions"
+        if not sessions.exists():
+            continue
+        for session in sessions.iterdir():
+            if not session.is_dir():
+                continue
+            con = sqlite3.connect((session / "state.db").resolve().as_uri() + "?mode=ro", uri=True)
+            try:
+                row = con.execute("SELECT value FROM meta WHERE key='stage'").fetchone()
+                if row is None:
+                    raise ValueError("session has no stage")
+                if row[0] != "closed":
+                    return True
+            finally:
+                con.close()
+    return False
 
 #: shell tokens that mean "reaching the warehouse directly", checked against
 #: the normalized command
@@ -461,12 +509,46 @@ def main() -> None:
         respond("could not read the hook payload (denied rather than waved through)")
         return
     why = None
-    command = event.get("command")
+    inputs = event.get("tool_input", {})
+    if isinstance(inputs, str):
+        try:
+            inputs = json.loads(inputs)
+        except ValueError:
+            respond("could not read tool_input")
+            return
+    if not isinstance(inputs, dict):
+        respond("tool_input must be an object")
+        return
+    hook = event.get("hook_event_name", "")
+    tool = event.get("tool_name", "")
+    # On beforeMCPExecution, command is the SERVER'S launch command, not a
+    # requested shell command. The configured server identity is checked below.
+    command = None if hook == "beforeMCPExecution" else inputs.get("command", event.get("command"))
     if command:
         why = check_command(str(command))
-    for key in ("file_path", "path"):
-        if why is None and event.get(key):
-            why = check_path(str(event[key]))
+    for source in (event, inputs):
+        for key in ("file_path", "path", "target_file"):
+            if why is None and source.get(key):
+                why = check_path(str(source[key]))
+    if why is None:
+        try:
+            active = investigation_open()
+        except Exception:
+            respond("cannot determine Grayson session state; ask the user to repair it")
+            return
+        if active:
+            if hook == "beforeMCPExecution":
+                if event.get("mcp_server_name") != "grayson":
+                    why = FILE_FIX_WHY
+            elif command or hook == "beforeShellExecution" or tool == "Shell":
+                why = FILE_FIX_WHY
+            elif hook == "preToolUse":
+                # Every MCP call is separately checked by beforeMCPExecution.
+                is_mcp = tool == "MCP" or tool.startswith(("mcp_", "mcp__"))
+                if tool not in READ_TOOLS | COORDINATION_TOOLS and not is_mcp:
+                    why = FILE_FIX_WHY
+            elif hook not in {"beforeReadFile", "beforeTabFileRead"}:
+                why = "unknown hook event during an open Grayson investigation"
     respond(why)
 
 
@@ -497,14 +579,22 @@ def _cursor_guard_status(root: Path) -> dict:
         if isinstance(hooks.get(ev), list) and any(_cursor_entry_is_ours(e) for e in hooks[ev])
     ]
     missing = [ev for ev in _CURSOR_HOOK_EVENTS if ev not in present]
-    script_present = _cursor_script_path(root).is_file()
+    script = _cursor_script_path(root)
+    script_present = script.is_file()
+    script_current = script_present and script.read_text(encoding="utf-8") == _CURSOR_HOOK_SCRIPT
+    launcher = root / _CURSOR_LAUNCHER_REL
+    launcher_current = os.name != "nt" or (
+        launcher.is_file() and launcher.read_text(encoding="utf-8") == _CURSOR_LAUNCHER
+    )
+    entries_current = all(any(e == _CURSOR_HOOK_ENTRY for e in hooks.get(ev, [])) for ev in present)
     return {
         "harness": "cursor",
         "supported": True,
         "file": str(path),
         "script": str(_cursor_script_path(root)),
         "script_present": script_present,
-        "applied": not missing and script_present,
+        "script_current": script_current,
+        "applied": not missing and script_current and launcher_current and entries_current,
         "present": present,
         "missing": missing,
     }
@@ -538,6 +628,8 @@ def _cursor_apply_guard(root: Path) -> dict:
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(_CURSOR_HOOK_SCRIPT, encoding="utf-8")
     script.chmod(0o755)
+    if os.name == "nt":
+        (root / _CURSOR_LAUNCHER_REL).write_text(_CURSOR_LAUNCHER, encoding="utf-8")
     _write_json(path, data)
     return {
         "harness": "cursor",
@@ -578,6 +670,9 @@ def _cursor_remove_guard(root: Path) -> dict:
     if script.is_file() and script.read_text(encoding="utf-8") == _CURSOR_HOOK_SCRIPT:
         script.unlink()
         script_removed = True
+    launcher = root / _CURSOR_LAUNCHER_REL
+    if launcher.is_file() and launcher.read_text(encoding="utf-8") == _CURSOR_LAUNCHER:
+        launcher.unlink()
     return {
         "harness": "cursor",
         "supported": True,

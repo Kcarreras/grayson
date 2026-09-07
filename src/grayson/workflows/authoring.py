@@ -580,6 +580,8 @@ def render_preview(tpl: WorkflowTemplate, schemas_dir: Path | None = None) -> st
     for c in tpl.suggested_checks:
         charts = f"  [chart: {'; '.join(r.label() for r in c.charts)}]" if c.charts else ""
         lines.append(f"  - {c.key} — {c.title}{charts}")
+        if c.description.strip():
+            lines.append(f"       {' '.join(c.description.split())}")
     if not tpl.suggested_checks:
         lines.append("  (none)")
     extra = effective_extra(tpl.findings_schema, tpl.findings_fields, schemas_dir)

@@ -133,7 +133,10 @@ def test_workflow_author_skill_written_per_harness(tmp_path):
     """One canonical SKILL.md body lands at each harness's native skills
     location (the shared open format); Codex, with no skills mechanism, gets a
     second marked AGENTS.md section that coexists with the protocol section."""
+    import yaml
+
     from grayson.harness import generate_harness
+    from grayson.harness.generate import WORKFLOW_AUTHOR_DESCRIPTION
 
     skill_dirs = {
         "claude-code": ".claude/skills/grayson-workflow-author/SKILL.md",
@@ -147,6 +150,11 @@ def test_workflow_author_skill_written_per_harness(tmp_path):
         assert rel in written
         text = (root / rel).read_text(encoding="utf-8")
         assert text.startswith("---\nname: grayson-workflow-author\n")
+        metadata = yaml.safe_load(text.split("---", 2)[1])
+        assert metadata == {
+            "name": "grayson-workflow-author",
+            "description": WORKFLOW_AUTHOR_DESCRIPTION,
+        }
         assert "workflow preview" in text and "MEANINGLESS without" in text
         # the interview covers the workflow's own findings fields and deletion
         assert "findings_fields" in text and "choices" in text

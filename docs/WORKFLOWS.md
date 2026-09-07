@@ -19,6 +19,13 @@ Checkpoints come in two kinds, with an escape hatch for the third case:
   front of it. This is how a workflow names thirty fundamentals without
   demanding all thirty on a five-column lookup table.
 
+Both kinds carry a `description`: what to check, why it matters, and what the
+evidence should demonstrate. Hover over a checkpoint name in a session to
+read it, and edit it in the workflow editor. The workflow-author skill
+requires a non-empty description for every required and suggested check,
+including checks inherited from a fork; older templates without one still
+load and receive a lint warning.
+
 ## Required charts
 
 Whether an agent charts is otherwise its own judgment, prompted by the
