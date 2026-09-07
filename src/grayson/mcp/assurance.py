@@ -11,13 +11,31 @@ def register(mcp, session, workspace, err):
             return err(e)
 
     @mcp.tool(
-        description="Attach success criteria before fix approval. spec is {format:1, "
-        "criteria:[{id,name,source_qid,expectation:{kind:scalar,column,operator,value}, "
+        description="Draft success criteria for the person to review in the fix UI; "
+        "populate them yourself rather than asking the person to fill an empty form. "
+        "spec is {format:1, criteria:[{id?,name,source_qid,source_session?,"
+        "expectation:{kind:scalar,column,operator,value}, "
         "relative_percent?:0.1}]}. no_rows expectations are supported. Approval binds "
-        "the fix, SQL and resolved bounds; only the person may approve in CLI/console."
+        "the fix, SQL and resolved bounds. IDs are generated when omitted. Use criteria_queries "
+        "to find baselines, current session first. Other sessions must use the same connection. "
+        "Out-of-scope tables create a scope_request; wait for the person to approve it in the "
+        "console before fix approval. This tool never expands scope, approves or applies a fix."
     )
     def criteria_set(session_id: str, pid: str, spec: dict) -> dict:
         return call(criteria.set_criteria, session(session_id), pid, spec)
+
+    @mcp.tool(
+        description="Find executed baseline queries for success criteria. Returns sessions "
+        "and a paginated query list. Defaults to the current session; source_session='all' "
+        "searches all compatible sessions, current first. Search matches SQL, label, ID or "
+        "table. Select by source_session and source_qid in criteria_set. Reads history only."
+    )
+    def criteria_queries(
+        session_id: str, source_session: str = "", search: str = "", offset: int = 0
+    ) -> dict:
+        s = session(session_id)
+        result = call(criteria.query_choices, s, source_session, search, offset)
+        return {**result, "sessions": criteria.query_sessions(s)}
 
     @mcp.tool(description="Read the fix's exact SQL, baseline, success criteria and approval.")
     def criteria_show(session_id: str, pid: str) -> dict:

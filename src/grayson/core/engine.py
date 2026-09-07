@@ -34,7 +34,7 @@ def seed_from_workflow(session: Session, overrides_dir: Path | None = None) -> l
 
 
 def checkpoints_view(session: Session, overrides_dir: Path | None = None) -> list[dict]:
-    """The session's checkpoints, each carrying the workflow's chart
+    """The session's checkpoints, each carrying the workflow's description and chart
     requirement for it (`requires_charts`, one label per required chart) so
     an agent reading the list knows a gate wants a picture before it tries
     to close it with a sentence."""
@@ -42,6 +42,7 @@ def checkpoints_view(session: Session, overrides_dir: Path | None = None) -> lis
     out = []
     for cp in session.checkpoints():
         check = tpl.check(cp["key"])
+        cp["description"] = check.description if check else ""
         cp["requires_charts"] = [r.label() for r in check.charts] if check else []
         out.append(cp)
     return out
@@ -352,7 +353,8 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
     }
     done = {c["key"] for c in session.checkpoints() if c["status"] == "complete"}
     out["suggested_checks"] = [
-        {"key": c.key, "title": c.title, "done": c.key in done} for c in tpl.suggested_checks
+        {"key": c.key, "title": c.title, "description": c.description, "done": c.key in done}
+        for c in tpl.suggested_checks
     ]
     out["clean_close_available"] = clean_close_blockers(out) == []
     out["next_action"] = _next_action(out)

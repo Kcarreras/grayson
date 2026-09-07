@@ -6,10 +6,11 @@
    session in its tooltip; local sessions link to the query page, and the cited
    statements themselves are one fold away either way (published beside the
    record, so a teammate sees the queries that proved it, not just numbers) #}
-{% macro evq(qid) -%}
-{% if from_library %}<span class="chip" title="{{ session_id }} · {{ qid }}">{{ qid }}</span>
-{% else %}<a class="chip" href="/session/{{ session_id }}/query/{{ qid }}?t={{ token }}"
-  title="{{ session_id }} · {{ qid }}">{{ qid }}</a>{% endif %}
+{% macro evq(qid, source_session=none) -%}
+{% set sid = source_session or session_id %}
+{% if from_library %}<span class="chip" title="{{ sid }} · {{ qid }}">{{ qid }}</span>
+{% else %}<a class="chip" href="/session/{{ sid }}/query/{{ qid }}?t={{ token }}"
+  title="{{ sid }} · {{ qid }}">{{ qid }}</a>{% endif %}
 {%- endmacro %}
 {% macro evidence_block(ids) %}
 {% set shown = evidence_queries | selectattr("qid", "in", ids) | list %}
@@ -189,13 +190,13 @@
     {% if record.verification.mode != 'criteria' %}<span class="muted small">rows {{ record.verification.comparison.before.row_count }}
       → {{ record.verification.comparison.after.row_count }}</span>
     {% endif %}
-    {{ evq(record.verification.before_qid) }}
+    {{ evq(record.verification.before_qid, record.verification.before_session) }}
     <span class="faint">→</span>
     {{ evq(record.verification.after_qid) }}
   </div>
   {% if record.verification.mode == 'criteria' %}
   <div class="scroll"><table><thead><tr><th>Criterion</th><th>Expectation</th><th>Observed</th><th>Result</th><th>Evidence</th></tr></thead><tbody>{% for r in record.verification.results %}<tr><td>{{ r.name }}</td><td>{{ r.expectation_text }}</td><td>{{ r.observed if r.observed is not none else 'Unavailable' }}</td><td><span class="badge {{ 'ok' if r.status == 'pass' else 'bad' if r.status == 'fail' else 'attn' }}">{{ r.status }}</span></td><td>{{ evq(r.qid) }}</td></tr>{% endfor %}</tbody></table></div>
-  {{ evidence_block(record.verification.evidence) }}
+  {{ evidence_block(evidence_queries | map(attribute="qid") | list) }}
   {% else %}{{ evidence_block([record.verification.before_qid, record.verification.after_qid]) }}{% endif %}
   {% if record.verification.note %}<div class="ink2 small" style="margin-top: 6px;">{{ record.verification.note }}</div>{% endif %}
   {% endif %}

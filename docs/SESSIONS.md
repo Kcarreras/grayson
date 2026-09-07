@@ -4,6 +4,26 @@ Harness setup, the session loop, profiling, charts, reports, and the guard
 settings that bound it all. For what the rails guarantee and their limits:
 [SPEC.md](SPEC.md), [SECURITY.md](SECURITY.md).
 
+## Local file fixes
+
+Keep source unchanged until the user approves the proposal. Use MCP
+`proposal_draft_file` with the target's workspace-relative path and full
+replacement text; Grayson captures the source and generates the review diff
+without editing it. The CLI equivalent is:
+
+```bash
+grayson proposal draft-file <sid> --target models/orders.sql --content-file <scratch-file> --title "Fix duplicate orders"
+grayson proposal apply <sid> <pid>   # only after UI approval
+```
+
+The session screen offers **Apply approved file fix** after approval. That
+action, or MCP `proposal_apply`, checks that the source still matches the
+reviewed proposal, writes the approved content, and records application.
+Direct editor/shell edits and the older `proposal applied` status command
+are not part of this managed flow. With the Cursor guard installed, use
+Grayson MCP during open investigations; shell execution and native writes
+are blocked. See [Cursor file protection](SECURITY.md#local-file-fixes-in-cursor).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/session_dark.png">
   <img src="img/session_light.png" alt="A bug-hunter session in the grayson console: analysis charts built by the agent, an open intervention awaiting a human answer, checkpoint progress with evidence">
@@ -12,6 +32,53 @@ settings that bound it all. For what the rails guarantee and their limits:
 *A bug-hunter session, live: the agent's charts (each traceable to a query
 id), an open intervention, evidence-gated checkpoints. The page refreshes
 itself while agents work.*
+
+## Defined success criteria
+
+Agents can draft success criteria for review instead of leaving the user to fill
+an empty form. MCP `criteria_set` attaches them to a pending fix; managed file
+proposals also accept `success_criteria` in `proposal_draft_file`. Each criterion
+names an outcome, an executed baseline query, and a numeric or no-rows rule:
+
+```json
+{
+  "format": 1,
+  "criteria": [{
+    "name": "Duplicate IDs reach zero",
+    "source_qid": "q_0007",
+    "expectation": {"kind": "scalar", "column": "DUPLICATE_IDS", "operator": "eq", "value": 0}
+  }]
+}
+```
+
+IDs are generated when omitted. The console prepopulates an editable ID and
+explains the fields through hover and keyboard-focus info widgets. Open
+**Review success criteria** on the session's fix to inspect and edit the draft,
+including the exact SQL, historical observation, and expected result. Approval
+binds the fix and criteria together; saving a draft never approves or applies it.
+
+The query picker starts with the current session. Browse another session by
+name or choose **All sessions** to search across them, current session first.
+Search matches query names, IDs, SQL, and tables; **Load more queries** pages
+through longer histories. MCP `criteria_queries` provides the same lookup.
+To use another session's baseline, include its `source_session` beside
+`source_qid`. Both sessions must use the same connection. Grayson preserves the
+source session and timestamp in review and verification evidence; choosing a
+historical query does not run SQL or copy its results into the current session.
+
+Selecting a query that reads additional tables flags **Scope approval needed**.
+Saving the criteria opens a scope request for those tables. Only the user can
+grant scope, using the existing intervention review. Declining or granting only
+some tables leaves fix approval blocked until every required table is in scope.
+After the response, the console returns to the criteria review. Granting scope
+does not approve the fix; the user still reviews and approves the fix and its
+criteria before application. Finding assertions retain their existing requirement
+for current-session evidence touching the investigation's target tables.
+
+After the approved fix is applied, `criteria_run` reruns the stored SQL through
+the current session's guard and computes the verdict. A tolerance such as
+`relative_percent: 0.1` freezes bounds within ±0.1% of the historical baseline
+before approval; a zero tolerance requires exact equality.
 
 ## Teaching your harness the protocol
 

@@ -16,6 +16,7 @@
   </div>
 </div>
 
+{% if item.kind == 'scope_request' and item.request.criteria_pid %}<p><a href="/session/{{ sid }}/criteria/{{ item.request.criteria_pid }}?t={{ token }}">Review the fix, criteria and baseline SQL</a></p>{% endif %}
 {% if item.status != "open" %}
 <div class="card">
   <div class="overline mb-2">Response</div>

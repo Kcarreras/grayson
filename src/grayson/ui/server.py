@@ -1890,8 +1890,10 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
     def _session_context(s: Session, error: str | None = None) -> dict:
         from grayson.checks.regression import RegressionStore
+        from grayson.core.file_fixes import review_digest
 
         queries = s.query_log(100)
+        proposals = s.proposals()
         return {
             "nav": "sessions",
             "guard_profiles": sorted(workspace.config.guard_profiles),
@@ -1901,7 +1903,10 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             "checkpoints": engine.checkpoints_view(s, workspace.workflows_dir),
             "findings": s.findings(),
             "interventions": s.interventions(),
-            "proposals": s.proposals(),
+            "proposals": proposals,
+            "file_fix_digests": {
+                p["pid"]: review_digest(p) for p in proposals if p["payload"].get("file_change")
+            },
             "investigation_plan": json.loads(s.get_meta("investigation_plan_v1") or "null"),
             "queries": queries,
             "qsql": {q["qid"]: q.get("sql_raw") or "" for q in queries},
@@ -2115,6 +2120,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 },
                 status_code=400,
             )
+        criteria_pid = item["request"].get("criteria_pid")
+        if item["kind"] == "scope_request" and criteria_pid and s.proposal(criteria_pid):
+            return _redirect(f"/session/{sid}/criteria/{criteria_pid}")
         return _redirect(f"/session/{sid}")
 
     @app.post("/session/{sid}/finding/{fid}/accept")
@@ -2197,14 +2205,19 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     ) -> Any:
         _check(request)
         s = _session(sid)
-        if decision not in {"approve", "reject"}:
-            raise HTTPException(status_code=400, detail="decision must be approve or reject")
+        if decision not in {"approve", "reject", "apply"}:
+            raise HTTPException(status_code=400, detail="decision must be approve, reject or apply")
         from grayson.core import proposals as proposals_engine
         from grayson.core.proposals import ProposalError
 
         try:
-            proposals_engine.decide(s, pid, approve=(decision == "approve"), digest=digest)
-        except ProposalError as e:
+            if decision == "apply":
+                from grayson.core import file_fixes
+
+                file_fixes.apply(s, pid, "user")
+            else:
+                proposals_engine.decide(s, pid, approve=(decision == "approve"), digest=digest)
+        except (ProposalError, OSError) as e:
             return templates.TemplateResponse(
                 request, "session.html", _session_context(s, str(e)), status_code=400
             )

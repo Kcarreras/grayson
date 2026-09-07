@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from conftest import call_mcp as _call
 from grayson.mcp.server import build_server
 
 
@@ -20,22 +21,42 @@ def _list_tools(server) -> set[str]:
     return {getattr(t, "name", None) for t in tools}
 
 
-def _call(server, name: str, args: dict):
-    import json
-
-    result = asyncio.run(server.call_tool(name, args))
-    structured = getattr(result, "structured_content", None)
-    if isinstance(structured, dict) and "result" in structured:
-        return structured["result"]  # scalars/lists wrapped as {"result": ...}
-    # dict returns arrive as JSON text content
-    content = getattr(result, "content", None) or []
-    if content and getattr(content[0], "text", None):
-        return json.loads(content[0].text)
-    return structured
-
-
 def test_server_builds(server):
     assert server is not None
+
+
+def test_mcp_file_fix_requires_ui_approval_before_writing(server, workspace):
+    from grayson.core import file_fixes, proposals
+    from grayson.core.session import Session
+
+    session = Session.create(
+        workspace,
+        workflow="bug-hunter",
+        targets=[],
+        guard=workspace.config.resolve_profile("moderate"),
+        guard_profile="moderate",
+    )
+    source = workspace.root / "model.sql"
+    source.write_text("select 1;", encoding="utf-8")
+    p = _call(
+        server,
+        "proposal_draft_file",
+        {
+            "session_id": session.id,
+            "target_file": "model.sql",
+            "new_content": "select 2;",
+            "title": "Correct model",
+        },
+    )
+    assert p["status"] == "proposed"
+    assert source.read_text() == "select 1;"
+    blocked = _call(server, "proposal_apply", {"session_id": session.id, "pid": p["pid"]})
+    assert "error" in blocked
+    assert source.read_text() == "select 1;"
+    proposals.decide(session, p["pid"], True, digest=file_fixes.review_digest(p))
+    applied = _call(server, "proposal_apply", {"session_id": session.id, "pid": p["pid"]})
+    assert applied["status"] == "applied"
+    assert source.read_text() == "select 2;"
 
 
 def test_tools_registered(server):

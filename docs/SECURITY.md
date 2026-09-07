@@ -193,6 +193,57 @@ The line that held: scope still widens only by a user action, and every widening
 
 ## Bypass and containment (where the guard's authority ends)
 
+### Local file fixes in Cursor
+
+The managed Cursor guard registers `preToolUse` and `beforeMCPExecution` in
+addition to the warehouse read/shell checks. While **any local Grayson session
+in the guarded repository is open**, it denies native file writes, shell
+execution (including scripts, formatters and `git apply`), and calls to MCP
+servers other than the configured `grayson` server. Native read/search and
+coordination tools remain available. Unknown tools and unreadable session
+state are denied. Closing all sessions releases the investigation restriction.
+This starts before a proposal exists, covering edits made to generate a diff.
+
+Use Grayson's MCP tools during a protected investigation. `proposal_draft_file`
+receives the full replacement text, reads the current source without changing
+it, and generates the diff for UI review. Approval binds the complete proposal
+(and success criteria, if present). `proposal_apply` writes exactly that content
+only while approval is current and the source still matches its captured hash.
+It records application itself; `proposal_applied` cannot substitute for this
+write. Existing UTF-8 files and new files in existing directories are supported,
+including empty replacements. Targets outside the workspace, control files,
+symlinks, junctions and hard-linked files are refused. Older diff-only proposals
+remain reviewable but must be drafted through the managed flow for this writer.
+
+Install or upgrade the guard in the actual investigation repository:
+
+```bash
+grayson harness mcp apply --harness cursor
+grayson harness guard apply --harness cursor
+grayson harness guard status --harness cursor
+```
+
+The generated hook uses `failClosed: true` and requires Cursor support for
+`preToolUse` and `beforeMCPExecution`. Windows gets a command launcher using
+the Python interpreter that installed the guard; reinstall the guard if that
+interpreter moves. Review the hooks in Cursor after installation. Status checks
+the current script and registrations; it cannot prove that Cursor is executing
+them. Guard installation remains explicit, and does not change other servers'
+configuration or remove user-authored hook entries.
+
+These are controls against accidental bypass in a local Cursor investigation,
+not OS-level containment. The Grayson MCP server/configuration is trusted;
+remote session state, agents outside the hook, disabled hooks, and processes
+launched before protection begins are outside this boundary. The writer
+serializes Grayson applications and checks source immediately before replacement,
+but cannot lock out an unrelated editor or filesystem changes by another process.
+For containment, give the agent read-only source access and isolate the writer,
+approval state and UI credentials. Do not automatically revert unexpected edits;
+preserve them for the user's review. If a writer crashes after replacing a file,
+its lock/application journal requires human inspection before retrying.
+
+### Warehouse access
+
 The guard validates statements that pass **through** grayson, subject to the parser
 and callable-UDF limits above. It is not a sandbox around the agent: the agent runs
 under the user's OS account, and the
@@ -232,8 +283,8 @@ they differ in who writes the config and how hard the wall is:
 | Harness | Mechanism | How it's set up |
 |---|---|---|
 | Claude Code | Deny rules in `.claude/settings.json`: `Bash(snow:*)` and `.grayson/**` file access hit a permission prompt | grayson writes them on consent (`harness guard apply`) |
-| Cursor (IDE agent) | **Hooks** — `beforeShellExecution`/`beforeReadFile` in `.cursor/hooks.json` **hard-deny** `snow`/`snowsql`, Snowflake connector imports, credential and private-key reads (`~/.snowflake/`, `~/.snowsql/`, `connections.toml`, `*.p8`/`*.pem`/`*.key`), and `.grayson/` access — except the reference docs grayson writes there to be read. Commands are quote-normalized before matching (`sn""ow` is `snow`). Registered **fail-closed** with a 10s timeout: a malformed event, crashed guard, or hang denies (stronger than a prompt; needs a recent Cursor and an executable hook script, so POSIX). Alternative: the agent **command denylist** in Cursor's app settings (direct `snow` never auto-runs — a human sees the prompt) | Choice at `harness init cursor`: grayson writes the hook + script on consent (`harness guard apply --harness cursor`), or declining prints the copy/paste denylist steps |
-| Cursor CLI (`cursor-agent`) | The IDE denylist/hooks do **not** apply; the CLI has its own permission config — set its allow/deny rules to block `snow`, and prefer MCP as the interface (the CLI shares the project's rules and MCP config) | Human-configured, separately from the IDE |
+| Cursor (IDE agent) | **Hooks** in `.cursor/hooks.json` deny warehouse bypass and private-state access. `preToolUse`/`beforeMCPExecution` also enforce the [local file fix flow](#local-file-fixes-in-cursor) during open investigations. All managed hooks use `failClosed` with a 10s timeout. POSIX uses an executable script; Windows gets a command launcher. Requires a recent Cursor with those hook events | `harness guard apply --harness cursor` installs or upgrades the hook registrations and script after consent |
+| Cursor CLI (`cursor-agent`) | Verify hook event coverage and permissions against the deployed CLI version separately; prefer MCP and configure its allow/deny rules to block `snow` | Validate the CLI configuration as well as the IDE's |
 | Codex | The **OS-level sandbox**: default `workspace-write` mode blocks network egress from shell commands, so direct `snow` cannot reach the warehouse at all. Register grayson as an MCP server in `~/.codex/config.toml` — MCP servers run outside the sandbox, so the guarded path works while the bypass path doesn't (this makes MCP, not the CLI, the warehouse path under Codex) | Human-configured; `harness init codex` and `harness guard status --harness codex` print the steps |
 | GitHub Copilot (VS Code agent mode) | Deny entries in `chat.tools.terminal.autoApprove` (`.vscode/settings.json`): `snow` and commands touching `.grayson/` are never auto-approved — a human sees the prompt. **Terminal only**: Copilot's file tools are not governed by this setting, so `.grayson/` reads via the editor rely on the protocol + audit reconciliation | grayson writes them on consent (`harness guard apply --harness copilot`) |
 | GitHub Copilot coding agent (cloud) | Runs in an ephemeral GitHub Actions environment behind a default-deny egress **firewall**: direct `snow` cannot reach the warehouse unless a human allowlists it. No local console for interventions — pair it with the served, knowledge-only deployment ([DEPLOYMENT.md](DEPLOYMENT.md)); its MCP config lives in the repo's Copilot settings on github.com, not a repo file | Human-configured on github.com |

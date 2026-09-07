@@ -2252,6 +2252,46 @@ def intervention_respond(
 # -- proposals -----------------------------------------------------------
 
 
+@proposal_app.command("draft-file")
+def proposal_draft_file(
+    session_id: str,
+    target_file: str = typer.Option(..., "--target", help="Source path relative to the workspace."),
+    content_file: Path = typer.Option(
+        ..., "--content-file", help="Scratch file containing the replacement text."
+    ),
+    title: str = typer.Option(..., "--title"),
+    finding: str = typer.Option(None, "--finding"),
+    rationale: str = typer.Option("", "--rationale"),
+) -> None:
+    """Draft a local fix without editing its source; the user reviews it in the UI."""
+    from grayson.core import file_fixes
+
+    try:
+        emit(
+            file_fixes.draft(
+                _session(session_id),
+                target_file,
+                content_file.read_bytes().decode("utf-8"),
+                title,
+                finding,
+                rationale,
+            )
+        )
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@proposal_app.command("apply")
+def proposal_apply(session_id: str, pid: str) -> None:
+    """Write the exact approved local fix and record application automatically."""
+    from grayson.core import file_fixes
+
+    try:
+        emit(file_fixes.apply(_session(session_id), pid))
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
 @proposal_app.command("add")
 def proposal_add(
     session_id: str,
@@ -2306,7 +2346,7 @@ def proposal_show(session_id: str, pid: str) -> None:
 
 @proposal_app.command("approve")
 def proposal_approve(session_id: str, pid: str) -> None:
-    """Approve a proposal (a user action). The harness agent then applies it."""
+    """Approve a proposal (a user action). Managed files use proposal apply next."""
     if not _stdin_is_tty():
         require_interactive("approving a fix proposal")
     try:
@@ -2314,14 +2354,15 @@ def proposal_approve(session_id: str, pid: str) -> None:
 
         s = _session(session_id)
         criteria = contract(s, pid)
-        if criteria:
-            typer.echo(json.dumps(s.proposal(pid), indent=2), err=True)
+        proposal = s.proposal(pid)
+        from grayson.core.file_fixes import review_digest
+
+        managed = proposal and proposal["payload"].get("file_change")
+        digest = criteria["digest"] if criteria else review_digest(proposal) if managed else ""
+        if criteria or managed:
+            typer.echo(json.dumps(proposal, indent=2), err=True)
         require_interactive("approving a fix proposal")
-        emit(
-            proposals_engine.decide(
-                s, pid, approve=True, digest=criteria["digest"] if criteria else ""
-            )
-        )
+        emit(proposals_engine.decide(s, pid, approve=True, digest=digest))
     except (ProposalError, ValueError) as e:
         fail(str(e))
 

@@ -902,6 +902,8 @@ details.fold > summary { flex-wrap: wrap; }
 .cpfold > summary .mono { overflow-wrap: anywhere; }
 @media (max-width:760px) { .cpfold > summary .marks { flex-basis: 100%; margin-left: 22px; } }
 .help.help-dismissed > .h-pop { display: none; }
+.checkpoint-label { cursor: help; text-decoration: underline dotted var(--faint);
+  text-underline-offset: 3px; }
 @media (max-width:760px) {
   .help > .h-pop, h1 > .help > .h-pop, h2 > .help > .h-pop {
     position: fixed; left: 20px; right: 20px; bottom: 20px; top: auto;

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import sqlite3
 from decimal import Decimal, DecimalException, localcontext
 from typing import Literal
 
@@ -23,6 +25,7 @@ class Criterion(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     name: str = Field(min_length=1, max_length=160)
     source_qid: str
+    source_session: str | None = None
     expectation: Expectation
     # Percent, not fraction: 0.1 means within 0.1% of the source observation.
     relative_percent: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
@@ -34,6 +37,28 @@ class Criteria(BaseModel):
     format: Literal[1] = 1
     criteria: list[Criterion] = Field(min_length=1, max_length=50)
 
+    @model_validator(mode="before")
+    @classmethod
+    def generate_ids(cls, value):
+        if not isinstance(value, dict) or not isinstance(value.get("criteria"), list):
+            return value
+        items = [dict(c) if isinstance(c, dict) else c for c in value["criteria"]]
+        used = {c["id"] for c in items if isinstance(c, dict) and isinstance(c.get("id"), str)}
+        for item in items:
+            if not isinstance(item, dict) or item.get("id") not in (None, ""):
+                continue
+            base = re.sub(r"[^a-z0-9]+", "_", str(item.get("name", "")).lower()).strip("_")
+            if not base or not base[0].isalpha():
+                base = "criterion_" + base
+            base = base[:56]
+            candidate, n = base, 2
+            while candidate in used:
+                candidate = f"{base}_{n}"
+                n += 1
+            item["id"] = candidate
+            used.add(candidate)
+        return {**value, "criteria": items}
+
     @model_validator(mode="after")
     def unique_ids(self):
         if len({c.id for c in self.criteria}) != len(self.criteria):
@@ -43,6 +68,94 @@ class Criteria(BaseModel):
 
 def digest(value: dict) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def query_sessions(session: Session) -> list[dict]:
+    """Current session first, then recent sessions; never execute warehouse SQL."""
+    sources = []
+    for sid in [session.id, *reversed(session.workspace.list_session_ids())]:
+        if any(s["id"] == sid for s in sources):
+            continue
+        try:
+            source = session if sid == session.id else Session(session.workspace, sid)
+            summary = source.summary()
+            sources.append(
+                {
+                    "id": sid,
+                    "title": summary["title"] or sid,
+                    "connection": source.connection,
+                    "queries": summary["queries_executed"],
+                    "current": sid == session.id,
+                    "compatible": source.connection == session.connection,
+                }
+            )
+        except (ValueError, OSError, sqlite3.Error):
+            continue
+    return sources
+
+
+def query_choices(
+    session: Session,
+    source_session: str = "",
+    search: str = "",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict:
+    """Search executed baselines, grouped by session, with bounded pages."""
+    if offset < 0 or not 1 <= limit <= 100:
+        raise ValueError("query page requires offset >= 0 and limit between 1 and 100")
+    sources = query_sessions(session)
+    selected = source_session or session.id
+    if selected != "all" and selected not in {s["id"] for s in sources}:
+        raise ValueError("unknown source session")
+    choices, skipped = [], offset
+    for info in sources:
+        if not info["compatible"] or selected not in {"all", info["id"]}:
+            continue
+        source = session if info["current"] else Session(session.workspace, info["id"])
+        con = source._con()
+        where = (
+            "status='executed' AND instr(lower(qid || ' ' || coalesce(label, '') || ' ' || "
+            "sql_raw || ' ' || coalesce(tables_json, '')), ?) > 0"
+        )
+        try:
+            count = con.execute(
+                f"SELECT COUNT(*) FROM queries WHERE {where}", (search.lower(),)
+            ).fetchone()[0]
+            if skipped >= count:
+                skipped -= count
+                continue
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                f"SELECT * FROM queries WHERE {where} ORDER BY rowid DESC LIMIT ? OFFSET ?",
+                (search.lower(), limit + 1 - len(choices), skipped),
+            ).fetchall()
+        finally:
+            con.close()
+        skipped = 0
+        for raw in rows:
+            q = dict(raw)
+            tables = json.loads(q.get("tables_json") or "[]")
+            choices.append(
+                {
+                    "qid": q["qid"],
+                    "session_id": source.id,
+                    "session_title": info["title"],
+                    "current": info["current"],
+                    "label": q["label"] or q["sql_raw"][:100],
+                    "sql": q["sql_raw"],
+                    "tables": tables,
+                    "ts": q["ts"],
+                    "scope_required": sorted({t.upper() for t in tables} - session.scope_tables),
+                }
+            )
+        if len(choices) > limit:
+            break
+    return {
+        "queries": choices[:limit],
+        "offset": offset,
+        "next_offset": offset + limit if len(choices) > limit else None,
+    }
 
 
 def decimal_precision(*values: Decimal) -> int:
@@ -59,20 +172,28 @@ def decimal_precision(*values: Decimal) -> int:
     return precision
 
 
-def prepare(session: Session, spec: dict) -> dict:
+def prepare(session: Session, spec: dict, *, for_fix: bool = False) -> dict:
     """Resolve baseline-relative bounds once, before the person approves them."""
     parsed = Criteria.model_validate(spec)
     criteria = []
     for item in parsed.criteria:
-        query = session.query_row(item.source_qid)
+        source = session
+        if item.source_session and item.source_session != session.id:
+            if not for_fix:
+                raise ValueError("finding claims require evidence from the current session")
+            source = Session(session.workspace, item.source_session)
+            if source.connection != session.connection:
+                raise ValueError("baseline queries must use the same connection as the fix session")
+        query = source.query_row(item.source_qid)
         if not query or query["status"] != "executed":
             raise ValueError("criteria must cite successfully executed source queries")
         tables = json.loads(query.get("tables_json") or "[]")
-        if not tables or not {t.upper() for t in tables}.intersection(
-            t.upper() for t in session.targets
+        if not tables or (
+            not for_fix
+            and not {t.upper() for t in tables}.intersection(t.upper() for t in session.targets)
         ):
             raise ValueError("each criterion must read a table under investigation")
-        if not {t.upper() for t in tables}.issubset(session.scope_tables):
+        if not for_fix and not {t.upper() for t in tables}.issubset(session.scope_tables):
             raise ValueError("criterion source tables must be in the approved session scope")
         tree = sqlglot.parse_one(query["sql_raw"], read="snowflake")
         if not isinstance(tree, exp.Select | exp.Union | exp.Intersect | exp.Except):
@@ -80,7 +201,7 @@ def prepare(session: Session, spec: dict) -> dict:
         if any(tree.find_all(exp.Limit, exp.Offset, exp.TableSample)):
             raise ValueError("success criteria cannot certify explicitly limited or sampled SQL")
         rule = item.expectation
-        observation = evaluate(session, item.source_qid, rule)
+        observation = evaluate(source, item.source_qid, rule)
         if item.relative_percent is not None:
             if rule.kind != "scalar":
                 raise ValueError("relative_percent requires a scalar expectation")
@@ -98,10 +219,11 @@ def prepare(session: Session, spec: dict) -> dict:
                     )
             except DecimalException as e:
                 raise ValueError("relative bounds exceed supported numeric precision") from e
-            observation = evaluate(session, item.source_qid, rule)
+            observation = evaluate(source, item.source_qid, rule)
         criteria.append(
             {
                 **item.model_dump(mode="json"),
+                "source_session": source.id,
                 "expectation": rule.model_dump(mode="json"),
                 "expectation_text": rule.label(),
                 "sql": query["sql_raw"],
@@ -110,6 +232,43 @@ def prepare(session: Session, spec: dict) -> dict:
             }
         )
     return {"format": 1, "criteria": criteria, "connection": session.connection}
+
+
+def missing_scope(session: Session, spec: dict) -> list[str]:
+    return sorted({t.upper() for c in spec["criteria"] for t in c["tables"]} - session.scope_tables)
+
+
+def request_scope(session: Session, pid: str) -> dict | None:
+    """Request human approval without expanding scope or approving the fix."""
+    spec = contract(session, pid)
+    if not spec:
+        return None
+    context = f"Success criteria for fix {pid}."
+    for item in session.interventions("open"):
+        if item["kind"] == "scope_request" and item["request"].get("context") == context:
+            if item["request"].get("tables") == spec["scope_required"]:
+                return item
+            session.cancel_intervention(item["iid"], actor="system")
+    if not spec["scope_required"]:
+        return None
+    iid = session.add_intervention(
+        "scope_request",
+        f"Expand scope for {pid} success criteria",
+        "Review the additional tables needed by this fix's success criteria. "
+        "Granting scope does not approve or apply the fix.",
+        {
+            "tables": spec["scope_required"],
+            "reason": "Check these proposed outcomes: "
+            + "; ".join(
+                c["name"]
+                for c in spec["criteria"]
+                if set(t.upper() for t in c["tables"]).intersection(spec["scope_required"])
+            ),
+            "context": context,
+            "criteria_pid": pid,
+        },
+    )
+    return session.intervention(iid)
 
 
 def contract(session: Session, pid: str) -> dict | None:
@@ -123,18 +282,32 @@ def contract(session: Session, pid: str) -> dict | None:
         raise ValueError("unsupported success criteria format; upgrade before modifying this fix")
     bound = digest({"kind": proposal["kind"], "payload": proposal["payload"]})
     approval = json.loads(session.get_meta(f"criteria_approval:{pid}") or "null")
+    required = missing_scope(session, spec)
+    scope_requests = [
+        i
+        for i in session.interventions()
+        if i["kind"] == "scope_request"
+        and i["request"].get("context") == f"Success criteria for fix {pid}."
+    ]
     return {
         **spec,
         "digest": bound,
         "approval": approval,
-        "review_current": bool(approval and approval["digest"] == bound),
+        "scope_required": required,
+        "scope_request": scope_requests[-1] if scope_requests else None,
+        "review_current": bool(
+            approval
+            and approval["digest"] == bound
+            and not required
+            and spec["connection"] == session.connection
+        ),
     }
 
 
 def set_criteria(session: Session, pid: str, spec: dict) -> dict:
     if session.stage == "closed":
         raise ValueError("success criteria require an open session")
-    prepared = prepare(session, spec)
+    prepared = prepare(session, spec, for_fix=True)
     con = session._con()
     try:
         con.execute("BEGIN IMMEDIATE")
@@ -150,6 +323,7 @@ def set_criteria(session: Session, pid: str, spec: dict) -> dict:
     finally:
         con.close()
     session.log_event("agent", "criteria_proposed", {"pid": pid, **prepared})
+    request_scope(session, pid)
     return contract(session, pid)
 
 
@@ -162,6 +336,10 @@ def approve(session: Session, pid: str, reviewed_digest: str, actor: str) -> Non
         current = contract(session, pid)
         if not current or current["digest"] != reviewed_digest:
             raise ValueError("the fix or criteria changed since review; reload and review again")
+        if current["scope_required"]:
+            raise ValueError("approve the scope expansion before approving this fix's criteria")
+        if current["connection"] != session.connection:
+            raise ValueError("the session connection changed; prepare the criteria again")
         stamp = utcnow()
         changed = con.execute(
             "UPDATE proposals SET status='approved', decided_by=?, decided_at=? "
@@ -229,6 +407,16 @@ def run_verification(session: Session, pid: str, *, executor=None) -> dict:
         )
     counts = {s: sum(r["status"] == s for r in results) for s in ("pass", "fail", "unproven")}
     verdict = "fail" if counts["fail"] else "unproven" if counts["unproven"] else "pass"
+    refs = list(
+        dict.fromkeys(
+            ref
+            for r in results
+            for ref in (
+                (r.get("source_session") or session.id, r["source_qid"]),
+                (session.id, r["qid"]),
+            )
+        )
+    )
     verification = {
         "format": 1,
         "mode": "criteria",
@@ -238,8 +426,10 @@ def run_verification(session: Session, pid: str, *, executor=None) -> dict:
         "counts": counts,
         "verified_at": utcnow(),
         "before_qid": results[0]["source_qid"],
+        "before_session": results[0].get("source_session") or session.id,
         "after_qid": results[0]["qid"],
-        "evidence": list(dict.fromkeys(q for r in results for q in (r["source_qid"], r["qid"]))),
+        "evidence": [qid for sid, qid in refs if sid == session.id],
+        "evidence_refs": [{"session_id": sid, "qid": qid} for sid, qid in refs],
     }
     session.attach_verification(pid, verification, actor="system")
     session.log_event("system", "criteria_evaluated", {"pid": pid, **verification})
@@ -256,6 +446,7 @@ def run_verification(session: Session, pid: str, *, executor=None) -> dict:
             verification["after_qid"],
             "system",
             evidence=verification["evidence"],
+            evidence_refs=verification["evidence_refs"],
         )
     return verification
 

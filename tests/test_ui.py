@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from markupsafe import escape
 
 from conftest import FakeExecutor, close_checkpoint
 from grayson.config import GuardSettings
@@ -344,6 +345,8 @@ def test_waive_from_the_console(client, session):
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
     assert "waived" in page
     assert "no misassignments to pattern-match" in page
+    description = engine.workflow_for(session).check("error_pattern_analysis").description.strip()
+    assert f'title="{escape(description)}"' in page
 
 
 def test_waive_without_a_reason_is_refused(client, session):
@@ -358,6 +361,9 @@ def test_waive_without_a_reason_is_refused(client, session):
 def test_suggested_checks_show_as_breadth_not_gates(client, session):
     page = client.get(f"/session/{session.id}?t={TOKEN}").text
     assert "None blocks a stage" in page  # the suggested-checks widget, not a gate
+    workflow = engine.workflow_for(session)
+    for check in workflow.required_checks + workflow.suggested_checks:
+        assert f'title="{escape(check.description.strip())}"' in page
     # they must not count against the checkpoint gate
     assert engine.readiness(session)["required_checks"] == [c["key"] for c in session.checkpoints()]
 
@@ -371,6 +377,9 @@ def test_taking_up_a_suggested_check_records_it_as_a_checkpoint(client, session)
     assert "rule_drift" not in ready["required_checks"]
     assert next(c for c in ready["suggested_checks"] if c["key"] == "rule_drift")["done"]
     assert ready["checks_complete"] is False
+    description = engine.workflow_for(session).check("rule_drift").description.strip()
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert f'title="{escape(description)}"' in page
 
 
 def test_severity_scale_is_explained_where_findings_are_judged(client, session):

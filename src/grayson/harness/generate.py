@@ -38,6 +38,13 @@ they are equivalent. Never query Snowflake except through grayson.
   evidence, and checkpoints/findings citing no executed queries will be rejected.
 - Every checkpoint and finding must cite **evidence**: the ids of queries you actually
   executed (`q_0001`, ...). grayson rejects claims without real evidence.
+- **Local fixes need approval before any source edit.** Draft replacement text as
+  proposal data or in a scratch file; never edit the original to obtain a diff,
+  even temporarily. Use `proposal draft-file` (MCP: `proposal_draft_file`), wait
+  for the user's approval in Grayson, then `proposal apply` (MCP: `proposal_apply`).
+  Grayson writes exactly the approved content and records application. Do not use
+  editing tools or shell commands to apply it. If a file was already changed early,
+  report that to the user; do not hide it by automatically reverting their files.
 - Check cached data and the knowledge library before re-querying. An empty cache,
   knowledge library, or view registry is normal in a fresh workspace — it is not a
   problem to fix or report; build them as you work.
@@ -215,17 +222,33 @@ they are equivalent. Never query Snowflake except through grayson.
    REJECTS a finding, its rejection reason appears in `grayson finding list` and
    `grayson session readiness` (findings_rejected) — read it, continue analysis
    in that direction, and record a corrected finding.
-6. Fixes: draft proposals linked to findings
-   (`grayson proposal add <sid> --kind file_diff|ddl_snippet ...`). After the user
-   approves, apply file diffs yourself with your editing tools, mark them applied
-   (`grayson proposal applied <sid> <pid>`), and ask the user to rerun the definitions.
+6. Fixes: draft proposals linked to findings. For local files, pass the full
+   replacement text to `proposal_draft_file` or use `grayson proposal draft-file
+   <sid> --target models/example.sql --content-file <scratch-file> --title "..."`.
+   This snapshots the existing source and generates the diff WITHOUT editing it.
+   After the user approves, use `grayson proposal apply <sid> <pid>` (MCP:
+   `proposal_apply`). The exact reviewed content is written only if the source
+   still matches; a changed source requires a new review. Ask the user to rerun
+   the definitions afterwards. In Cursor, the installed guard blocks shell calls,
+   direct writes and other MCP servers while ANY Grayson session in the repo is
+   open. Use native read/search tools and Grayson MCP throughout the investigation;
+   do not disable the guard to finish a fix. Close sessions through the user when done.
+   For DDL, use `grayson proposal add <sid> --kind ddl_snippet ...`; the user runs
+   the approved DDL and you record it with `grayson proposal applied <sid> <pid>`.
    When a ddl_snippet CREATES A VIEW, include `view_name`, `source_tables`, and
    `purpose` in its payload: once the user has run the DDL and you mark the proposal
    applied, grayson registers the view in the library and adds it to your scope
    automatically — no separate registration step.
 7. Before fix approval, propose an explicit success contract with
    `grayson criteria set <sid> <pid> criteria.yaml` (format: 1, criteria: a list of
-   id, name, source_qid and expectation). Use the regression engine's scalar or
+   name, source_qid, optional source_session and expectation; id is generated if omitted).
+   Draft these criteria yourself for the user's review; do not leave the person
+   with a blank form. MCP `criteria_set` attaches the draft to a pending fix, or
+   include `success_criteria` in `proposal_draft_file` to propose both together.
+   `criteria_queries` finds baselines in this session first and can search other
+   sessions on the same connection. Out-of-scope tables create a scope request;
+   await the user's response. Saving criteria never grants scope or approves a fix.
+   Use the regression engine's scalar or
    no_rows expectation; relative_percent: 0.1 freezes bounds within 0.1% of the
    source observation. Include both the intended fix and preservation checks.
    A no-missing-customer query establishes identity preservation; equal counts
@@ -316,12 +339,17 @@ MCP mirror), which enforces validation and ownership server-side.
 - **Required checks.** Ask: what is this investigation MEANINGLESS without?
   Only those gate — four to six is the shape of the core set. Use `depends_on`
   only for genuine ordering (bug-hunter: no cause-hunting until the anomaly
-  reproduces). Write each `description` as intent — agents close checkpoints
-  better when the point is explicit.
+  reproduces).
 - **Suggested checks.** Everything worth doing where it applies but not
   everywhere goes here — breadth without gates. A required check that does not
   apply to the table in front of the agent gets closed hollow, which is exactly
   the evidence-laundering the rail exists to prevent. When in doubt, suggest.
+- **Checkpoint descriptions (required).** Every entry in `required_checks`
+  and `suggested_checks` must have a non-empty `description`, including checks
+  inherited from a fork. Explain what to check, why it matters, and what the
+  evidence should demonstrate; for suggested checks, say when they apply.
+  These descriptions appear on hover in the session screen and are editable
+  in the workflow editor. A title alone is not a description.
 - **Required charts.** Charting is otherwise the agent's judgment. Ask, per
   checkpoint: is its content a *shape* — a distribution, a trend, a
   stage-to-stage comparison, how measures move together — that a reader would
@@ -367,6 +395,10 @@ checkpoint (charts included), a findings field — and every change, there
 or in the YAML editor, stops at a review step (diff, preview, lint) before
 it is saved. If the user prefers to make the edits themselves, point them
 there; what they save is what `workflow preview` then shows you.
+
+Fill in every missing checkpoint description before presenting the final
+preview or storing the finished workflow, even though lint reports missing
+descriptions as warnings for compatibility with older templates.
 
 Treat every lint WARNING as design feedback, not noise — each one encodes a
 rule from this interview (missing description, an input no check uses, a
@@ -473,7 +505,9 @@ def plan_harness(root: Path, harness: str, with_mcp: bool = True) -> dict[str, s
     files = {rel: rendered}
     if harness in _SKILL_DIRS:
         skill = (_SKILL_DIRS[harness] / _SKILL_NAME / "SKILL.md").as_posix()
-        front = f"---\nname: {_SKILL_NAME}\ndescription: {WORKFLOW_AUTHOR_DESCRIPTION}\n---\n\n"
+        front = (
+            f"---\nname: {_SKILL_NAME}\ndescription: >-\n  {WORKFLOW_AUTHOR_DESCRIPTION}\n---\n\n"
+        )
         files[skill] = front + WORKFLOW_AUTHOR
     else:
         files[rel] = _replace_section(rendered, WORKFLOW_AUTHOR, target, "grayson-workflow-author")
