@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from base64 import b64encode
 from html.parser import HTMLParser
 
 from jinja2 import Environment, select_autoescape
@@ -138,7 +139,7 @@ _RUNTIME = """
 _SHELL = """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none';
- style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src 'self';
+ style-src 'unsafe-inline' data:; script-src 'unsafe-inline' data:; frame-src 'self';
  img-src data: blob:; font-src data:;
  base-uri 'none'; form-action 'none'">
 <title>{{ title }}</title><style>
@@ -173,15 +174,22 @@ they do not certify calculations, labels or marks drawn by presentation code.</p
 def render_presentation(spec: Presentation, manifest: dict, report: dict, title: str) -> str:
     # Escape the JSON script boundary, including hostile strings from SQL results.
     data = _json(manifest).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    # Raw-text HTML elements terminate even inside JS/CSS string literals.
+    # Data URLs preserve arbitrary UTF-8 source without rewriting its syntax.
+    css = b64encode(spec.css.encode("utf-8")).decode("ascii")
+    javascript = b64encode(spec.javascript.encode("utf-8")).decode("ascii")
     document = (
         '<!doctype html><html><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
-        "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; "
+        "script-src 'unsafe-inline' data:; style-src 'unsafe-inline' data:; "
+        "img-src data: blob:; "
         "font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'\">"
         f'<script id="grayson-evidence" type="application/json">{data}</script>'
-        f"<script>{_RUNTIME}</script><style>{spec.css}</style>{spec.html}"
-        f"<script>{spec.javascript}</script></html>"
+        f"<script>{_RUNTIME}</script>"
+        f'<link rel="stylesheet" href="data:text/css;charset=utf-8;base64,{css}">'
+        f'{spec.html}<script src="data:text/javascript;charset=utf-8;base64,{javascript}">'
+        "</script></html>"
     )
     template = Environment(autoescape=select_autoescape(default=True)).from_string(_SHELL)
     return template.render(

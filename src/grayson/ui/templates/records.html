@@ -58,6 +58,7 @@
         {% if r.supersedes %}<span class="badge todo">replaces {{ r.supersedes }}</span>{% endif %}
       {% elif r.kind == "report" %}
         <span class="badge plain">session report</span>
+        {% if r.state == "historical" %}<span class="badge plain" title="{{ r.context_notice }}">historical snapshot</span>{% endif %}
         {{ outcome(r.outcome) }}
       {% else %}
         <span class="badge plain">proposal</span>
@@ -69,6 +70,7 @@
       <span class="faint small mono">{{ (r.ts or "")[:10] }}</span>
     </span>
   </summary>
+  {% if r.kind == "report" and r.context_notice %}<p class="small">{{ r.context_notice }}</p>{% endif %}
   {% if r.summary %}<div class="ink2 small" style="margin: 8px 0 5px;">{{ r.summary[:260] }}{% if r.summary | length > 260 %}…{% endif %}</div>{% endif %}
   <div class="faint small" style="margin-top: 6px;">
     <span class="chip">{{ r.id }}</span> · {{ r.workflow }} ·

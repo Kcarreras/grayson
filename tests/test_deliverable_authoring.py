@@ -1,4 +1,6 @@
 import json
+from base64 import b64decode, b64encode
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -71,8 +73,36 @@ def test_authored_mcp_exports_real_data_and_curated_companion(source):
     assert 'sandbox="allow-scripts"' in html
     assert "allow-same-origin" not in html
     assert "\\u003c/script\\u003e" in html
-    assert "grayson.data" in html
+    assert b64encode(spec["javascript"].encode()).decode() in html
     assert session.stage != "closed"
+
+
+def test_freeform_source_preserves_raw_text_closing_tags(source):
+    session, spec = source
+    spec["javascript"] = 'const template = "</ScRiPt><b>£</b>"; // </script>\n'
+    spec["css"] = '.label::after { content: "</StYlE> ✓"; } /* </style> */'
+    result = export_deliverable(session, presentation=spec)
+
+    class Elements(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.elements = []
+
+        def handle_starttag(self, tag, attrs):
+            self.elements.append((tag, dict(attrs)))
+
+    outer = Elements()
+    outer.feed(Path(result["html"]).read_text(encoding="utf-8"))
+    document = next(attrs["srcdoc"] for tag, attrs in outer.elements if tag == "iframe")
+    inner = Elements()
+    inner.feed(document)
+    scripts = [attrs for tag, attrs in inner.elements if tag == "script"]
+    assert len(scripts) == 3  # evidence JSON, fixed runtime, authored source
+    assert not any(tag == "b" for tag, _ in inner.elements)
+    script = next(attrs["src"] for attrs in scripts if "src" in attrs)
+    css = next(attrs["href"] for tag, attrs in inner.elements if tag == "link")
+    assert b64decode(script.split(",", 1)[1]).decode() == spec["javascript"]
+    assert b64decode(css.split(",", 1)[1]).decode() == spec["css"]
 
 
 @pytest.mark.parametrize(
