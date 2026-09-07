@@ -154,6 +154,39 @@ def test_verify_fail_marks_failed(session):
     assert result["status"] == "verification_failed"
 
 
+@pytest.mark.parametrize("verdict", ["pass", "fail"])
+def test_verification_advances_timeline_through_gates(session, verdict):
+    from fastapi.testclient import TestClient
+
+    from conftest import close_checkpoint
+    from grayson.ui.server import build_app
+
+    fid, before = _finding(session)
+    session.accept_finding(fid)
+    for checkpoint in session.checkpoints():
+        close_checkpoint(session, checkpoint["key"], [before])
+    engine.advance_stage(session, "fixes")
+    p = proposals.record_proposal(session, "ddl_snippet", "Fix", {"ddl": "SELECT 1"}, fid)
+    proposals.decide(session, p["pid"], approve=True)
+    after = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
+    proposals.verify(session, p["pid"], before, after, verdict)
+    assert session.stage == "verification"
+    client = TestClient(build_app(session.workspace, token="test"), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{session.id}?t=test")
+    assert page.status_code == 200
+    assert f"1 checked · {int(verdict == 'pass')} passed" in page.text
+
+
+def test_verification_does_not_bypass_open_checkpoint_gate(session):
+    fid, before = _finding(session)
+    session.set_stage("fixes")
+    p = proposals.record_proposal(session, "ddl_snippet", "Fix", {"ddl": "SELECT 1"}, fid)
+    proposals.decide(session, p["pid"], approve=True)
+    after = run_statement(session, "SELECT * FROM DB.S.T1", executor=FakeExecutor())["qid"]
+    proposals.verify(session, p["pid"], before, after, "pass")
+    assert session.stage == "fixes"
+
+
 def test_verify_bad_verdict(session):
     fid, before = _finding(session)
     p = proposals.record_proposal(session, "ddl_snippet", "x", {"ddl": "SELECT 1"}, fid)

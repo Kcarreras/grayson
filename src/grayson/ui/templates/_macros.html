@@ -56,7 +56,7 @@
    passed once the stage is reached, ready when its condition holds, and
    blocked otherwise. The step markup carries data-stage so the base script
    can animate a stage advance between two loads of the live page. #}
-{% macro stage_timeline(s, stages, readiness, findings) -%}
+{% macro stage_timeline(s, stages, readiness, findings, proposals=[]) -%}
 {% set reached = stages.index(s.stage) %}
 {% set accepted = findings | selectattr("accepted") | rejectattr("superseded_by") | list | length %}
 {% set closed = s.stage == "closed" %}
@@ -75,6 +75,10 @@
     {% endif %}
     <span class="tl-node">{% if state == "done" or (closed and st == "closed") %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>{% endif %}</span>
     <span class="tl-label">{{ st }}</span>
+    {% if st == 'verification' %}
+    {% set verified = proposals | selectattr('verification') | list %}
+    {% if verified %}<span class="tl-sub">{{ verified | length }} checked · {{ verified | selectattr('verification.verdict', 'equalto', 'pass') | list | length }} passed</span>{% endif %}
+    {% endif %}
     {% if closed and st == "closed" and s.outcome %}<span class="tl-sub">{{ s.outcome }}</span>{% endif %}
   </div>
   {% endfor %}

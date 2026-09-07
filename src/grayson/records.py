@@ -79,7 +79,14 @@ def _session_base(sid: str, meta: dict) -> dict:
 
 #: how a record reads in search: current first, then resolved (a finding a
 #: passing proposal fixed), then superseded — history ranks below the live
-_STATE_RANK = {"current": 0, "verified": 0, "failed": 0, "resolved": 1, "superseded": 2}
+_STATE_RANK = {
+    "current": 0,
+    "verified": 0,
+    "failed": 0,
+    "resolved": 1,
+    "superseded": 2,
+    "historical": 3,
+}
 
 
 def annotate_states(rows: list[dict]) -> list[dict]:
@@ -106,6 +113,12 @@ def annotate_states(rows: list[dict]) -> list[dict]:
         elif row.get("kind") == "proposal":
             verdict = row.get("verdict")
             row["state"] = "verified" if verdict == "pass" else "failed" if verdict else "current"
+        elif row.get("kind") == "report":
+            row["state"] = "historical"
+            row["context_notice"] = (
+                "Historical session snapshot, not current knowledge. Revalidate claims "
+                "against current knowledge and fresh evidence before reuse."
+            )
         else:
             row["state"] = "current"
         out.append(row)
@@ -570,6 +583,8 @@ def get_library_record(records_dir: Path, session_id: str, record_id: str) -> di
         return None
     if not isinstance(data, dict) or data.get("kind") not in RECORD_KINDS:
         return None
+    if data.get("kind") == "report":
+        data = annotate_states([data])[0]
     return data
 
 
@@ -643,6 +658,11 @@ def get_record(workspace: Workspace, session_id: str, kind: str, record_id: str)
         "record": published["record"],
         "source": "library",
         "session_title": published.get("session_title", ""),
+        **(
+            {"state": "historical", "context_notice": published["context_notice"]}
+            if kind == "report"
+            else {}
+        ),
         "author": published.get("author"),
         "evidence_queries": published.get("evidence_queries") or [],
     }

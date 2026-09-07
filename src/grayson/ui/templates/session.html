@@ -32,7 +32,7 @@
   {% if s.stage != 'closed' and not error %}<div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>{% endif %}
 </div>
 
-{{ stage_timeline(s, stages, readiness, findings) }}
+{{ stage_timeline(s, stages, readiness, findings, proposals) }}
 
 {# each stat tile is a link to the section it counts; the base script scrolls
    there and unfolds it first if it is collapsed #}

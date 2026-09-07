@@ -149,6 +149,11 @@ def build_report(session: Session, overrides_dir: Path | None = None) -> dict:
     interventions = session.interventions()
     return {
         "generated_at": utcnow(),
+        "context_notice": (
+            "Historical evidence snapshot, not current knowledge. Revalidate claims "
+            "against current knowledge and fresh evidence before reuse. "
+            "Agent narrative is interpretation and is not automatically revalidated."
+        ),
         "session": session.summary(),
         "setup_inputs": session.setup_inputs(),
         "readiness": engine.readiness(session, overrides_dir),
@@ -263,6 +268,9 @@ def _identity_block(report: dict) -> list[str]:
         f"- **Targets:** {', '.join(s['targets']) or '(none)'}",
         f"- **Created:** {s['created_at']}",
         f"- **Generated:** {report['generated_at']}",
+        "- **Snapshot:** "
+        + ("Working draft; session is still open. " if s["stage"] != "closed" else "")
+        + "Historical evidence, not current knowledge. Revalidate before reuse.",
         "",
     ]
 
@@ -367,7 +375,15 @@ def _sec_checkpoints(report: dict, profile: ReportProfile) -> list[str]:
 def _sec_findings(report: dict, profile: ReportProfile) -> list[str]:
     lines = ["## Findings", ""]
     for f in report["findings"]:
-        accepted = "accepted" if f["accepted"] else "not accepted"
+        accepted = (
+            f"superseded by {f['superseded_by']}"
+            if f.get("superseded_by")
+            else "rejected"
+            if f.get("rejected")
+            else "accepted"
+            if f["accepted"]
+            else "not accepted"
+        )
         lines += [
             f"### {f['fid']}: {f['title']}",
             "",
