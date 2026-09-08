@@ -1,0 +1,41 @@
+{% if p %}
+<h2>The approved boundaries</h2>
+<div class="two">
+ <div class="card"><h3>Meaning and population</h3><dl>
+  {% for name, meaning in p.contract.semantics.items() %}<dt><b>{{ name }}</b></dt><dd>{{ meaning }}<br><span class="muted small">{% if name in p.contract.human_semantic_review %}Human semantic review required{% else %}Verified by: {{ p.contract.semantic_checks[name] | join(', ') }}{% endif %}</span></dd>{% endfor %}</dl>
+  <p><b>Data window:</b> {{ p.contract.data_window }}</p>
+  {% if p.contract.exclusions %}<p><b>Exclusions:</b> {{ p.contract.exclusions | join('; ') }}</p>{% endif %}</div>
+ <div class="card"><h3>Resources and authority</h3>
+  {% for table in p.contract.scope %}<p class="mono">{{ table }}</p>{% endfor %}
+  <p><b>Destination:</b> {{ p.contract.deployment_target or 'Analysis deliverable' }}</p>
+  <p>Warehouse changes require your approval and execution at every autonomy level.</p>
+  <p class="muted small">{{ view.remaining.iterations }} iterations remaining · {{ p.contract.policy.max_revalidations }} preapproved revalidations · {{ p.contract.policy.max_minutes }} minutes in active phases</p>
+  <p class="muted small">Brief {{ p.contract_digest[:12] }} · revision {{ p.revision }} · pinned workflow</p></div>
+</div>
+<h2>Acceptance criteria</h2>
+{% for c in p.contract.checks %}<details class="fold"><summary>{{ c.name }} <span class="badge plain">{{ c.kind }}</span></summary>
+ <p>{{ c.rationale }}</p><p>Relation: {{ c.relation }}{% if c['keys'] %} · keys: {{ c['keys'] | join(', ') }}{% endif %}</p>
+ {% if c.kind == 'measure' %}<p>Measure {{ c.column }} · groups {{ c.group_by | join(', ') or 'whole population' }} · absolute tolerance {{ c.absolute_tolerance }} + {{ c.relative_percent }}%</p>{% endif %}
+ {% if c.kind == 'population' %}<p>Allowed missing: {{ c.max_missing }} · allowed added: {{ c.max_added }}</p>{% endif %}
+ {% if c.baseline_sql %}<pre>{{ c.baseline_sql }}</pre>{% endif %}{% if c.sql %}<pre>{{ c.sql }}</pre>{% endif %}
+</details>{% endfor %}
+{% if p.contract.measure_exemption %}<div class="card attn">Measure-check exemption: {{ p.contract.measure_exemption }}</div>{% endif %}
+{% if p.contract.joins %}<h2>Join contracts</h2><div class="tablewrap"><table><thead><tr><th>Join</th><th>Relationship</th><th>Coverage</th><th>Meaning</th></tr></thead><tbody>
+{% for j in p.contract.joins %}<tr><td>{{ j.left }} → {{ j.right }}<br><span class="mono small">{{ j.left_keys | join(', ') }} = {{ j.right_keys | join(', ') }}</span></td>
+ <td>{{ j.how }} · {{ j.cardinality | replace('_', ' ') }}<br>Max matches: {{ j.max_matches }}</td><td>Max unmatched left: {{ j.max_unmatched_left }}<br>Max unmatched right: {{ j.max_unmatched_right if j.max_unmatched_right is not none else 'not constrained' }}</td><td>{{ j.semantics }}</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+
+{% if p.phase not in ['complete', 'cancelled'] %}<h2>Run controls</h2><div class="card">
+ <form method="post" action="/session/{{ s.id }}/project/approval?t={{ token }}"><input type="hidden" name="revision" value="{{ p.revision }}">
+ <label>Approval level <select name="level">{% for level in ['guided','milestones','bounded'] %}<option {{ 'selected' if (p.approval_override or p.contract.policy.approval) == level }}>{{ level }}</option>{% endfor %}</select></label>
+ <p class="muted small">Changes human review points while preserving the brief, candidate and evidence. Team and workspace ceilings still apply.</p><button class="btn secondary">Change approval level</button></form>
+ <form method="post" action="/session/{{ s.id }}/project/{{ 'resume' if p.phase in ['paused','blocked'] else 'pause' }}?t={{ token }}">
+ <input type="hidden" name="revision" value="{{ p.revision }}"><label>Reason <input name="reason" required></label>
+ <button class="btn secondary">{{ 'Resume' if p.phase in ['paused','blocked'] else 'Pause' }}</button></form>
+ <details class="fold"><summary>Cancel this project</summary><form method="post" action="/session/{{ s.id }}/project/cancel?t={{ token }}">
+ <input type="hidden" name="revision" value="{{ p.revision }}"><label>Reason <input name="reason" required></label><button class="btn danger">Cancel project</button></form></details></div>{% endif %}
+{% endif %}
+{% if not p or p.phase not in ['complete','cancelled'] %}<details class="fold"><summary>{{ 'Revise the brief' if p else 'Draft brief supplied by the agent' }}</summary>
+ <p>Changing the brief invalidates approval and requires a new review. Levels: guided, milestones, bounded. Team and workspace ceilings still apply.</p>
+ <form method="post" action="/session/{{ s.id }}/project/draft?t={{ token }}"><input type="hidden" name="revision" value="{{ p.revision if p else 0 }}">
+ <textarea name="spec" rows="20" required aria-label="Project brief YAML">{{ draft_yaml }}</textarea><button class="btn secondary">Save draft for review</button></form></details>{% endif %}

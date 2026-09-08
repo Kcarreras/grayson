@@ -7,6 +7,7 @@
    intervention form page deliberately has no refresh (it would clear input). #}
 {% block head %}{% endblock %}
 {% block content %}
+{% if project_workflow %}{% include "_project_workspace.html" %}{% else %}
 {# query chip: links to the query page; hover shows the SQL (first 300 chars) #}
 {% macro qc(qid) -%}
 <a class="chip" href="/session/{{ s.id }}/query/{{ qid }}?t={{ token }}"
@@ -34,10 +35,7 @@
   {% if s.stage != 'closed' and not error %}<div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>{% endif %}
 </div>
 
-{% if project_workflow %}
-<div class="card"><div class="overline">SQL PROJECT</div><p>{{ project_view.next_action }}</p>
-<a class="btn" href="/session/{{ s.id }}/project?t={{ token }}">Open project workspace →</a></div>
-{% else %}{{ stage_timeline(s, stages, readiness, findings, proposals) }}{% endif %}
+{{ stage_timeline(s, stages, readiness, findings, proposals) }}
 
 {# each stat tile is a link to the section it counts; the base script scrolls
    there and unfolds it first if it is collapsed #}
@@ -450,31 +448,7 @@
 </div>
 {% endif %}
 
-<h2 id="queries">Query log {{ help("guard") }}</h2>
-{% if queries %}
-{{ list_tools("queries", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first"), ("duration", "desc", "Slowest first"), ("rows", "desc", "Most rows")], [("executed", "executed"), ("rejected", "rejected"), ("error", "errors")], "Find a query, purpose, or worker…", false) }}
-{% endif %}
-<div class="card scroll" style="max-height: 360px; overflow-y: auto;">
-<table>
-{% set has_worker = queries | selectattr("worker") | list | length > 0 %}
-{% set has_label = queries | selectattr("label") | list | length > 0 %}
-<thead><tr><th data-sortkey="id">Query</th><th>Status</th><th data-sortkey="rows">Rows</th><th data-sortkey="duration">Time (ms)</th>{% if has_worker %}<th>Worker</th>{% endif %}{% if has_label %}<th>Purpose {{ help("purpose") }}</th>{% endif %}</tr></thead>
-<tbody data-list="queries" data-noun="query">
-{% for q in queries %}
-<tr data-item data-s-id="{{ q.qid }}" data-s-duration="{{ q.duration_ms or 0 }}" data-s-rows="{{ q.row_count or 0 }}" data-tags="{{ q.status if q.status in ['executed', 'rejected'] else 'error' }}">
-  <td class="mono">{{ qc(q.qid) }}</td>
-  <td>{{ query_status(q.status) }}
-      {% if q.guard_rule %}<div class="faint mono small">{{ q.guard_rule }}</div>{% endif %}</td>
-  <td class="num">{{ q.row_count if q.row_count is not none else "" }}{% if q.truncated %} <span class="faint">(capped)</span>{% endif %}</td>
-  <td class="num muted">{{ q.duration_ms if q.duration_ms is not none else '—' }}</td>
-  {% if has_worker %}<td class="muted mono small">{{ q.worker or "—" }}</td>{% endif %}
-  {% if has_label %}<td class="muted small">{{ q.label or "—" }}</td>{% endif %}
-</tr>
-{% endfor %}
-{% if not queries %}<tr><td colspan="4" class="muted">No queries yet.</td></tr>{% endif %}
-</tbody>
-</table>
-</div>
+{% include "_query_log.html" %}
 
 <details class="fold">
   <summary>Event log ({{ events | length }} recent)</summary>
@@ -592,6 +566,7 @@
   <div id="lb-body" class="lb-body"></div>
   <div id="lb-caption" class="faint small mt-2"></div>
 </dialog>
+{% endif %}
 {% endblock %}
 {% block scripts %}
 <script>

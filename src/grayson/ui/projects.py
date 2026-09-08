@@ -17,24 +17,7 @@ def register(app, workspace, templates, check, session, redirect):
         s = session(sid)
         if workflow_for(s, workspace.workflows_dir).project is None:
             raise HTTPException(400, "This is a standard QA session, not a project workflow")
-        view = engine.status(s)
-        return templates.TemplateResponse(
-            request,
-            "project.html",
-            {
-                "nav": "sessions",
-                "s": s.summary(),
-                "view": view,
-                "p": view["project"],
-                "deployment_proposal": s.proposal(view["project"]["deployment"]["pid"])
-                if view["project"] and view["project"].get("deployment")
-                else None,
-                "draft_yaml": yaml.safe_dump(view["project"]["contract"], sort_keys=False)
-                if view["project"]
-                else "",
-                "interventions": s.interventions(),
-            },
-        )
+        return redirect(f"/session/{sid}")
 
     @app.get("/session/{sid}/project/report")
     def project_report(request: Request, sid: str):
@@ -77,5 +60,9 @@ def register(app, workspace, templates, check, session, redirect):
             else:
                 raise ValueError("unknown project action")
         except (ValueError, OSError, KeyError, yaml.YAMLError) as e:
-            raise HTTPException(400, str(e)) from e
-        return redirect(f"/session/{sid}/project")
+            from grayson.ui.project_view import build_context
+
+            return templates.TemplateResponse(
+                request, "project.html", build_context(s, str(e)), status_code=400
+            )
+        return redirect(f"/session/{sid}")

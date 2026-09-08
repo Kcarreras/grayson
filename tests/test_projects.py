@@ -477,8 +477,10 @@ def test_project_console_and_human_approval(project):
     client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
     p = engine.draft(s, contract())["project"]
     page = client.get(f"/session/{s.id}/project?t=test")
-    assert page.status_code == 200 and "Approve this brief" in page.text
-    assert "Current customer region" in page.text
+    assert page.status_code == 200 and "Review brief" in page.text
+    assert page.url.path == f"/session/{s.id}"
+    brief = client.get(f"/session/{s.id}?t=test&view=brief")
+    assert "Approve this brief" in brief.text and "Current customer region" in brief.text
     assert client.get(f"/session/{s.id}/project").status_code == 403
     response = client.post(
         f"/session/{s.id}/project/approve?t=test",
@@ -492,7 +494,71 @@ def test_project_console_and_human_approval(project):
         ).status_code
         == 400
     )
-    assert "Open project workspace" in client.get(f"/session/{s.id}?t=test").text
+    page = client.get(f"/session/{s.id}?t=test")
+    assert "Project views" in page.text and "Open project workspace" not in page.text
+    assert 'id="findings"' not in page.text and 'id="fix-delivery"' not in page.text
+
+
+def test_project_session_views_and_deployment_stay_in_one_workspace(project):
+    from fastapi.testclient import TestClient
+
+    from grayson.core.file_fixes import review_digest
+    from grayson.ui.server import build_app
+
+    s, executor = project
+    approve(s)
+    submit(s)
+    verify(s, executor)
+    submit(s, candidate(True))
+    verify(s, executor)
+    review_and_checkpoints(s)
+    engine.finish(s, engine.state(s)["revision"])
+    engine.deployment_package(s, engine.state(s)["revision"])
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    for section in ("build", "checks", "brief", "queries", "history"):
+        page = client.get(f"/session/{s.id}?t=test&view={section}")
+        assert page.status_code == 200
+        assert 'aria-label="Project views"' in page.text
+        assert 'id="findings"' not in page.text
+        assert "Open project workspace" not in page.text
+    build = client.get(f"/session/{s.id}?t=test").text
+    assert 'class="pipeline-edge"' in build and 'href="#node-customers"' in build
+    assert "Approve deployment SQL" in build and "SQL to copy and run" in build
+    assert "Workflow checkpoints" not in build and "Current customer region: baseline" not in build
+    history = client.get(f"/session/{s.id}?t=test&view=history").text
+    assert "SQL changes" in history and "right multiplicity" in history
+    assert "ACTIVE" in history
+    queries = client.get(f"/session/{s.id}?t=test&view=queries").text
+    assert 'data-list="queries"' in queries and 'id="deployment"' not in queries
+    qid = engine.state(s)["verification"]["results"][0]["qid"]
+    query = client.get(f"/session/{s.id}/query/{qid}?t=test")
+    assert query.status_code == 200 and f"/session/{s.id}?t=test&amp;view=queries" in query.text
+    proposal = s.proposal(engine.state(s)["deployment"]["pid"])
+    failed = client.post(
+        f"/session/{s.id}/proposal/{proposal['pid']}/approve?t=test", data={"digest": "stale"}
+    )
+    assert failed.status_code == 400 and 'aria-label="Project views"' in failed.text
+    assert 'id="findings"' not in failed.text
+    approved = client.post(
+        f"/session/{s.id}/proposal/{proposal['pid']}/approve?t=test",
+        data={"digest": review_digest(proposal)},
+    )
+    assert approved.status_code == 200 and "I've applied this" in approved.text
+    assert approved.url.path == f"/session/{s.id}"
+
+
+def test_empty_project_session_uses_project_interface(project):
+    from fastapi.testclient import TestClient
+
+    from grayson.ui.server import build_app
+
+    s, _ = project
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    for section in ("build", "checks", "brief", "queries", "history"):
+        page = client.get(f"/session/{s.id}?t=test&view={section}")
+        assert page.status_code == 200 and 'aria-label="Project views"' in page.text
+        assert 'id="findings"' not in page.text
+    assert client.get(f"/session/{s.id}").status_code == 403
 
 
 def test_mcp_surface_has_no_approval_tools(project):

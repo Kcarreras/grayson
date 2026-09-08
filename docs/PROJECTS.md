@@ -13,7 +13,9 @@ scope. It should interview you about grain, population, business definitions,
 exclusions, time windows, the intended result and operational limits. Scoped
 discovery can happen before a brief is drafted. Once drafted, execution waits for
 its approval. The agent reads `project_schema`, writes a complete brief with
-`project_draft`, and directs you to **Open project workspace** in the session.
+`project_draft`, and directs you to the session's **Brief** view for approval.
+Project workflows open directly into a project-specific session interface.
+There is no separate project nested inside a QA session.
 
 Review the definitions, baseline SQL, tolerances, source and output scope, join
 contracts and approval level there. Approving binds the exact brief, connection
@@ -192,9 +194,15 @@ Evidence freshness is time-bounded; separate queries are not a transactionally
 consistent warehouse snapshot. Use pinned source versions/time-travel or stable
 batch boundaries when concurrent data changes could invalidate comparisons.
 
-The project workspace shows the brief, candidate, failed checks with repair
-guidance, review, iteration history, limits and human actions. Download JSON there;
-ordinary session reports also include project verdicts and attribution.
+The session opens on **Build**: the current proposal, a clickable source-to-output
+diagram, the latest change and the next decision. Deployment SQL can be reviewed,
+approved, downloaded and reported applied here, without entering a findings/fixes
+screen. **Checks** shows failures first and groups passing evidence. **Brief** holds
+definitions, acceptance criteria and run controls. **Query log** uses the shared
+query inspection tools. **History** compares SQL between attempts and shows which
+failed checks were resolved. Available charts appear as output previews in Build.
+Old `/session/SID/project` links redirect to the same session workspace.
+Download JSON from History; session reports also include project verdicts and attribution.
 
 ## Reuse and bounded revalidation
 

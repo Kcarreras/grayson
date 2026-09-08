@@ -121,7 +121,7 @@ def main():
         json.dumps(result, indent=2), encoding="utf-8"
     )
     (args.output / "report.md").write_text(render_markdown(build_report(session)), encoding="utf-8")
-    url = f"http://127.0.0.1:{args.port}/session/{session.id}/project?t=project-demo"
+    url = f"http://127.0.0.1:{args.port}/session/{session.id}?t=project-demo"
     print(
         json.dumps(
             {
