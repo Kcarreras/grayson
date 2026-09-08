@@ -11,6 +11,8 @@ def register(app, workspace, templates, check, session, redirect):
     from grayson.core import criteria
 
     def criteria_context(s, pid, items=None, error=None):
+        from grayson.ui.diffs import review_proposal
+
         spec = criteria.contract(s, pid)
         draft = items or (spec["criteria"] if spec else [{"id": "criterion_1"}])
         queries = criteria.query_choices(s)["queries"]
@@ -40,7 +42,7 @@ def register(app, workspace, templates, check, session, redirect):
         return {
             "nav": "sessions",
             "s": s.summary(),
-            "p": s.proposal(pid),
+            "p": review_proposal(s, s.proposal(pid)),
             "contract": spec,
             "draft": draft,
             "queries": queries,

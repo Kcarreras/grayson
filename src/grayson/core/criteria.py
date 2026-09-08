@@ -327,7 +327,13 @@ def set_criteria(session: Session, pid: str, spec: dict) -> dict:
     return contract(session, pid)
 
 
-def approve(session: Session, pid: str, reviewed_digest: str, actor: str) -> None:
+def approve(
+    session: Session,
+    pid: str,
+    reviewed_digest: str,
+    actor: str,
+    acknowledge_deletions: bool = False,
+) -> None:
     if actor != "user":
         raise ValueError("approving success criteria is a user action")
     con = session._con()
@@ -336,6 +342,14 @@ def approve(session: Session, pid: str, reviewed_digest: str, actor: str) -> Non
         current = contract(session, pid)
         if not current or current["digest"] != reviewed_digest:
             raise ValueError("the fix or criteria changed since review; reload and review again")
+        proposal = session.proposal(pid)
+        if proposal["payload"].get("file_change"):
+            from grayson.core import file_fixes
+
+            if session.stage == "closed":
+                raise ValueError("cannot approve a file fix on a closed session")
+            file_fixes.check_source(session, proposal)
+            file_fixes.confirm_deletions(proposal, acknowledge_deletions)
         if current["scope_required"]:
             raise ValueError("approve the scope expansion before approving this fix's criteria")
         if current["connection"] != session.connection:

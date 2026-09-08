@@ -98,7 +98,12 @@ def record_proposal(
 
 
 def decide(
-    session: Session, pid: str, approve: bool, actor: str = "user", digest: str = ""
+    session: Session,
+    pid: str,
+    approve: bool,
+    actor: str = "user",
+    digest: str = "",
+    acknowledge_deletions: bool = False,
 ) -> dict:
     try:
         from grayson.core import criteria
@@ -111,9 +116,9 @@ def decide(
                 raise ProposalError("cannot approve a file fix on a closed session")
             file_fixes.check_source(session, proposal)
             if not criteria.contract(session, pid):
-                return file_fixes.approve(session, pid, digest, actor)
+                return file_fixes.approve(session, pid, digest, actor, acknowledge_deletions)
         if approve and criteria.contract(session, pid):
-            criteria.approve(session, pid, digest, actor)
+            criteria.approve(session, pid, digest, actor, acknowledge_deletions)
             return session.proposal(pid)
         session.decide_proposal(pid, "approved" if approve else "rejected", actor)
     except (KeyError, ValueError, OSError) as e:
@@ -121,7 +126,14 @@ def decide(
     return session.proposal(pid)
 
 
-def mark_applied(session: Session, pid: str, actor: str = "agent") -> dict:
+def mark_applied(
+    session: Session,
+    pid: str,
+    actor: str = "agent",
+    reviewed_digest: str | None = None,
+) -> dict:
+    if session.stage == "closed":
+        raise ProposalError("cannot record application on a closed session")
     p = session.proposal(pid)
     if p is None:
         raise ProposalError(f"no proposal '{pid}'")
@@ -129,6 +141,11 @@ def mark_applied(session: Session, pid: str, actor: str = "agent") -> dict:
         raise ProposalError(
             "use proposal apply (MCP: proposal_apply); Grayson writes and records this fix"
         )
+    if reviewed_digest is not None:
+        from grayson.core.file_fixes import review_digest
+
+        if review_digest(p) != reviewed_digest:
+            raise ProposalError("the proposal changed since review; reload before confirming")
     if p["status"] != "approved":
         raise ProposalError(
             f"proposal '{pid}' must be approved before it is applied (status={p['status']})"

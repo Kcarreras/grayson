@@ -101,8 +101,22 @@ form. IDs are generated if omitted. criteria_queries finds current-session basel
 and can search other sessions on the same connection. Include source_session with an
 external source_qid. Additional tables trigger a scope request; await the user's response.
 Saving criteria never grants scope or approves a fix.
-Local source files remain unchanged until approval. Use proposal_draft_file with
-the full replacement text to generate a reviewable diff without editing the source.
+Before drafting, read fix_delivery in session_status or session_brief and follow
+the user's preference. auto lets you choose; local_file requests a local fix;
+sql_snippet requests SQL to copy and run elsewhere. If no local SQL file exists,
+use proposal_add(kind="ddl_snippet", payload={"ddl": complete SQL, "run_target":
+intended editor/database/schema, "rationale": explanation, "success_criteria":
+optional criteria spec}). This route needs no local file and never executes SQL.
+Prefer complete runnable statements; clearly identify any required placeholders.
+Do not invent missing original definitions or submit ellipses as executable SQL.
+The user approves, copies/downloads, and executes elsewhere. Call proposal_applied
+only AFTER the user confirms execution, then verify where the connection permits.
+Local source files remain unchanged until approval. For existing files, read the
+source, call proposal_file_snapshot, then proposal_draft_edits with that hash and
+ALL exact old_text/new_text edits in ONE call. Unchanged content is preserved on
+the server. Never split a file into replacement proposals. Reuse request_id only
+for identical retries; use a new request_id and supersedes for a corrected draft.
+Use proposal_draft_file for new files or small complete replacements only.
 After the user approves that proposal, call proposal_apply; it writes only the
 approved content and records application. Never edit first to generate a diff,
 even temporarily, and never use shell/editor tools to apply a fix around this gate.
@@ -832,8 +846,12 @@ def build_server(workspace: Workspace) -> Any:
 
     @mcp.tool(
         description="Draft a fix proposal (file_diff|ddl_snippet) linked to a finding. "
-        "For local files use proposal_draft_file instead: it snapshots the source "
-        "without editing it and supports approval-gated application."
+        "For SQL the user will copy and run elsewhere, or when no local SQL file is "
+        "available, choose ddl_snippet with payload {ddl: complete SQL, run_target: "
+        "intended database/schema/editor, rationale: explanation, success_criteria: "
+        "optional criteria spec}. This creates a reviewable, copyable SQL proposal; "
+        "it does not execute SQL. Follow fix_delivery from session_status. "
+        "For local files prefer proposal_draft_edits (proposal_draft_file for new files)."
     )
     def proposal_add(
         session_id: str,
@@ -851,11 +869,80 @@ def build_server(workspace: Workspace) -> Any:
             return _err(e)
 
     @mcp.tool(
+        description="Get the current SHA-256 and size of an existing workspace file. "
+        "Read the source with native read/search tools, then use this sha256 as "
+        "expected_source_sha256 in proposal_draft_edits. Does not modify any file."
+    )
+    def proposal_file_snapshot(session_id: str, target_file: str) -> dict:
+        from grayson.core import file_fixes
+
+        try:
+            return file_fixes.source_snapshot(_session(session_id), target_file)
+        except (ValueError, OSError) as e:
+            return _err(e)
+
+    @mcp.tool(
+        description="Preferred way to propose changes to an existing file. Supply the "
+        "sha256 from proposal_file_snapshot and ALL edits in ONE call as "
+        "[{old_text: exact unique source text, new_text: replacement}]. Every edit "
+        "matches the ORIGINAL source, never the result of an earlier edit. Matches must "
+        "be unique and non-overlapping; include context for insertions. Preserves all "
+        "untouched bytes and creates one complete proposal only if every edit succeeds. "
+        "Reuse request_id on identical retries; for revisions use a new request_id and "
+        "supersedes=old proposal id. Include success_criteria for review. Source stays "
+        "unchanged until UI approval and proposal_apply. Never submit file chunks."
+    )
+    def proposal_draft_edits(
+        session_id: str,
+        target_file: str,
+        expected_source_sha256: str,
+        edits: list[dict[str, str]],
+        title: str,
+        request_id: str,
+        finding: str | None = None,
+        rationale: str = "",
+        worker: str | None = None,
+        success_criteria: dict | None = None,
+        supersedes: str | None = None,
+    ) -> dict:
+        from grayson.core import file_fixes
+
+        try:
+            proposal = file_fixes.draft(
+                _session(session_id),
+                target_file,
+                None,
+                title,
+                finding,
+                rationale,
+                worker,
+                success_criteria,
+                edits=edits,
+                expected_source_sha256=expected_source_sha256,
+                request_id=request_id,
+                supersedes=supersedes,
+            )
+            # Return the review summary, not an echo of the entire reconstructed file.
+            return {
+                "pid": proposal["pid"],
+                "status": proposal["status"],
+                "title": proposal["title"],
+                "target_file": proposal["payload"]["target_file"],
+                "file_change": proposal["payload"]["file_change"],
+                "supersedes": proposal["payload"].get("supersedes"),
+            }
+        except (ValueError, OSError) as e:
+            return _err(e)
+
+    @mcp.tool(
         description="Draft a local file fix without changing the source. Supply target_file "
         "relative to the workspace and the full new_content (UTF-8 text). Grayson captures "
         "the original, generates the diff for UI review, and waits for human approval. "
         "Include success_criteria (the criteria_set spec) to draft the fix and its outcomes "
-        "together for review. Then call proposal_apply; do not edit the source yourself."
+        "together for review. Prefer proposal_draft_edits for existing files. Never send "
+        "partial content or chunks; suspicious shrinkage is refused. Reuse request_id "
+        "on identical retries; use a new id and supersedes for a revision. "
+        "Then call proposal_apply; do not edit the source yourself."
     )
     def proposal_draft_file(
         session_id: str,
@@ -866,6 +953,8 @@ def build_server(workspace: Workspace) -> Any:
         rationale: str = "",
         worker: str | None = None,
         success_criteria: dict | None = None,
+        request_id: str | None = None,
+        supersedes: str | None = None,
     ) -> dict:
         from grayson.core import file_fixes
 
@@ -879,6 +968,8 @@ def build_server(workspace: Workspace) -> Any:
                 rationale,
                 worker,
                 success_criteria,
+                request_id=request_id,
+                supersedes=supersedes,
             )
         except (ValueError, OSError) as e:
             return _err(e)
@@ -904,8 +995,9 @@ def build_server(workspace: Workspace) -> Any:
             return [_err(e)]
 
     @mcp.tool(
-        description="Mark an approved proposal as applied (after the harness agent "
-        "edited the files)."
+        description="Record external application of approved SQL ONLY after the user "
+        "confirms they executed it elsewhere. This does not run SQL or verify success. "
+        "For managed local files use proposal_apply instead."
     )
     def proposal_applied(session_id: str, pid: str) -> dict:
         try:

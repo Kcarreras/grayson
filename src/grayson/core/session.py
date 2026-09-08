@@ -1114,6 +1114,16 @@ class Session:
 
     # -- summary / cleanup ----------------------------------------------
 
+    def set_fix_delivery(self, delivery: str, actor: str = "user") -> None:
+        if actor != "user":
+            raise ValueError("choosing the fix delivery preference is a user action")
+        if self.stage == "closed":
+            raise ValueError("cannot change fix delivery on a closed session")
+        if delivery not in {"auto", "local_file", "sql_snippet"}:
+            raise ValueError("fix delivery must be auto, local_file or sql_snippet")
+        self.set_meta("fix_delivery", delivery)
+        self.log_event(actor, "fix_delivery_changed", {"delivery": delivery})
+
     def summary(self) -> dict:
         # One connection for everything: meta, workers, and the executed count.
         con = self._con()
@@ -1135,6 +1145,7 @@ class Session:
             "title": meta.get("title", ""),
             "workflow": meta.get("workflow", ""),
             "stage": meta.get("stage", "setup"),
+            "fix_delivery": meta.get("fix_delivery", "auto"),
             "outcome": meta.get("outcome", ""),
             "outcome_note": meta.get("outcome_note", ""),
             "created_at": meta.get("created_at"),

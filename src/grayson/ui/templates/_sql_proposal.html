@@ -1,0 +1,24 @@
+{% macro sql_proposal(p, s, token) -%}
+<section class="sql-proposal" aria-label="SQL to copy and run">
+  <div class="diff-heading"><strong>SQL to copy and run</strong><span class="badge {{ 'act' if p.status == 'approved' else 'plain' }}">{{ p.status | replace('_', ' ') }}</span></div>
+  {% if p.payload.run_target %}<p class="small">Run in <span class="mono">{{ p.payload.run_target }}</span></p>{% endif %}
+  <p class="small muted">{% if p.status == 'proposed' %}Review and approve this SQL before running it in your own editor.{% elif p.status == 'approved' %}Copy the approved SQL, run it in your own editor, then confirm below.{% elif p.status in ['applied', 'verified', 'verification_failed'] %}Execution was reported outside Grayson. Verification results are recorded separately.{% else %}Historical SQL for reference.{% endif %} Grayson does not execute this SQL.</p>
+  <div class="row sql-transfer">
+    {% set sql_url = '/session/' ~ s.id ~ '/proposal/' ~ p.pid ~ '/sql?t=' ~ token ~ '&digest=' ~ p.review_digest %}
+    <button type="button" class="btn sm" data-copy-sql="{{ sql_url }}">Copy SQL</button>
+    <a class="btn sm secondary" href="{{ sql_url }}" download="{{ p.pid }}.sql">Download .sql</a>
+    <span class="small muted" data-copy-status role="status" aria-live="polite"></span>
+  </div>
+  <pre class="sql sql-proposal-code" tabindex="0" aria-label="Proposed SQL">{{ p.payload.ddl | sqlhl }}</pre>
+</section>
+{%- endmacro %}
+
+{% macro external_applied(p, s, token) -%}
+{% if p.status == 'approved' and s.stage != 'closed' %}
+<form class="proposal-actions" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/applied?t={{ token }}">
+  <input type="hidden" name="digest" value="{{ p.review_digest }}">
+  <button class="btn primary sm" type="submit">I've applied this</button>
+  <span class="small muted">Confirms you ran the approved SQL elsewhere. This does not execute SQL or mark verification as passed.</span>
+</form>
+{% endif %}
+{%- endmacro %}

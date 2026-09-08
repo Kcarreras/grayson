@@ -81,6 +81,8 @@ def test_tools_registered(server):
         "intervention_await",
         "intervention_list",
         "proposal_add",
+        "proposal_file_snapshot",
+        "proposal_draft_edits",
         "proposal_list",
         "proposal_applied",
         "proposal_verify",
@@ -95,6 +97,48 @@ def test_tools_registered(server):
         "views_check",
     }
     assert expected <= names, f"missing: {expected - names}"
+
+
+def test_mcp_targeted_edits_are_atomic_and_return_a_compact_retryable_summary(server, workspace):
+    from grayson.core import file_fixes, proposals
+    from grayson.core.session import Session
+
+    session = Session.create(
+        workspace,
+        workflow="bug-hunter",
+        targets=[],
+        guard=workspace.config.resolve_profile("moderate"),
+        guard_profile="moderate",
+    )
+    source = workspace.root / "model.sql"
+    original = "".join(f"SELECT {i};\n" for i in range(2696))
+    source.write_bytes(original.encode())
+    snapshot = _call(
+        server, "proposal_file_snapshot", {"session_id": session.id, "target_file": "model.sql"}
+    )
+    args = {
+        "session_id": session.id,
+        "target_file": "model.sql",
+        "expected_source_sha256": snapshot["sha256"],
+        "title": "Correct model",
+        "request_id": "model-fix",
+        "edits": [{"old_text": "SELECT 99;", "new_text": "SELECT 9999;"}],
+    }
+    p = _call(server, "proposal_draft_edits", args)
+    assert p["status"] == "proposed"
+    assert p["file_change"]["stats"]["after_lines"] == 2696
+    assert len(json.dumps(p)) < 1500
+    assert _call(server, "proposal_draft_edits", args)["pid"] == p["pid"]
+    assert len(session.proposals()) == 1
+    assert source.read_text() == original
+    stored = session.proposal(p["pid"])
+    proposals.decide(session, p["pid"], True, digest=file_fixes.review_digest(stored))
+    assert (
+        _call(server, "proposal_apply", {"session_id": session.id, "pid": p["pid"]})["status"]
+        == "applied"
+    )
+    assert source.read_text() == original.replace("SELECT 99;", "SELECT 9999;")
+    assert _call(server, "proposal_draft_edits", args)["status"] == "applied"
 
 
 def test_workflow_list_tool(server):

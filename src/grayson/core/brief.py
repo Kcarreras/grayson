@@ -67,6 +67,7 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
         "title": summary["title"],
         "workflow": summary["workflow"],
         "stage": summary["stage"],
+        "fix_delivery": summary["fix_delivery"],
         "outcome": summary["outcome"],
         "outcome_note": summary["outcome_note"],
         "created_at": summary["created_at"],
@@ -200,6 +201,12 @@ def render_brief(brief: dict) -> str:
     if brief["outcome"]:
         head.append(f"outcome {brief['outcome']}")
     lines.append(" · ".join(head))
+    delivery = {
+        "auto": "Let the agent choose",
+        "local_file": "Update a local file",
+        "sql_snippet": "SQL to copy and run",
+    }
+    lines.append(f"Fix delivery preference: {delivery[brief.get('fix_delivery', 'auto')]}")
     scope = ", ".join(brief["targets"]) or "(none)"
     if brief["scope_extra"]:
         scope += f"  (+ granted scope: {', '.join(brief['scope_extra'])})"
