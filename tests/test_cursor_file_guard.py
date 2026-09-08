@@ -31,6 +31,7 @@ def investigation(workspace):
 
 
 def _hook(root, event):
+    event = {"workspace_roots": [str(root)], **event}
     result = subprocess.run(
         [
             os.environ.get("GRAYSON_TEST_GUARD_PYTHON", sys.executable),
@@ -117,6 +118,7 @@ def test_cursor_project_identity_stays_available_after_session_start(investigati
     event = {
         "hook_event_name": "beforeMCPExecution",
         "mcp_server_name": f"project-{index}-{root.name}-grayson",
+        "workspace_roots": [str(root.parent / f"other-{i}") for i in range(index)] + [str(root)],
         "tool_name": tool,
         "tool_input": {"session_id": investigation.id},
         "command": "grayson mcp serve",
@@ -201,6 +203,126 @@ def test_reported_cursor_identity_for_hyphenated_workspace(tmp_path):
         },
     )
     assert result["permission"] == "allow"
+
+
+@pytest.mark.parametrize("hook", ["preToolUse", "beforeMCPExecution"])
+@pytest.mark.parametrize("encoded", [False, True])
+@pytest.mark.parametrize("server", [None, "", "grayson"])
+def test_dynamic_grayson_call_uses_routing_namespace(investigation, hook, encoded, server):
+    root = investigation.workspace.root
+    apply_mcp(root, "cursor")
+    inputs = {
+        "namespace": f"project-0-{root.name}-grayson",
+        "toolName": "knowledge_sync",
+        "arguments": {"session_id": investigation.id, "table": "EXAMPLE"},
+    }
+    result = _hook(
+        root,
+        {
+            "hook_event_name": hook,
+            "tool_name": "CallDynamicTool",
+            "mcp_server_name": server,
+            "tool_input": json.dumps(inputs) if encoded else inputs,
+        },
+    )
+    assert result["permission"] == "allow", result
+
+
+@pytest.mark.parametrize("hook", ["preToolUse", "beforeMCPExecution"])
+@pytest.mark.parametrize(
+    "namespace,server",
+    [
+        (None, None),
+        ("", ""),
+        ([], None),
+        ({"namespace": "grayson"}, None),
+        ("filesystem", None),
+        ("not-grayson", None),
+        ("cursor", None),
+        ("project-0-other-workspace-grayson", None),
+        ("grayson", "filesystem"),
+        ("filesystem", "grayson"),
+    ],
+)
+def test_dynamic_call_cannot_bypass_identity(investigation, hook, namespace, server):
+    root = investigation.workspace.root
+    apply_mcp(root, "cursor")
+    result = _hook(
+        root,
+        {
+            "hook_event_name": hook,
+            "tool_name": "CallDynamicTool",
+            "mcp_server_name": server,
+            "tool_input": {
+                "namespace": namespace,
+                "toolName": "query_run",
+                "arguments": {
+                    "namespace": "grayson",
+                    "sql": "DO_NOT_ECHO_SQL",
+                    "token": "DO_NOT_ECHO_TOKEN",
+                },
+            },
+        },
+    )
+    assert result["permission"] == "deny"
+    assert "CallDynamicTool" in result["agent_message"]
+    assert "DO_NOT_ECHO" not in json.dumps(result)
+
+
+def test_mcp_argument_namespace_is_not_server_identity(investigation):
+    result = _hook(
+        investigation.workspace.root,
+        {
+            "hook_event_name": "beforeMCPExecution",
+            "tool_name": "write_file",
+            "tool_input": {"namespace": "grayson"},
+        },
+    )
+    assert result["permission"] == "deny"
+
+
+def test_dynamic_discovery_does_not_unlock_execution(investigation):
+    root = investigation.workspace.root
+    event = {"hook_event_name": "preToolUse", "tool_name": "GetDynamicTools"}
+    assert _hook(root, event)["permission"] == "allow"
+    event.update(tool_name="CallDynamicTool", tool_input={"namespace": "filesystem"})
+    assert _hook(root, event)["permission"] == "deny"
+    event.update(tool_name="Write", tool_input={"file_path": "model.sql"})
+    assert _hook(root, event)["permission"] == "deny"
+
+
+@pytest.mark.parametrize("hook", ["preToolUse", "beforeMCPExecution"])
+def test_multiroot_same_basename_requires_matching_index(investigation, hook):
+    root = investigation.workspace.root
+    other = root.parent / "other" / root.name
+    other.mkdir(parents=True)
+    apply_mcp(root, "cursor")
+    apply_mcp(other, "cursor")
+    event = {
+        "hook_event_name": hook,
+        "tool_name": "CallDynamicTool",
+        "workspace_roots": [str(other), str(root)],
+        "tool_input": {"namespace": f"project-0-{root.name}-grayson"},
+    }
+    assert _hook(root, event)["permission"] == "deny"
+    event["tool_input"]["namespace"] = f"project-1-{root.name}-grayson"
+    assert _hook(root, event)["permission"] == "allow"
+
+
+@pytest.mark.parametrize("roots", [None, [], "not-a-list", [None], ["relative-path"]])
+def test_qualified_server_requires_valid_workspace_roots(investigation, roots):
+    root = investigation.workspace.root
+    apply_mcp(root, "cursor")
+    result = _hook(
+        root,
+        {
+            "hook_event_name": "beforeMCPExecution",
+            "tool_name": "query_run",
+            "mcp_server_name": f"project-0-{root.name}-grayson",
+            "workspace_roots": roots,
+        },
+    )
+    assert result["permission"] == "deny"
 
 
 def test_approved_proposal_uses_controlled_apply_not_a_general_write_unlock(investigation):

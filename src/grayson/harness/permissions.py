@@ -377,7 +377,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-READ_TOOLS = {"Read", "Grep", "Glob", "LS", "SemanticSearch"}
+READ_TOOLS = {"Read", "Grep", "Glob", "LS", "SemanticSearch", "GetDynamicTools"}
 COORDINATION_TOOLS = {"Task", "TodoWrite", "AskQuestion", "AskUserQuestion"}
 FILE_FIX_WHY = (
     "a Grayson investigation is open: source files must remain unchanged until UI approval. "
@@ -437,7 +437,7 @@ def investigation_open():
     return False
 
 
-def is_grayson_server(name):
+def is_grayson_server(name, event):
     if name == "grayson":
         return True
     if not isinstance(name, str):
@@ -445,9 +445,21 @@ def is_grayson_server(name):
     # Cursor can qualify project MCP identities, for example
     # project-0-sql-qa-workspace-grayson. Bind that alias to this workspace's
     # configured grayson entry, not to any server whose name ends in grayson.
-    if re.fullmatch(r"project-[0-9]+-" + re.escape(ROOT.name) + r"-grayson", name) is None:
+    match = re.fullmatch(r"project-([0-9]+)-" + re.escape(ROOT.name) + r"-grayson", name)
+    if match is None:
         return False
     try:
+        # Cursor's workspace_roots binds the index to an absolute project path.
+        # Two projects can have the same folder name in a multi-root window.
+        roots = event.get("workspace_roots")
+        index = int(match.group(1))
+        if not isinstance(roots, list) or index >= len(roots):
+            return False
+        project = roots[index]
+        if not isinstance(project, str) or not Path(project).is_absolute():
+            return False
+        if Path(project).resolve() != ROOT:
+            return False
         config = json.loads((ROOT / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
         servers = config.get("mcpServers", {})
         return (
@@ -457,6 +469,31 @@ def is_grayson_server(name):
         )
     except (OSError, ValueError, AttributeError):
         return False
+
+
+def is_grayson_mcp_call(event, inputs):
+    server = event.get("mcp_server_name")
+    # A namespace is a routing field only on Cursor's dynamic-call wrapper.
+    # Never let an arbitrary MCP tool argument override a different server.
+    dynamic = event.get("tool_name") == "CallDynamicTool"
+    namespace = inputs.get("namespace") if dynamic else None
+    if server not in (None, ""):
+        return is_grayson_server(server, event) and (
+            namespace is None or is_grayson_server(namespace, event)
+        )
+    return dynamic and is_grayson_server(namespace, event)
+
+
+def mcp_identity_denial(event, inputs):
+    # Routing fields only: do not echo SQL, arguments, credentials or URLs.
+    identity = {
+        "hook": event.get("hook_event_name"),
+        "tool": event.get("tool_name"),
+        "server": event.get("mcp_server_name"),
+    }
+    if event.get("tool_name") == "CallDynamicTool":
+        identity["namespace"] = inputs.get("namespace")
+    return FILE_FIX_WHY + " (unrecognized MCP routing: " + json.dumps(identity) + ")"
 
 #: shell tokens that mean "reaching the warehouse directly", checked against
 #: the normalized command
@@ -587,15 +624,21 @@ def main() -> None:
             return
         if active:
             if hook == "beforeMCPExecution":
-                if not is_grayson_server(event.get("mcp_server_name")):
-                    why = FILE_FIX_WHY + " (MCP identity is not the configured grayson server)"
+                if not is_grayson_mcp_call(event, inputs):
+                    why = mcp_identity_denial(event, inputs)
             elif command or hook == "beforeShellExecution" or tool == "Shell":
                 why = FILE_FIX_WHY
             elif hook == "preToolUse":
-                # Every MCP call is separately checked by beforeMCPExecution.
-                is_mcp = tool == "MCP" or tool.startswith(("mcp_", "mcp__"))
-                if tool not in READ_TOOLS | COORDINATION_TOOLS and not is_mcp:
-                    why = FILE_FIX_WHY
+                if tool == "CallDynamicTool":
+                    # Validate the route here too; don't assume this wrapper
+                    # always produces a second beforeMCPExecution event.
+                    if not is_grayson_mcp_call(event, inputs):
+                        why = mcp_identity_denial(event, inputs)
+                else:
+                    # Direct MCP calls are checked by beforeMCPExecution.
+                    is_mcp = tool == "MCP" or tool.startswith(("mcp_", "mcp__"))
+                    if tool not in READ_TOOLS | COORDINATION_TOOLS and not is_mcp:
+                        why = FILE_FIX_WHY + " (unrecognized tool: " + str(tool) + ")"
             elif hook not in {"beforeReadFile", "beforeTabFileRead"}:
                 why = "unknown hook event during an open Grayson investigation"
     respond(why)
