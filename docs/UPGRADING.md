@@ -112,6 +112,11 @@ routing identity so unknown event shapes can be diagnosed without exposing SQL
 or nested tool arguments. Do not replace these checks with a substring match
 or an unconditional exemption for dynamic tool calls.
 
+Direct calls labeled `MCP:<tool>` (such as `MCP:knowledge_sync`) are recognized
+at `preToolUse` too. That label identifies the tool kind, not a trusted server;
+the separate `beforeMCPExecution` identity check still applies. A missing server
+name on a direct call is denied rather than inferred from arbitrary tool arguments.
+
 ## Adopting regression checks
 
 [Regression checks](REGRESSIONS.md) add optional files under the existing

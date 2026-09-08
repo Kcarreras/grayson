@@ -635,8 +635,10 @@ def main() -> None:
                     if not is_grayson_mcp_call(event, inputs):
                         why = mcp_identity_denial(event, inputs)
                 else:
-                    # Direct MCP calls are checked by beforeMCPExecution.
-                    is_mcp = tool == "MCP" or tool.startswith(("mcp_", "mcp__"))
+                    # Cursor also labels direct calls MCP:<tool>. This label
+                    # identifies the tool kind, not the server; execution still
+                    # requires a valid identity at beforeMCPExecution.
+                    is_mcp = tool == "MCP" or tool.startswith(("mcp_", "mcp__", "MCP:"))
                     if tool not in READ_TOOLS | COORDINATION_TOOLS and not is_mcp:
                         why = FILE_FIX_WHY + " (unrecognized tool: " + str(tool) + ")"
             elif hook not in {"beforeReadFile", "beforeTabFileRead"}:
