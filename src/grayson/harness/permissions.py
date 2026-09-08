@@ -352,7 +352,7 @@ def _cursor_entry_is_ours(entry: object) -> bool:
 
 
 _CURSOR_HOOK_SCRIPT = r'''#!/usr/bin/env python3
-"""grayson harness guard hook for Cursor (managed by `grayson harness guard`).
+r"""grayson harness guard hook for Cursor (managed by `grayson harness guard`).
 
 Hard-denies agent shell commands invoking the Snowflake CLI (`snow`/`snowsql`)
 or reaching Snowflake through a connector import or its REST API, reads of
@@ -387,8 +387,37 @@ FILE_FIX_WHY = (
 )
 
 
+def read_session_stage(database):
+    uri = database.resolve().as_uri()
+    for mode in ("ro", "rw"):
+        try:
+            # Some SQLite builds cannot open a WAL database read-only when its
+            # sidecars are absent. Allow SQLite to manage those files on retry,
+            # but never create a missing database or permit SQL writes. Do not
+            # use immutable=1: it can ignore live WAL data and miss an open session.
+            con = sqlite3.connect(uri + "?mode=" + mode, uri=True, timeout=1.0)
+            try:
+                con.execute("PRAGMA query_only=ON")
+                row = con.execute("SELECT value FROM meta WHERE key='stage'").fetchone()
+                if row is None:
+                    raise ValueError("session has no stage")
+                return row[0]
+            finally:
+                con.close()
+        except sqlite3.OperationalError as error:
+            # Python before 3.11 (including macOS's system Python) does not
+            # expose sqlite_errorcode. Keep the compatibility check narrow.
+            code = getattr(error, "sqlite_errorcode", None)
+            cant_open = (
+                (code is not None and code & 255 == 14)  # SQLITE_CANTOPEN
+                or (code is None and "unable to open database file" in str(error).lower())
+            )
+            if mode != "ro" or not cant_open:
+                raise
+
+
 def investigation_open():
-    # Read-only SQLite connections avoid migrations or creating missing state.
+    # No migrations or creation of missing state, including on the WAL fallback.
     # Inspect all sessions, not only sessions that already have a proposal: the
     # premature edit often happens BEFORE proposal_add is called.
     for state_dir in (".grayson", ".seekql"):
@@ -398,15 +427,13 @@ def investigation_open():
         for session in sessions.iterdir():
             if not session.is_dir():
                 continue
-            con = sqlite3.connect((session / "state.db").resolve().as_uri() + "?mode=ro", uri=True)
             try:
-                row = con.execute("SELECT value FROM meta WHERE key='stage'").fetchone()
-                if row is None:
-                    raise ValueError("session has no stage")
-                if row[0] != "closed":
+                if read_session_stage(session / "state.db") != "closed":
                     return True
-            finally:
-                con.close()
+            except Exception as error:
+                raise RuntimeError(
+                    f"{state_dir}/sessions/{session.name}/state.db: {error}"
+                ) from error
     return False
 
 #: shell tokens that mean "reaching the warehouse directly", checked against
@@ -533,8 +560,8 @@ def main() -> None:
     if why is None:
         try:
             active = investigation_open()
-        except Exception:
-            respond("cannot determine Grayson session state; ask the user to repair it")
+        except Exception as error:
+            respond(f"cannot determine Grayson session state: {error}; ask the user to repair it")
             return
         if active:
             if hook == "beforeMCPExecution":

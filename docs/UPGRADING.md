@@ -70,6 +70,30 @@ Absolute paths and `~` paths keep their existing meaning. If an old relative
 path relied on a particular shell directory, change it to the intended
 config-relative or absolute path before resuming work.
 
+## Repairing the Cursor session-state guard after an upgrade
+
+The Cursor guard is a generated workspace script. Reinstalling the package
+alone does not replace it. After installing the updated package, run this from
+your workspace root in your own terminal, then restart Cursor and the console:
+
+```bash
+grayson harness guard apply --harness cursor
+```
+
+This refreshes Grayson's hook while preserving unrelated hook registrations.
+Do not remove the guard or delete session databases to recover access.
+
+Some SQLite builds fail with `unable to open database file` when reading a WAL
+database through a read-only connection, even though a normal connection can
+read it. The updated guard first tries read-only access, then retries only
+`SQLITE_CANTOPEN` failures using an existing-database connection with SQL writes
+disabled (`query_only`). SQLite can manage journal sidecars; session records and
+journal mode are not rewritten by the guard. It reads current WAL contents and
+does not use immutable snapshots. Missing or damaged state still blocks tools,
+and the denial now includes the failing database path and underlying error.
+
+No session migration or manual journal-mode change is needed.
+
 ## Adopting regression checks
 
 [Regression checks](REGRESSIONS.md) add optional files under the existing

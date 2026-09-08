@@ -26,6 +26,19 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest -q
 
+  cursor-guard-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: Exercise generated hooks with macOS system Python and SQLite
+        env:
+          GRAYSON_TEST_GUARD_PYTHON: /usr/bin/python3
+        run: uv run pytest -q tests/test_cursor_file_guard.py tests/test_bypass_controls.py
+
   appliance:
     runs-on: ubuntu-latest
     steps:
