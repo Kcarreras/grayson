@@ -281,6 +281,40 @@ def test_mcp_argument_namespace_is_not_server_identity(investigation):
     assert result["permission"] == "deny"
 
 
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "MCP",
+        "mcp_grayson_knowledge_sync",
+        "mcp__grayson__knowledge_sync",
+        "MCP:knowledge_sync",
+        "MCP:query_run",
+        "MCP:session_close",
+    ],
+)
+@pytest.mark.parametrize(
+    "server,permission",
+    [
+        ("grayson", "allow"),
+        ("filesystem", "deny"),
+        ("", "deny"),
+        (None, "deny"),
+    ],
+)
+def test_direct_mcp_labels_reach_separate_identity_check(investigation, tool, server, permission):
+    root = investigation.workspace.root
+    event = {
+        "hook_event_name": "preToolUse",
+        "tool_name": tool,
+        "tool_input": {"session_id": investigation.id, "namespace": "grayson"},
+    }
+    assert _hook(root, event)["permission"] == "allow"
+    event.update(hook_event_name="beforeMCPExecution", mcp_server_name=server)
+    # The tool label (or an argument called namespace) cannot grant execution.
+    result = _hook(root, event)
+    assert result["permission"] == permission, result
+
+
 def test_dynamic_discovery_does_not_unlock_execution(investigation):
     root = investigation.workspace.root
     event = {"hook_event_name": "preToolUse", "tool_name": "GetDynamicTools"}
