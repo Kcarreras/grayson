@@ -513,7 +513,9 @@ def plan_harness(root: Path, harness: str, with_mcp: bool = True) -> dict[str, s
     """Render every output before writing any file, including shared sections."""
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness '{harness}' (known: {', '.join(sorted(HARNESSES))})")
-    body = PROTOCOL + (MCP_NOTE if with_mcp else "")
+    from grayson.projects.protocol import PROJECT_PROTOCOL
+
+    body = PROTOCOL + PROJECT_PROTOCOL + (MCP_NOTE if with_mcp else "")
     rel = INSTRUCTION_PATHS[harness]
     target = root / rel
     existing = target.read_text(encoding="utf-8") if target.is_file() else ""

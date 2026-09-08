@@ -36,7 +36,17 @@ def run_statement(
     executor: Executor | None = None,
 ) -> dict:
     """Full path: allocate audit row, guard, execute, cache, report."""
+    from grayson.projects.engine import query_blocker
+
     qid = session.allocate_qid(worker, sql, label)
+    try:
+        blocked = query_blocker(session, allocated=True)
+    except (ValueError, KeyError, OSError) as e:
+        blocked = f"Project controls could not be evaluated: {e}"
+    if blocked:
+        session.update_query(qid, status="rejected", guard_rule="project", reason=blocked)
+        session.log_event(worker or "agent", "query_rejected", {"qid": qid, "rule": "project"})
+        return {"qid": qid, "status": "rejected", "rule": "project", "reason": blocked}
     # The pending row for this query already exists; count everything else that
     # consumes budget (executed + other in-flight) so a hard cap holds under
     # concurrent workers rather than being a soft per-worker advisory.

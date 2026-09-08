@@ -4432,6 +4432,9 @@ def ui_serve(
 from grayson.assurance_cli import register as _register_assurance  # noqa: E402
 
 _register_assurance(app, _session, _workspace, emit, fail)
+from grayson.projects.cli import register as _register_projects  # noqa: E402
+
+_register_projects(app, _session, emit, fail, require_interactive, default_actor)
 
 
 def main() -> None:

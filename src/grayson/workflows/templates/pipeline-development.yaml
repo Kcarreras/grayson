@@ -1,0 +1,50 @@
+name: pipeline-development
+title: Develop and verify a SQL pipeline
+description: >
+  Turn an approved goal into a verified SQL pipeline. Iterate on candidate
+  transformations using explicit join contracts, grain, population and measure
+  checks. DDL approval and execution remain human actions.
+tags: [projects, autonomous, pipeline]
+suggested_guard_profile: moderate
+suggested_strict_scope: true
+project:
+  format: 1
+  kind: pipeline
+  approval: milestones
+  max_iterations: 12
+  max_queries: 200
+  max_minutes: 120
+  max_stalled_iterations: 3
+  evidence_minutes: 60
+setup_inputs:
+  - key: goal
+    prompt: What should the pipeline produce, for whom, at what grain and cadence?
+  - key: semantics
+    prompt: What definitions, exclusions and time window must it respect?
+  - key: output
+    prompt: What deliverable and deployment destination are intended?
+required_checks:
+  - key: source_understood
+    title: Source grain and semantics understood
+    description: >
+      Inspect sources and test grain and nulls. Reference the approved semantic
+      definitions. Ask a structured intervention for unresolved business meaning.
+    uses_inputs: [goal, semantics]
+  - key: candidate_verified
+    title: Candidate preserves the agreed population and values
+    description: >
+      Run project verification. Cite its generated join, population, grain and
+      measure evidence. Failures require diagnosis and repair, never weaker criteria.
+    depends_on: [source_understood]
+    uses_inputs: [output]
+  - key: interpretation_reviewed
+    title: Review the implementation and remaining uncertainty
+    description: >
+      Challenge filters, DISTINCT, aggregation, join keys, nulls and inferred
+      semantics. Record project review answers and unresolved deployment limitations.
+    depends_on: [candidate_verified]
+suggested_checks:
+  - key: boundary_cases
+    title: Test boundary and late-arriving cases
+    description: Test time boundaries, late data, empty partitions and changing dimensions.
+findings_schema: standard_v1

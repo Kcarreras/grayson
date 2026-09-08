@@ -159,6 +159,12 @@
 
 <div class="card">
   <div class="overline mb-3">How a session runs {{ help("session_flow") }}</div>
+  {% if tpl.project %}
+  <p><b>Approve brief → develop candidate → verify → diagnose and revise → review → accept.</b></p>
+  <p>Pipeline projects then prepare DDL for your approval and execution, and verify the deployed output.</p>
+  <p>{{ tpl.project.approval }} approvals · {{ tpl.project.max_iterations }} iterations · {{ tpl.project.max_queries }} queries · {{ tpl.project.max_minutes }} minutes.</p>
+  <p class="muted">Templates are pinned per project. Checks stay mandatory at every approval level; findings are optional.</p>
+  {% else %}
   <div class="wfrail">
     <div class="wfnode">
       <div class="nh"><span class="wfdot" style="background: var(--ok);"></span>Setup</div>
@@ -189,7 +195,19 @@
       <div class="nd">Approved fixes, verified by a before/after re-run.</div>
     </div>
   </div>
+  {% endif %}
 </div>
+
+{% if editable %}<details class="fold"><summary>Project settings</summary>
+<p>Enable goal-driven execution on this workflow, or adjust its suggested limits. Existing projects keep their pinned settings.</p>
+<form method="post" action="/workflows/{{ tpl.name }}/element?t={{ token }}">
+ {{ op_fields('project', 'upsert') }}
+ <div class="two"><label>Project kind <select name="project_kind">{% for kind in ['pipeline','analysis'] %}<option {{ 'selected' if tpl.project and tpl.project.kind == kind }}>{{ kind }}</option>{% endfor %}</select></label>
+ <label>Approval level <select name="approval">{% for level in ['guided','milestones','bounded'] %}<option {{ 'selected' if (tpl.project.approval if tpl.project else 'milestones') == level }}>{{ level }}</option>{% endfor %}</select></label></div>
+ <div class="two">{% for name, label, default in [('max_iterations','Maximum iterations',12),('max_queries','Query budget',200),('max_minutes','Time budget (minutes)',120),('max_stalled_iterations','Stalled iterations before escalation',3),('evidence_minutes','Evidence freshness (minutes)',60),('max_actions','Supervisor action budget',200),('max_revalidations','Preapproved revalidations',0)] %}
+ <label>{{ label }}<input name="{{ name }}" type="number" min="{{ 0 if name == 'max_revalidations' else 1 }}" required value="{{ tpl.project[name] if tpl.project else default }}"></label>{% endfor %}</div>
+ <button class="btn secondary">Review project settings</button>
+</form></details>{% endif %}
 
 {% if warnings %}
 <div class="card attn mt-3">

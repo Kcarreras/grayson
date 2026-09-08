@@ -34,7 +34,10 @@
   {% if s.stage != 'closed' and not error %}<div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>{% endif %}
 </div>
 
-{{ stage_timeline(s, stages, readiness, findings, proposals) }}
+{% if project_workflow %}
+<div class="card"><div class="overline">SQL PROJECT</div><p>{{ project_view.next_action }}</p>
+<a class="btn" href="/session/{{ s.id }}/project?t={{ token }}">Open project workspace →</a></div>
+{% else %}{{ stage_timeline(s, stages, readiness, findings, proposals) }}{% endif %}
 
 {# each stat tile is a link to the section it counts; the base script scrolls
    there and unfolds it first if it is collapsed #}
@@ -70,11 +73,12 @@
     {{ outcome(s.outcome) }}
     <span class="muted small">{% if s.outcome == "clean" %}Confirmed by you: checks cleared, nothing found.
       {% elif s.outcome == "abandoned" %}Closed without a result; nothing published.
+      {% elif s.outcome == "project_verified" %}Project verification complete; see the project for approval attribution.
       {% else %}Closed with accepted findings.{% endif %}</span>
   </div>
   {% if s.outcome_note %}<div class="muted small" style="margin-top: 6px;">{{ s.outcome_note }}</div>{% endif %}
 </div>
-{% elif readiness.clean_close_available and s.stage != "closed" %}
+{% elif readiness.clean_close_available and s.stage != "closed" and not project_workflow %}
 <div class="card" style="margin: 12px 0;">
   <div class="overline" style="margin-bottom: 6px;">This run came back clean</div>
   <div class="muted small" style="margin-bottom: 10px;">

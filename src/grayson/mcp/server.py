@@ -1540,6 +1540,9 @@ def build_server(workspace: Workspace) -> Any:
     from grayson.mcp.assurance import register
 
     register(mcp, _session, workspace, _err)
+    from grayson.mcp.projects import register as register_projects
+
+    register_projects(mcp, _session, workspace, _err)
     return mcp
 
 

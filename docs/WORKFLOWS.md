@@ -92,7 +92,7 @@ exist to prevent.
 
 ## The core templates
 
-Seven ship built-in:
+Seven QA workflows and two goal-driven project workflows ship built-in:
 
 | Workflow | Purpose |
 |---|---|
@@ -103,6 +103,12 @@ Seven ship built-in:
 | `migration-parity` | Old-vs-new parity: schemas, counts, keys, values, null semantics |
 | `table-onboarding` | Build the base descriptor for an undocumented table |
 | `feature-readiness` | Assess a feature table / training set before it feeds a model |
+| `pipeline-development` | Develop and verify a new SQL pipeline under an approved project brief |
+| `goal-analysis` | Develop an analysis through bounded exploration, verification and critical review |
+
+Project templates carry a typed `project` configuration and use the same
+create/fork/edit/preview/library controls. Their lifecycle uses project contracts
+and candidate verification; findings are optional. See [PROJECTS.md](PROJECTS.md).
 
 Notes on three of them:
 

@@ -1565,6 +1565,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         changes: dict[str, object] = {}
         if only == "auto_push":
             changes["library.auto_push"] = form.get("auto_push") == "true"
+        elif only == "projects":
+            changes["projects.max_approval"] = str(form.get("max_approval", ""))
         else:
             changes["connection.name"] = form.get("connection", "")
             changes["defaults.guard_profile"] = form.get("guard_profile", "")
@@ -1893,6 +1895,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     def _session_context(s: Session, error: str | None = None) -> dict:
         from grayson.checks.regression import RegressionStore
         from grayson.core.file_fixes import review_digest
+        from grayson.projects.engine import status as project_status
         from grayson.ui.diffs import review_proposal
 
         queries = s.query_log(100)
@@ -1902,6 +1905,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             p["superseded_by"] = revisions.get(p["pid"])
         return {
             "nav": "sessions",
+            "project_view": project_status(s),
+            "project_workflow": engine.workflow_for(s, workspace.workflows_dir).project is not None,
             "guard_profiles": sorted(workspace.config.guard_profiles),
             "s": s.summary(),
             "setup_inputs": s.setup_inputs(),
@@ -2280,6 +2285,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     from grayson.ui.assurance import register
 
     register(app, workspace, templates, _check, _session, _redirect)
+    from grayson.ui.projects import register as register_projects
+
+    register_projects(app, workspace, templates, _check, _session, _redirect)
     return app
 
 

@@ -1,0 +1,63 @@
+goal: Enrich every order with its current customer region, preserving revenue
+deliverable: Verified order-grain SQL and deployment package
+kind: pipeline
+deployment_target: DB.S.ENRICHED
+scope:
+- DB.S.ORDERS
+- DB.S.CUSTOMERS
+semantics:
+  grain: One row per order ID
+  customer: Only ACTIVE=1 is current
+  amount: Gross order amount, including refunds; never infer net revenue
+data_window: All seeded orders, fixed input snapshot for this test
+semantic_checks:
+  grain:
+  - grain
+  customer:
+  - region
+  amount:
+  - revenue
+policy:
+  kind: pipeline
+  approval: bounded
+  max_queries: 150
+joins:
+- id: enriched
+  left: orders
+  right: customers
+  left_keys:
+  - CUSTOMER_ID
+  right_keys:
+  - CUSTOMER_ID
+  semantics: An order belongs to exactly one current customer
+checks:
+- id: region
+  name: Current customer region
+  kind: values
+  keys:
+  - ID
+  column: REGION
+  rationale: Attach the current region, not an arbitrary version
+  baseline_sql: SELECT o.ID, c.REGION FROM DB.S.ORDERS o LEFT JOIN DB.S.CUSTOMERS
+    c ON o.CUSTOMER_ID=c.CUSTOMER_ID AND c.ACTIVE=1
+- id: grain
+  name: Order grain
+  kind: grain
+  keys:
+  - ID
+  rationale: Do not duplicate orders
+- id: population
+  name: All orders survive
+  kind: population
+  keys:
+  - ID
+  baseline_sql: SELECT ID FROM DB.S.ORDERS
+  rationale: Never drop an order
+- id: revenue
+  name: Per-order revenue preserved
+  kind: measure
+  column: AMOUNT
+  group_by:
+  - ID
+  baseline_sql: SELECT ID, AMOUNT FROM DB.S.ORDERS
+  rationale: Prevent sums from hiding compensating per-order errors

@@ -228,6 +228,9 @@ def test_round_trip_keeps_requirements(workspace):
 #: where a core checkpoint's content is a shape on every target, it requires
 #: the picture; everything else is left to the agent's judgment
 CORE_REQUIREMENTS = {
+    # Project gates verify contracts; particular chart shapes depend on the goal.
+    "goal-analysis": {},
+    "pipeline-development": {},
     "bug-hunter": {"scope_blast_radius": ["line", "bar"]},
     "table-health": {
         "null_completeness": ["bar"],

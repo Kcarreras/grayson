@@ -28,6 +28,7 @@ class ConfigError(ValueError):
 
 #: user-settable keys → (section, key, coercion)
 SETTABLE: dict[str, tuple[str, str, str]] = {
+    "projects.max_approval": ("projects", "max_approval", "str"),
     "connection.name": ("connection", "name", "str"),
     "defaults.guard_profile": ("defaults", "guard_profile", "str"),
     "scopes.strict": ("scopes", "strict", "bool"),
@@ -142,6 +143,8 @@ def _coerce(key: str, kind: str, value: Any) -> Any:
 
 
 def _validate(root: Path, dotted: str, coerced: Any) -> None:
+    if dotted == "projects.max_approval" and coerced not in {"guided", "milestones", "bounded"}:
+        raise ConfigError("projects.max_approval must be guided, milestones or bounded")
     if dotted == "defaults.guard_profile":
         cfg = WorkspaceConfig.load(root / CONFIG_FILENAME)
         if coerced not in cfg.guard_profiles:
@@ -275,6 +278,9 @@ def config_summary(root: Path) -> dict:
     """The current configuration, resolved — the read surface for CLI/MCP/UI."""
     cfg = WorkspaceConfig.load(root / CONFIG_FILENAME)
     return {
+        "projects": tomllib.loads((root / CONFIG_FILENAME).read_text(encoding="utf-8")).get(
+            "projects", {"max_approval": "bounded"}
+        ),
         "workspace": str(root),
         "connection": cfg.connection,
         "default_guard_profile": cfg.default_guard_profile,

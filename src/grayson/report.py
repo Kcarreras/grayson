@@ -37,6 +37,7 @@ class ReportError(ValueError):
 #: the sections a profile may order/include. "summary" (the identity block at
 #: the top) always renders and is not listed here.
 REPORT_SECTIONS = (
+    "project",
     "narrative",
     "setup_inputs",
     "queries",
@@ -131,6 +132,7 @@ DEFAULT_PROFILE_YAML = """\
 audience: engineering
 charts: text
 sections:
+  - project
   - narrative
   - setup_inputs
   - queries
@@ -146,8 +148,11 @@ footer: ""
 
 
 def build_report(session: Session, overrides_dir: Path | None = None) -> dict:
+    from grayson.projects.engine import status as project_status
+
     interventions = session.interventions()
     return {
+        "project": project_status(session),
         "generated_at": utcnow(),
         "context_notice": (
             "Historical evidence snapshot, not current knowledge. Revalidate claims "
@@ -459,7 +464,50 @@ def _sec_comparisons(report: dict, profile: ReportProfile) -> list[str]:
     return lines
 
 
+def _sec_project(report: dict, profile: ReportProfile) -> list[str]:
+    view = report.get("project") or {}
+    project = view.get("project")
+    if not project:
+        return []
+    lines = [
+        "## SQL project",
+        "",
+        project["contract"]["goal"],
+        "",
+        f"- State: {project['phase']}",
+        f"- Contract: {project['contract_digest']}",
+        f"- Candidate: {project['candidate_digest']}",
+        f"- Approval level: {view['effective_policy']['approval']}",
+        f"- Attribution: {project.get('completion', {}).get('label', 'working draft')}",
+        "",
+    ]
+    for title, key in (
+        ("Candidate verification", "verification"),
+        ("Deployed verification", "deployed_verification"),
+    ):
+        result = project.get(key)
+        if result:
+            lines += [f"### {title}: {result['verdict']}", ""]
+            lines += [
+                f"- {r['name']}: **{r['status']}** — {r['details']} "
+                f"({r.get('session_id', report['session']['id'])}/{r.get('qid')})"
+                for r in result["results"]
+            ]
+            lines.append("")
+    if project.get("review"):
+        lines += [
+            "### Interpretation (agent review)",
+            "",
+            project["review"]["summary"],
+            "",
+            "Limitations: " + "; ".join(project["review"]["limitations"]),
+            "",
+        ]
+    return lines
+
+
 _SECTION_RENDERERS = {
+    "project": _sec_project,
     "comparisons": _sec_comparisons,
     "narrative": _sec_narrative,
     "setup_inputs": _sec_setup_inputs,
@@ -484,6 +532,8 @@ def _outcome_line(summary: dict) -> str:
         text = "clean — checks cleared, nothing found worth acting on"
     elif outcome == "findings":
         text = "closed on accepted findings"
+    elif outcome == "project_verified":
+        text = "project verified"
     else:
         return outcome or ""
     return f"{text}{': ' + note if note else ''}"

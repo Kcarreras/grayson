@@ -51,6 +51,7 @@ def _compact(value: object, limit: int) -> str:
 def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
     """Assemble the brief from the session record."""
     from grayson.charts import list_charts
+    from grayson.projects.engine import brief as project_status
 
     summary = session.summary()
     ready = engine.readiness(session, workflows_dir)
@@ -63,6 +64,7 @@ def build_brief(session: Session, workflows_dir: Path | None = None) -> dict:
     findings = session.findings()
 
     return {
+        "project": project_status(session),
         "id": session.id,
         "title": summary["title"],
         "workflow": summary["workflow"],

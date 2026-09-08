@@ -1,0 +1,22 @@
+summary: Current customer region for each order
+output: enriched
+diagnosis: Filter customer versions using the approved ACTIVE definition
+addressed_checks:
+- join.enriched.right_multiplicity
+- grain.unique
+- revenue
+nodes:
+- id: orders
+  sql: SELECT ID, CUSTOMER_ID, AMOUNT FROM DB.S.ORDERS
+  purpose: Preserve the complete order population
+- id: customers
+  sql: SELECT CUSTOMER_ID, REGION FROM DB.S.CUSTOMERS WHERE ACTIVE = 1
+  purpose: Current customer region
+- id: enriched
+  kind: join
+  purpose: Attach region without fanout
+  columns:
+    ID: l.ID
+    CUSTOMER_ID: l.CUSTOMER_ID
+    AMOUNT: l.AMOUNT
+    REGION: r.REGION

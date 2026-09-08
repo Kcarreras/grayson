@@ -6,6 +6,11 @@
 <nav class="section-nav" aria-label="Settings sections"><a href="#workspace-settings">Workspace</a><a href="#guard-profiles">Guard profiles</a><a href="#workflow-defaults">Workflow defaults</a><a href="#knowledge-policy">Knowledge policy</a><a href="#team-library">Team library</a></nav>
 
 <h2 id="workspace-settings">Workspace</h2>
+<details class="fold"><summary>Maximum project autonomy</summary>
+<p>Cap autonomous SQL projects in this workspace. Each run may request a stricter level; team policy can narrow this further. DDL approval and execution always remain human actions.</p>
+<form method="post" action="/settings/general?t={{ token }}"><input type="hidden" name="only" value="projects">
+<label>Approval ceiling <select name="max_approval">{% for level in ['guided','milestones','bounded'] %}<option {{ 'selected' if cfg.projects.max_approval == level }}>{{ level }}</option>{% endfor %}</select></label>
+<button class="btn secondary">Save project ceiling</button></form></details>
 <div class="card">
 <form method="post" action="/settings/general?t={{ token }}">
   <dl class="props" style="align-items: center;">

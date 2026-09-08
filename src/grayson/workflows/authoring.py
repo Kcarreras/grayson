@@ -388,6 +388,16 @@ def apply_element_edit(
     action = op.get("action", "upsert")
     if kind == "meta":
         _edit_meta(data, op, schemas_dir)
+    elif kind == "project":
+        data["project"] = (
+            {
+                ("kind" if k == "project_kind" else k): v
+                for k, v in op.items()
+                if k not in {"kind", "action"}
+            }
+            if op.get("action") != "delete"
+            else None
+        )
     elif kind == "input":
         _edit_listed(data, "setup_inputs", "setup input", op, action, _input_from)
     elif kind == "check":
@@ -551,6 +561,15 @@ def render_preview(tpl: WorkflowTemplate, schemas_dir: Path | None = None) -> st
         + (f" | {', '.join(provenance)}" if provenance else "")
     )
     lines += ["", "Setup inputs — answers the human gives at session start"]
+    if tpl.project:
+        lines += [
+            "Project mode (format 1; pinned for each run):",
+            f"  kind: {tpl.project.kind}; approval: {tpl.project.approval}",
+            f"  limits: {tpl.project.max_iterations} iterations, "
+            f"{tpl.project.max_queries} queries, {tpl.project.max_minutes} minutes; "
+            f"stale after {tpl.project.evidence_minutes} minutes",
+            "  Warehouse approval and execution always remain human actions.",
+        ]
     for i in tpl.setup_inputs:
         req = "required" if i.required else "optional"
         scope = "; named tables join the session's readable scope" if i.adds_scope else ""
@@ -610,6 +629,12 @@ def render_preview(tpl: WorkflowTemplate, schemas_dir: Path | None = None) -> st
         "Session shape: setup inputs -> guarded queries -> required checks (order above) -> "
         f"findings ({tpl.findings_schema}) -> user accepts/rejects -> fixes/verification -> close",
     ]
+    if tpl.project:
+        lines[-1] = (
+            "Project shape: brief approval -> candidate -> generated verification -> "
+            "diagnose/repair loop -> critical review -> acceptance under policy -> "
+            "human DDL handoff -> deployed verification. Findings are optional."
+        )
     return "\n".join(lines)
 
 
