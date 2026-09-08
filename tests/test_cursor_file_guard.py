@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
+import sqlite3
 import subprocess
 import sys
+from io import StringIO
 
 import pytest
 
@@ -28,7 +31,10 @@ def investigation(workspace):
 
 def _hook(root, event):
     result = subprocess.run(
-        [sys.executable, str(root / ".cursor/hooks/grayson-guard.py")],
+        [
+            os.environ.get("GRAYSON_TEST_GUARD_PYTHON", sys.executable),
+            str(root / ".cursor/hooks/grayson-guard.py"),
+        ],
         input=json.dumps(event),
         text=True,
         capture_output=True,
@@ -154,10 +160,149 @@ def test_unreadable_session_and_bad_tool_input_fail_closed(investigation):
     result = _hook(root, {"hook_event_name": "preToolUse", "tool_name": "Write", "tool_input": {}})
     assert result["permission"] == "deny"
     assert "session state" in result["agent_message"]
+    assert ".grayson/sessions/incomplete/state.db" in result["agent_message"]
+    assert "unable to open database file" in result["agent_message"]
+    assert not (root / ".grayson/sessions/incomplete/state.db").exists()
     result = _hook(
         root, {"hook_event_name": "preToolUse", "tool_name": "MCP", "tool_input": "{bad"}
     )
     assert result["permission"] == "deny"
+
+
+@pytest.mark.parametrize("stage,permission", [("closed", "allow"), ("investigation", "deny")])
+def test_wal_database_without_sidecars(tmp_path, stage, permission):
+    session = tmp_path / ".grayson/sessions/example"
+    session.mkdir(parents=True)
+    database = session / "state.db"
+    con = sqlite3.connect(database)
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+        con.execute("INSERT INTO meta VALUES ('stage', ?)", (stage,))
+        con.commit()
+    finally:
+        con.close()
+    assert not (session / "state.db-wal").exists()
+    assert not (session / "state.db-shm").exists()
+    apply_guard(tmp_path, "cursor")
+    result = _hook(tmp_path, {"hook_event_name": "preToolUse", "tool_name": "Write"})
+    assert result["permission"] == permission
+    result = _hook(
+        tmp_path, {"hook_event_name": "beforeMCPExecution", "mcp_server_name": "grayson"}
+    )
+    assert result["permission"] == "allow"
+
+
+@pytest.mark.parametrize("failure_at", ["connect", "select"])
+@pytest.mark.parametrize("with_error_code", [False, True])
+@pytest.mark.parametrize("state_dir", [".grayson", ".seekql"])
+def test_readonly_cantopen_fallback_reads_live_wal_and_keeps_guard(
+    tmp_path, monkeypatch, capsys, failure_at, with_error_code, state_dir
+):
+    root = tmp_path / "workspace # café"
+    session = root / state_dir / "sessions" / "example"
+    session.mkdir(parents=True)
+    database = session / "state.db"
+    writer = sqlite3.connect(database)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    writer.execute("INSERT INTO meta VALUES ('stage', 'closed')")
+    writer.commit()
+    writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    # Main database says closed; the committed WAL now says investigation open.
+    writer.execute("UPDATE meta SET value='investigation' WHERE key='stage'")
+    writer.commit()
+    apply_guard(root, "cursor")
+    hook = runpy.run_path(str(root / ".cursor/hooks/grayson-guard.py"))
+    connect = sqlite3.connect
+    attempts = []
+    closed = []
+
+    def cantopen():
+        error = sqlite3.OperationalError("unable to open database file")
+        if with_error_code:
+            error.sqlite_errorcode = sqlite3.SQLITE_CANTOPEN
+        return error
+
+    class Connection(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql.startswith("SELECT value FROM meta"):
+                if self.readonly and failure_at == "select":
+                    raise cantopen()
+                # The fallback must protect records even on its writable handle.
+                with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                    super().execute("UPDATE meta SET value='closed'")
+            return super().execute(sql, *args)
+
+        def close(self):
+            closed.append(self.readonly)
+            super().close()
+
+    def simulated_connect(database_uri, **kwargs):
+        readonly = database_uri.endswith("?mode=ro")
+        assert readonly or database_uri.endswith("?mode=rw")
+        assert "immutable" not in database_uri
+        attempts.append("ro" if readonly else "rw")
+        if readonly and failure_at == "connect":
+            raise cantopen()
+        con = connect(database_uri, **kwargs, factory=Connection)
+        con.readonly = readonly
+        return con
+
+    monkeypatch.setattr(sqlite3, "connect", simulated_connect)
+
+    def invoke(event):
+        monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(event)))
+        hook["main"]()
+        return json.loads(capsys.readouterr().out)
+
+    try:
+        # Recovery allows Grayson to operate but must not unlock direct edits.
+        result = invoke({"hook_event_name": "beforeMCPExecution", "mcp_server_name": "grayson"})
+        assert result["permission"] == "allow", result
+        write_event = {"hook_event_name": "preToolUse", "tool_name": "Write"}
+        assert invoke(write_event)["permission"] == "deny"
+        writer.execute("UPDATE meta SET value='closed' WHERE key='stage'")
+        writer.commit()
+        assert invoke(write_event)["permission"] == "allow"
+        assert attempts == ["ro", "rw"] * 3
+        assert closed == ([True, False] if failure_at == "select" else [False]) * 3
+    finally:
+        writer.close()
+
+
+def test_successful_readonly_connection_never_requires_write_access(investigation, monkeypatch):
+    root = investigation.workspace.root
+    hook = runpy.run_path(str(root / ".cursor/hooks/grayson-guard.py"))
+    connect = sqlite3.connect
+
+    def readonly_only(database_uri, **kwargs):
+        assert database_uri.endswith("?mode=ro")
+        return connect(database_uri, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", readonly_only)
+    assert hook["investigation_open"]()
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt", "no_stage", "no_table"])
+def test_invalid_database_still_denies_grayson_mcp(tmp_path, damage):
+    root = tmp_path
+    session = root / ".grayson/sessions/broken"
+    session.mkdir(parents=True)
+    database = session / "state.db"
+    if damage == "corrupt":
+        database.write_bytes(b"not a SQLite database")
+    elif damage in {"no_stage", "no_table"}:
+        con = sqlite3.connect(database)
+        if damage == "no_stage":
+            con.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+        con.close()
+    apply_guard(root, "cursor")
+    result = _hook(root, {"hook_event_name": "beforeMCPExecution", "mcp_server_name": "grayson"})
+    assert result["permission"] == "deny"
+    assert ".grayson/sessions/broken/state.db" in result["agent_message"]
+    if damage == "missing":
+        assert not database.exists()
 
 
 def test_status_does_not_claim_edited_or_stale_guard_is_current(workspace):
