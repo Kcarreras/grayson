@@ -1,3 +1,53 @@
+/* Proposal review uses the shared theme colours and explicit +/- markers. */
+.sql-proposal { margin-top: 16px; }
+.sql-proposal-code { max-height: 520px; overflow: auto; white-space: pre; }
+.sql-transfer, .fix-delivery-form { flex-wrap: wrap; gap: 10px; }
+.fix-delivery-form select { width: auto; max-width: 100%; }
+.proposal-card { padding: 0 !important; overflow: hidden; }
+.proposal-summary { display: flex; align-items: center; gap: 12px; padding: 16px 18px; cursor: pointer; }
+.proposal-summary::before { content: '›'; color: var(--muted); font-size: 20px; }
+.proposal-card[open] > .proposal-summary::before { transform: rotate(90deg); }
+.proposal-summary .otitle { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.proposal-badges { flex-wrap: wrap; justify-content: flex-end; }
+.proposal-body { padding: 0 18px 18px; border-top: 1px solid var(--border-soft); }
+.file-review { margin-top: 16px; min-width: 0; }
+.diff-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.diff-path { overflow-wrap: anywhere; }
+.diff-stats { display: flex; gap: 14px; font: 600 var(--t-sm)/1.6 var(--mono); }
+.diff-plus { color: var(--ok); }
+.diff-minus { color: var(--bad); }
+.diff-size { margin: 5px 0 12px; }
+.diff-fold { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.diff-fold > summary { padding: 9px 12px; background: var(--panel2); cursor: pointer; font-size: var(--t-sm); }
+.diff-fold > summary span { margin-left: 12px; }
+.diff-scroll { overflow: auto; max-height: 520px; }
+.diff-table { border-collapse: collapse; width: 100%; font: var(--t-mono)/1.65 var(--mono); }
+.diff-table th { position: sticky; top: 0; background: var(--panel2); z-index: 1; padding: 5px 10px; }
+.diff-table td { border: 0; padding: 0 10px; vertical-align: top; }
+.diff-table .diff-ln { width: 1%; min-width: 4em; text-align: right; color: var(--muted); user-select: none; border-right: 1px solid var(--border-soft); }
+.diff-table .diff-code { white-space: pre; color: var(--ink-2); }
+.diff-table .diff-added { background: var(--ok-soft); }
+.diff-table .diff-added .diff-code { color: var(--ok); }
+.diff-table .diff-removed { background: var(--bad-soft); }
+.diff-table .diff-removed .diff-code { color: var(--bad); }
+.diff-table .diff-hunk { background: var(--act-soft); }
+.diff-table .diff-hunk .diff-code { color: var(--act); }
+.diff-table .diff-meta .diff-code { color: var(--muted); }
+.replacement-fold { margin-top: 12px; }
+.replacement-fold pre { max-height: 400px; overflow: auto; }
+.proposal-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; border-top: 1px solid var(--border-soft); margin-top: 16px; padding-top: 14px; }
+.proposal-actions form.inline { flex-wrap: wrap; gap: 12px; }
+.proposal-warning { padding: 12px 14px; margin: 12px 0; border: 1px solid var(--bad); border-radius: var(--radius-sm); background: var(--bad-soft); color: var(--ink); }
+.proposal-warning p { margin: 4px 0 0; }
+.deletion-ack { display: flex; align-items: flex-start; gap: 8px; flex-basis: 100%; margin: 12px 0; font-size: var(--t-sm); }
+.deletion-ack input { width: auto; margin-top: 4px; }
+@media (max-width: 650px) {
+  .proposal-summary { flex-wrap: wrap; padding: 12px; }
+  .proposal-badges { width: 100%; justify-content: flex-start; padding-left: 20px; }
+  .proposal-body { padding: 0 12px 12px; }
+  .diff-fold > summary span { display: block; margin-left: 0; }
+}
+
 /* ---- tokens ---------------------------------------------------------- */
 :root {
   color-scheme: dark;

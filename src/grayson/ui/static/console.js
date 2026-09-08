@@ -1,6 +1,30 @@
 /* Capture server markup before enhancements, to refresh only when it changes. */
 var graysonInitialContent = document.getElementById("main-content").innerHTML;
 
+/* Copy the exact server text, preserving whitespace independently of highlighting. */
+document.addEventListener("click", async function (event) {
+  var button = event.target.closest("[data-copy-sql]");
+  if (!button || button.disabled) return;
+  var status = button.closest(".sql-transfer").querySelector("[data-copy-status]");
+  button.disabled = true;
+  status.textContent = "Copying…";
+  try {
+    var response = await fetch(button.dataset.copySql, {credentials: "same-origin", cache: "no-store"});
+    if (!response.ok) {
+      status.textContent = response.status === 409
+        ? "This proposal changed. Reload before copying."
+        : "Could not load SQL. Reload and try again.";
+      return;
+    }
+    await navigator.clipboard.writeText(await response.text());
+    status.textContent = "SQL copied";
+  } catch (error) {
+    status.textContent = "Copy unavailable. Select the SQL below or use Download .sql.";
+  } finally {
+    button.disabled = false;
+  }
+});
+
 (function () {
   var button = document.getElementById("mobile-menu");
   var nav = document.getElementById("main-navigation");
@@ -84,7 +108,7 @@ document.addEventListener("keydown", function (event) {
     try { copied = document.execCommand("copy"); } finally { document.body.removeChild(ta); }
     return copied ? Promise.resolve() : Promise.reject(new Error("Copy unavailable"));
   }
-  document.querySelectorAll("pre.sql").forEach(function (pre) {
+  document.querySelectorAll("pre.sql:not(.sql-proposal-code)").forEach(function (pre) {
     var text = pre.textContent;
     var btn = document.createElement("button");
     btn.type = "button"; btn.className = "copybtn"; btn.textContent = "Copy";
@@ -102,7 +126,7 @@ document.addEventListener("keydown", function (event) {
   });
 })();
 
-/* Chart tooltips. A shortened axis label carries its full text in data-full
+/* Chart and checkpoint tooltips. A shortened axis label carries its full text in data-full
    and a mark carries its value in a <title>; both show in an HTML tip at once,
    where the native SVG tooltip is slow, hover-only, and absent on touch.
    Delegated from the document, so the lightbox's cloned or fetched SVG needs
@@ -112,6 +136,10 @@ document.addEventListener("keydown", function (event) {
   var SCOPE = ".chartbody svg, .lb-body svg, .chart-large svg";
   function adopt(root) {
     if (!root.querySelectorAll) return;
+    root.querySelectorAll(".checkpoint-label[title]").forEach(function (el) {
+      el.dataset.tip = el.title;
+      el.removeAttribute("title");
+    });
     root.querySelectorAll(SCOPE).forEach(function (svg) {
       svg.querySelectorAll("path > title, circle > title").forEach(function (t) {
         t.parentNode.dataset.tip = t.textContent; t.remove();
@@ -126,11 +154,13 @@ document.addEventListener("keydown", function (event) {
 
   var tip = document.createElement("div");
   tip.className = "viz-tip"; tip.hidden = true;
+  tip.id = "console-tooltip"; tip.setAttribute("role", "tooltip");
   document.body.appendChild(tip);
   var pinned = null;
+  var active = null;
   function target(e) {
     var el = e.target && e.target.closest && e.target.closest("[data-full], [data-tip]");
-    return el && el.closest(SCOPE) ? el : null;
+    return el && (el.matches(".checkpoint-label") || el.closest(SCOPE)) ? el : null;
   }
   function place(x, y) {
     var w = tip.offsetWidth, h = tip.offsetHeight;
@@ -140,12 +170,20 @@ document.addEventListener("keydown", function (event) {
     tip.style.left = Math.max(8, left) + "px"; tip.style.top = top + "px";
   }
   function show(el, x, y) {
+    if (active && active !== el) active.removeAttribute("aria-describedby");
+    active = el;
+    el.setAttribute("aria-describedby", tip.id);
     tip.textContent = el.dataset.full || el.dataset.tip || "";
     tip.classList.toggle("mono", !!el.dataset.full);
     tip.hidden = false;
     place(x, y);
   }
-  function hide() { if (!pinned) tip.hidden = true; }
+  function hide() {
+    if (pinned) return;
+    tip.hidden = true;
+    if (active) active.removeAttribute("aria-describedby");
+    active = null;
+  }
   document.addEventListener("pointerover", function (e) {
     var el = target(e);
     if (el && e.pointerType !== "touch") show(el, e.clientX, e.clientY);
@@ -157,7 +195,7 @@ document.addEventListener("keydown", function (event) {
   document.addEventListener("pointerdown", function (e) {
     var el = target(e);
     if (e.pointerType === "touch" && el) { pinned = el; show(el, e.clientX, e.clientY); }
-    else { pinned = null; tip.hidden = true; }
+    else { pinned = null; hide(); }
   });
   document.addEventListener("focusin", function (e) {
     var el = target(e);
@@ -167,7 +205,7 @@ document.addEventListener("keydown", function (event) {
   });
   document.addEventListener("focusout", function (e) { if (target(e)) hide(); });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") { pinned = null; tip.hidden = true; }
+    if (e.key === "Escape") { pinned = null; hide(); }
   });
 })();
 

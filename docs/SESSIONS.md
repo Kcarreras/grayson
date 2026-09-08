@@ -4,15 +4,64 @@ Harness setup, the session loop, profiling, charts, reports, and the guard
 settings that bound it all. For what the rails guarantee and their limits:
 [SPEC.md](SPEC.md), [SECURITY.md](SECURITY.md).
 
+## Choosing how fixes are delivered
+
+Use **Fix delivery** on the session page to choose **Update a local file**,
+**SQL to copy and run**, or **Let the agent choose**. This preference is exposed
+in `session_status` and `session_brief` for agents and newly joined workers.
+It applies to future drafting; existing proposals are not converted.
+
+For changes without a local SQL file, or when you prefer to run the code yourself,
+the agent uses `proposal_add` with `kind: "ddl_snippet"`. The payload contains
+`ddl` (the SQL), `run_target` (the intended database/schema/editor), `rationale`,
+and optionally `success_criteria`. No local source file is required.
+
+Review the highlighted SQL and approve it, then use **Copy SQL** or **Download
+.sql** and run it in your own editor. These controls transfer the exact proposal
+text, without executing SQL or changing proposal status. If the proposal changes
+since the page was loaded, reload before copying or downloading.
+
+After execution, click **I've applied this**, or tell the agent you ran the SQL so
+it can call `proposal_applied`. This records reported external execution; it does
+not claim verification passed. Success criteria can be verified separately where
+Grayson's configured connection can access the affected objects. Without an original
+definition, the review shows highlighted SQL rather than a before/after diff.
+
 ## Local file fixes
 
-Keep source unchanged until the user approves the proposal. Use MCP
-`proposal_draft_file` with the target's workspace-relative path and full
-replacement text; Grayson captures the source and generates the review diff
-without editing it. The CLI equivalent is:
+Keep source unchanged until the user approves the proposal. For an existing file,
+read its source and call MCP `proposal_file_snapshot` for its SHA-256. Send all
+changes together to `proposal_draft_edits` with `expected_source_sha256`, a
+`request_id`, and `edits: [{"old_text": "exact original text", "new_text": "replacement"}]`.
+Each old text must match exactly once in the original snapshot; edits cannot
+overlap. Include unchanged context for insertions. The server builds the complete
+replacement, preserving untouched bytes. A failed edit creates no proposal.
+
+Repeat identical calls with the same request ID to retrieve the existing proposal.
+For a revision, use a new request ID and `supersedes: "p_001"`. The earlier pending
+or approved draft becomes superseded and cannot be applied; approval does not
+transfer. Applied fixes cannot be superseded. Distinct changes to the same file
+are not automatically merged or replaced.
+
+Use `proposal_draft_file` only for new files or small **complete** replacements.
+Never send separate chunks as replacement proposals. Emptying a nonempty file,
+or shrinking a file by more than half its lines (at least 20 original lines) or
+bytes (at least 4,096 original bytes), is blocked on the full-replacement path.
+The same check blocks approval/application of older truncated drafts. Intentional
+bulk deletion must use exact targeted edits and requires a deletion acknowledgement
+at approval. This heuristic is an additional check, not a proof of completeness.
+
+The console shows coloured additions/removals, old/new line numbers, and file size
+changes. Pending and approved proposals open for review; older decisions collapse
+into history. Use the status filters or search to find a file. Approval leaves the
+source unchanged; **Apply approved file fix** performs the write separately.
+
+CLI equivalents:
 
 ```bash
-grayson proposal draft-file <sid> --target models/orders.sql --content-file <scratch-file> --title "Fix duplicate orders"
+grayson proposal file-snapshot <sid> --target models/orders.sql
+grayson proposal draft-edits <sid> --target models/orders.sql --source-sha256 <hash> --edits-file <json-file> --request-id orders-fix-1 --title "Fix duplicate orders"
+grayson proposal draft-file <sid> --target models/new.sql --content-file <scratch-file> --title "New model"
 grayson proposal apply <sid> <pid>   # only after UI approval
 ```
 

@@ -78,7 +78,8 @@ HARNESS_GUIDANCE = {
         "\nLocal fix protection: while any Grayson session in this repo is open, "
         "preToolUse/beforeMCPExecution also block direct file edits, shell calls, "
         "and other MCP servers. Use native reads and Grayson's MCP tools. Draft "
-        "with proposal_draft_file, obtain approval in the console, then use "
+        "with proposal_draft_edits (proposal_draft_file for new files), "
+        "obtain approval in the console, then use "
         "proposal_apply. Closing all sessions releases this editing restriction."
     ),
     "codex": (
@@ -125,7 +126,7 @@ def guard_rules_display(harness: str) -> list[str]:
             "`snowsql`, connector imports, Snowflake credential and private-key "
             "reads, and `.grayson/` access)"
             "; open sessions: native reads + Grayson MCP only; file fixes use "
-            "proposal_draft_file → UI approval → proposal_apply"
+            "proposal_draft_edits (or proposal_draft_file) → UI approval → proposal_apply"
             for ev in _CURSOR_HOOK_EVENTS
         ]
     return list(GUARD_DENY_RULES)
@@ -381,8 +382,10 @@ READ_TOOLS = {"Read", "Grep", "Glob", "LS", "SemanticSearch", "GetDynamicTools"}
 COORDINATION_TOOLS = {"Task", "TodoWrite", "AskQuestion", "AskUserQuestion"}
 FILE_FIX_WHY = (
     "a Grayson investigation is open: source files must remain unchanged until UI approval. "
-    "Use native Read/Grep tools and Grayson MCP. Draft replacement text with "
-    "proposal_draft_file, wait for the user's approval, then call proposal_apply. "
+    "Use native Read/Grep tools and Grayson MCP. Draft all changes together with "
+    "proposal_draft_edits; use proposal_draft_file for new files only. "
+    "Never send partial replacements or chunked proposals. "
+    "Wait for the user's approval, then call proposal_apply. "
     "Direct writes, shell execution, and other MCP servers are blocked during the investigation"
 )
 

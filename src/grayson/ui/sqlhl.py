@@ -12,6 +12,20 @@ import re
 from markupsafe import Markup, escape
 
 _KEYWORDS = {
+    "ADD",
+    "ALTER",
+    "COLUMN",
+    "CREATE",
+    "DELETE",
+    "DROP",
+    "INSERT",
+    "INTO",
+    "MERGE",
+    "REPLACE",
+    "SET",
+    "TABLE",
+    "UPDATE",
+    "VIEW",
     "ALL",
     "AND",
     "ANY",

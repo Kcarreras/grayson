@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ from conftest import FakeExecutor, call_mcp
 from grayson.checks.regression import RegressionStore
 from grayson.cli import app
 from grayson.config import GuardSettings
-from grayson.core import criteria, engine, proposals
+from grayson.core import criteria, engine, file_fixes, proposals
 from grayson.core.run import run_statement
 from grayson.core.session import Session
 from grayson.mcp.server import build_server
@@ -230,6 +231,59 @@ def external_spec(other, **changes):
             }
         ],
     }
+
+
+@pytest.mark.parametrize("fail_revision", [False, True])
+def test_superseding_file_fix_cancels_only_its_open_scope_requests_atomically(s, fail_revision):
+    source = s.workspace.root / "model.sql"
+    source.write_text("select 1;")
+    old = file_fixes.draft(s, "model.sql", "select 2;", "Fix")
+    spec = criteria.set_criteria(s, old["pid"], external_spec(source_session(s)))
+    stale = spec["scope_request"]["iid"]
+    answered = s.add_intervention(
+        "scope_request", "Earlier request", "", {"criteria_pid": old["pid"]}
+    )
+    s.respond_intervention(answered, {})
+    unrelated = s.add_intervention("scope_request", "Other request", "", {"tables": ["DB.S.T3"]})
+    other_kind = s.add_intervention("question", "Question", "", {"criteria_pid": old["pid"]})
+    scope_before = s.scope_tables
+    if fail_revision:
+        con = s._con()
+        try:
+            con.execute(
+                "CREATE TRIGGER reject_revision BEFORE INSERT ON proposals "
+                "BEGIN SELECT RAISE(ABORT, 'test revision failure'); END"
+            )
+            con.commit()
+        finally:
+            con.close()
+        with pytest.raises(sqlite3.IntegrityError, match="test revision failure"):
+            file_fixes.draft(s, "model.sql", "select 3;", "Revision", supersedes=old["pid"])
+        assert s.proposal(old["pid"])["status"] == "proposed"
+        assert s.intervention(stale)["status"] == "open"
+        assert len(s.proposals()) == 1
+        assert not s.events(20, event_type="intervention_cancelled")
+    else:
+        new = file_fixes.draft(
+            s,
+            "model.sql",
+            "select 3;",
+            "Revision",
+            supersedes=old["pid"],
+            success_criteria=external_spec(source_session(s, table="DB.S.T3")),
+        )
+        assert s.proposal(old["pid"])["status"] == "superseded"
+        assert s.intervention(stale)["status"] == "cancelled"
+        with pytest.raises(ValueError, match="not open"):
+            s.respond_intervention(stale, {"granted": ["DB.S.T2"]})
+        current = criteria.contract(s, new["pid"])["scope_request"]
+        assert current["status"] == "open" and current["request"]["tables"] == ["DB.S.T3"]
+        assert len(s.events(20, event_type="intervention_cancelled")) == 1
+    assert s.scope_tables == scope_before
+    assert s.intervention(answered)["status"] == "answered"
+    assert s.intervention(unrelated)["status"] == "open"
+    assert s.intervention(other_kind)["status"] == "open"
+    assert source.read_text() == "select 1;"
 
 
 def test_generated_ids_preserve_explicit_ids_and_are_unique(s):

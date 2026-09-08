@@ -2262,6 +2262,8 @@ def proposal_draft_file(
     title: str = typer.Option(..., "--title"),
     finding: str = typer.Option(None, "--finding"),
     rationale: str = typer.Option("", "--rationale"),
+    request_id: str = typer.Option(None, "--request-id"),
+    supersedes: str = typer.Option(None, "--supersedes"),
 ) -> None:
     """Draft a local fix without editing its source; the user reviews it in the UI."""
     from grayson.core import file_fixes
@@ -2275,6 +2277,55 @@ def proposal_draft_file(
                 title,
                 finding,
                 rationale,
+                request_id=request_id,
+                supersedes=supersedes,
+            )
+        )
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@proposal_app.command("file-snapshot")
+def proposal_file_snapshot(session_id: str, target: str = typer.Option(..., "--target")) -> None:
+    """Read the source hash to bind a targeted edit proposal."""
+    from grayson.core import file_fixes
+
+    try:
+        emit(file_fixes.source_snapshot(_session(session_id), target))
+    except (ValueError, OSError) as e:
+        fail(str(e))
+
+
+@proposal_app.command("draft-edits")
+def proposal_draft_edits(
+    session_id: str,
+    target: str = typer.Option(..., "--target"),
+    source_sha256: str = typer.Option(..., "--source-sha256"),
+    edits_file: Path = typer.Option(
+        ..., "--edits-file", help="JSON array of old_text/new_text edits."
+    ),
+    title: str = typer.Option(..., "--title"),
+    request_id: str = typer.Option(..., "--request-id"),
+    supersedes: str = typer.Option(None, "--supersedes"),
+    finding: str = typer.Option(None, "--finding"),
+    rationale: str = typer.Option("", "--rationale"),
+) -> None:
+    """Draft all targeted edits together, preserving untouched source text."""
+    from grayson.core import file_fixes
+
+    try:
+        emit(
+            file_fixes.draft(
+                _session(session_id),
+                target,
+                None,
+                title,
+                finding,
+                rationale,
+                edits=json.loads(edits_file.read_text(encoding="utf-8")),
+                expected_source_sha256=source_sha256,
+                request_id=request_id,
+                supersedes=supersedes,
             )
         )
     except (ValueError, OSError) as e:
@@ -2345,7 +2396,11 @@ def proposal_show(session_id: str, pid: str) -> None:
 
 
 @proposal_app.command("approve")
-def proposal_approve(session_id: str, pid: str) -> None:
+def proposal_approve(
+    session_id: str,
+    pid: str,
+    acknowledge_deletions: bool = typer.Option(False, "--acknowledge-deletions"),
+) -> None:
     """Approve a proposal (a user action). Managed files use proposal apply next."""
     if not _stdin_is_tty():
         require_interactive("approving a fix proposal")
@@ -2362,7 +2417,15 @@ def proposal_approve(session_id: str, pid: str) -> None:
         if criteria or managed:
             typer.echo(json.dumps(proposal, indent=2), err=True)
         require_interactive("approving a fix proposal")
-        emit(proposals_engine.decide(s, pid, approve=True, digest=digest))
+        emit(
+            proposals_engine.decide(
+                s,
+                pid,
+                approve=True,
+                digest=digest,
+                acknowledge_deletions=acknowledge_deletions,
+            )
+        )
     except (ProposalError, ValueError) as e:
         fail(str(e))
 

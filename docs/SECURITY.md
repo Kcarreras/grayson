@@ -204,14 +204,23 @@ coordination tools remain available. Unknown tools and unreadable session
 state are denied. Closing all sessions releases the investigation restriction.
 This starts before a proposal exists, covering edits made to generate a diff.
 
-Use Grayson's MCP tools during a protected investigation. `proposal_draft_file`
-receives the full replacement text, reads the current source without changing
-it, and generates the diff for UI review. Approval binds the complete proposal
+Use Grayson's MCP tools during a protected investigation. `proposal_file_snapshot`
+returns the source hash; `proposal_draft_edits` accepts that hash and all exact,
+unique, non-overlapping edits against the original source in one call. The server
+preserves untouched bytes and publishes no proposal if any edit fails. Identical
+retries reuse the proposal; an explicit `supersedes` revision retires the earlier
+pending or approved draft and clears its approval under the shared apply lock.
+`proposal_draft_file` remains available for new files and small full replacements.
+It blocks emptying existing files and suspicious shrinkage; the same check protects
+approval/application of older truncated full-replacement drafts. Intentional large
+deletions use targeted edits and require explicit user acknowledgement. See
+[local file fixes](SESSIONS.md#local-file-fixes) for thresholds and examples.
+Approval binds the complete proposal
 (and success criteria, if present). `proposal_apply` writes exactly that content
 only while approval is current and the source still matches its captured hash.
 It records application itself; `proposal_applied` cannot substitute for this
 write. Existing UTF-8 files and new files in existing directories are supported,
-including empty replacements. Targets outside the workspace, control files,
+including explicitly reviewed empty replacements via targeted edits. Targets outside the workspace, control files,
 symlinks, junctions and hard-linked files are refused. Older diff-only proposals
 remain reviewable but must be drafted through the managed flow for this writer.
 

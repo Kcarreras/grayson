@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "_file_review.html" import file_review, deletion_ack %}
+{% from "_sql_proposal.html" import sql_proposal, external_applied %}
 {% block title %}grayson — Success criteria{% endblock %}
 {% block head %}<style>
 .elform label, .criterion-row label {display:flex;flex-direction:column;gap:6px;min-width:0;}
@@ -31,16 +33,18 @@
 {% endfor %}
 {% if p.status == 'proposed' %}
 <div class="card attn"><h2 style="margin-top:0">Review the fix and its success criteria</h2><p class="mono">{{ p.payload.target_file or p.payload.run_target }}</p>{% if p.payload.rationale %}<p>{{ p.payload.rationale }}</p>{% endif %}
-{% if p.kind == 'file_diff' %}{% if p.payload.diff %}<div class="overline">File diff</div><pre>{{ p.payload.diff }}</pre>{% endif %}{% if p.payload.new_content or p.payload.file_change %}<div class="overline">Full replacement content</div><pre>{{ p.payload.new_content }}</pre>{% endif %}{% else %}<pre class="sql">{{ p.payload.ddl }}</pre>{% endif %}
+{% if p.kind == 'file_diff' %}{{ file_review(p) }}{% else %}{{ sql_proposal(p, s, token) }}{% endif %}
 {% if p.payload.view_name %}<p class="small">Registers view {{ p.payload.view_name }} from {{ p.payload.source_tables | join(', ') }}.</p>{% endif %}
-<form id="criteria-approval" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}"><input type="hidden" name="digest" value="{{ contract.digest }}"><button class="btn primary" type="submit" {{ 'disabled' if contract.scope_required }}>Approve fix and these criteria</button><p id="criteria-unsaved" class="small attn-text" hidden>Save your edited criteria before approving the fix.</p></form></div>
+<form id="criteria-approval" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}"><input type="hidden" name="digest" value="{{ contract.digest }}">{{ deletion_ack(p) }}<button class="btn primary" type="submit" {{ 'disabled' if contract.scope_required or s.stage == 'closed' or (p.file_review and p.file_review.error) }}>Approve fix and these criteria</button><p class="small muted">Approval does not apply or execute a change. {{ 'Run the approved SQL in your own editor.' if p.kind == 'ddl_snippet' else 'Apply the approved fix from the session.' }}</p><p id="criteria-unsaved" class="small attn-text" hidden>Save your edited criteria before approving the fix.</p></form></div>
 {% elif p.status == 'approved' %}
 {% if p.payload.file_change %}
-<form class="card" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/apply?t={{ token }}"><p>Apply the exact approved file content to unlock fresh verification. Grayson checks the source and records application.</p><button class="btn" type="submit">Apply approved file fix</button></form>
+<div class="card">{{ file_review(p) }}{% if s.stage != 'closed' %}<form class="proposal-actions" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/apply?t={{ token }}"><p>Apply the exact approved file content to unlock fresh verification. Grayson checks the source and records application.</p><button class="btn" type="submit" {{ 'disabled' if p.file_review.error }}>Apply approved file fix</button></form>{% endif %}</div>
+{% elif p.kind == 'ddl_snippet' %}
+<div class="card">{{ sql_proposal(p, s, token) }}{{ external_applied(p, s, token) }}</div>
 {% else %}
 <form class="card" method="post" action="/session/{{ s.id }}/criteria/{{ p.pid }}/applied?t={{ token }}"><p>After the approved change is applied, record it here to unlock fresh verification.</p><button class="btn" type="submit">Mark fix applied</button></form>
 {% endif %}
-{% elif s.stage != 'closed' %}
+{% elif s.stage != 'closed' and p.status in ['applied', 'verified', 'verification_failed'] %}
 <form method="post" action="/session/{{ s.id }}/criteria/{{ p.pid }}/run?t={{ token }}"><button class="btn primary" type="submit">Run fresh verification</button><span class="small muted"> Uses {{ contract.criteria | length }} guarded queries.</span></form>
 {% endif %}
 {% endif %}

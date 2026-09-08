@@ -1893,9 +1893,13 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     def _session_context(s: Session, error: str | None = None) -> dict:
         from grayson.checks.regression import RegressionStore
         from grayson.core.file_fixes import review_digest
+        from grayson.ui.diffs import review_proposal
 
         queries = s.query_log(100)
-        proposals = s.proposals()
+        proposals = [review_proposal(s, p) for p in s.proposals()]
+        revisions = {p["payload"].get("supersedes"): p["pid"] for p in proposals}
+        for p in proposals:
+            p["superseded_by"] = revisions.get(p["pid"])
         return {
             "nav": "sessions",
             "guard_profiles": sorted(workspace.config.guard_profiles),
@@ -2201,14 +2205,51 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             )
         return _redirect(f"/session/{sid}")
 
+    @app.post("/session/{sid}/fix-delivery")
+    def set_fix_delivery(request: Request, sid: str, delivery: str = Form(...)) -> Any:
+        _check(request)
+        s = _session(sid)
+        try:
+            s.set_fix_delivery(delivery)
+        except ValueError as e:
+            return templates.TemplateResponse(
+                request, "session.html", _session_context(s, str(e)), status_code=400
+            )
+        return _redirect(f"/session/{sid}#fix-delivery")
+
+    @app.get("/session/{sid}/proposal/{pid}/sql")
+    def proposal_sql(request: Request, sid: str, pid: str, digest: str = "") -> Any:
+        _check(request)
+        from grayson.core.file_fixes import review_digest
+
+        p = _session(sid).proposal(pid)
+        if not p or p["kind"] != "ddl_snippet":
+            raise HTTPException(404, "SQL snippet proposal not found")
+        if digest != review_digest(p):
+            raise HTTPException(409, "The proposal changed; reload before copying or downloading")
+        return Response(
+            p["payload"]["ddl"].encode("utf-8"),
+            media_type="application/sql",
+            headers={
+                "Content-Disposition": f'attachment; filename="{p["pid"]}.sql"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     @app.post("/session/{sid}/proposal/{pid}/{decision}")
     def decide_proposal(
-        request: Request, sid: str, pid: str, decision: str, digest: str = Form("")
+        request: Request,
+        sid: str,
+        pid: str,
+        decision: str,
+        digest: str = Form(""),
+        acknowledge_deletions: bool = Form(False),
     ) -> Any:
         _check(request)
         s = _session(sid)
-        if decision not in {"approve", "reject", "apply"}:
-            raise HTTPException(status_code=400, detail="decision must be approve, reject or apply")
+        if decision not in {"approve", "reject", "apply", "applied"}:
+            raise HTTPException(400, "decision must be approve, reject, apply or applied")
         from grayson.core import proposals as proposals_engine
         from grayson.core.proposals import ProposalError
 
@@ -2217,8 +2258,19 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 from grayson.core import file_fixes
 
                 file_fixes.apply(s, pid, "user")
+            elif decision == "applied":
+                p = s.proposal(pid)
+                if not p or p["kind"] != "ddl_snippet":
+                    raise ProposalError("external application requires a SQL snippet proposal")
+                proposals_engine.mark_applied(s, pid, "user", reviewed_digest=digest)
             else:
-                proposals_engine.decide(s, pid, approve=(decision == "approve"), digest=digest)
+                proposals_engine.decide(
+                    s,
+                    pid,
+                    approve=(decision == "approve"),
+                    digest=digest,
+                    acknowledge_deletions=acknowledge_deletions,
+                )
         except (ProposalError, OSError) as e:
             return templates.TemplateResponse(
                 request, "session.html", _session_context(s, str(e)), status_code=400

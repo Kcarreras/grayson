@@ -38,9 +38,10 @@ they are equivalent. Never query Snowflake except through grayson.
   evidence, and checkpoints/findings citing no executed queries will be rejected.
 - Every checkpoint and finding must cite **evidence**: the ids of queries you actually
   executed (`q_0001`, ...). grayson rejects claims without real evidence.
-- **Local fixes need approval before any source edit.** Draft replacement text as
+- **Local fixes need approval before any source edit.** Draft targeted edits as
   proposal data or in a scratch file; never edit the original to obtain a diff,
-  even temporarily. Use `proposal draft-file` (MCP: `proposal_draft_file`), wait
+  even temporarily. Prefer `proposal_draft_edits` for existing files; use
+  `proposal_draft_file` only for new files or small complete replacements. Wait
   for the user's approval in Grayson, then `proposal apply` (MCP: `proposal_apply`).
   Grayson writes exactly the approved content and records application. Do not use
   editing tools or shell commands to apply it. If a file was already changed early,
@@ -222,9 +223,29 @@ they are equivalent. Never query Snowflake except through grayson.
    REJECTS a finding, its rejection reason appears in `grayson finding list` and
    `grayson session readiness` (findings_rejected) — read it, continue analysis
    in that direction, and record a corrected finding.
-6. Fixes: draft proposals linked to findings. For local files, pass the full
-   replacement text to `proposal_draft_file` or use `grayson proposal draft-file
-   <sid> --target models/example.sql --content-file <scratch-file> --title "..."`.
+6. Fixes: draft proposals linked to findings. Read fix_delivery in session_status
+   or session_brief first: follow local_file or sql_snippet when chosen by the
+   user; auto lets you choose. When the user wants code to run elsewhere or has
+   no local SQL file, use proposal_add with kind="ddl_snippet" and payload fields
+   ddl (complete SQL), run_target (intended database/schema/editor), rationale,
+   and optional success_criteria. The user reviews, copies or downloads, and runs
+   the SQL elsewhere. Never create a local file just to use the file-fix flow.
+   Prefer complete runnable SQL; label any required placeholders. Do not invent
+   missing definitions or put ellipses in executable SQL. Record proposal_applied
+   only after the user confirms execution; verification is a separate step.
+   For existing local files, read the
+   source, get its hash with `proposal_file_snapshot`, and send ALL exact
+   old_text/new_text edits in ONE `proposal_draft_edits` call with that
+   expected_source_sha256 and a request_id. Every edit matches the ORIGINAL source;
+   matches must be unique and non-overlapping. The server preserves untouched text.
+   Never reproduce a large file in tool arguments or submit chunks as proposals.
+   Reuse request_id for identical retries. To revise a draft, use a new request_id
+   and supersedes=the old proposal ID; the replacement needs fresh approval.
+   Reserve `proposal_draft_file` for new files and small complete replacements.
+   Suspicious full replacements are blocked. Intentional bulk deletion uses exact
+   targeted edits and requires explicit user acknowledgement during review.
+   CLI equivalent: `grayson proposal draft-edits <sid> --target models/example.sql
+   --source-sha256 <hash> --edits-file <json-file> --request-id <id> --title "..."`.
    This snapshots the existing source and generates the diff WITHOUT editing it.
    After the user approves, use `grayson proposal apply <sid> <pid>` (MCP:
    `proposal_apply`). The exact reviewed content is written only if the source
@@ -244,7 +265,8 @@ they are equivalent. Never query Snowflake except through grayson.
    name, source_qid, optional source_session and expectation; id is generated if omitted).
    Draft these criteria yourself for the user's review; do not leave the person
    with a blank form. MCP `criteria_set` attaches the draft to a pending fix, or
-   include `success_criteria` in `proposal_draft_file` to propose both together.
+   include `success_criteria` in `proposal_draft_edits` (or `proposal_draft_file`)
+   to propose both together.
    `criteria_queries` finds baselines in this session first and can search other
    sessions on the same connection. Out-of-scope tables create a scope request;
    await the user's response. Saving criteria never grants scope or approves a fix.

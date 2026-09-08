@@ -1,0 +1,26 @@
+{% macro file_review(p) -%}
+{% set review = p.file_review %}
+{% set stats = review.stats %}
+<div class="file-review">
+  <div class="diff-heading">
+    <span class="mono diff-path">{{ p.payload.target_file }}</span>
+    <span class="diff-stats"><span class="diff-plus">+{{ stats.added }} added</span><span class="diff-minus">−{{ stats.deleted }} removed</span></span>
+  </div>
+  {% if stats.before_lines is defined %}<p class="small diff-size">{{ stats.before_lines }} → {{ stats.after_lines }} lines{% if stats.before_bytes is defined %} · {{ '{:,}'.format(stats.before_bytes) }} → {{ '{:,}'.format(stats.after_bytes) }} bytes{% endif %}{% if p.payload.file_change.mode == 'edits' %} · Targeted edits{% endif %}</p>{% endif %}
+  {% if review.error %}<div class="proposal-warning" role="alert"><strong>Review blocked</strong><p>{{ review.error }}</p></div>
+  {% elif stats.large_deletion %}<div class="proposal-warning" role="note"><strong>Large deletion — check the removed content</strong><p>This change reduces the file from {{ stats.before_lines }} to {{ stats.after_lines }} lines. Confirm below only if this deletion is intended.</p></div>{% endif %}
+  {% if review.rows %}
+  <details class="diff-fold" open id="diff-{{ p.pid }}"><summary>Changes <span class="small muted">Old / new line numbers · green + additions · red − removals</span></summary>
+  <div class="diff-scroll" tabindex="0" role="region" aria-label="Changes to {{ p.payload.target_file }}">
+    <table class="diff-table"><thead><tr><th scope="col">Old</th><th scope="col">New</th><th scope="col">Change</th></tr></thead><tbody>
+    {% for row in review.rows %}<tr class="diff-{{ row.kind }}"><td class="diff-ln">{{ row.old if row.old is not none else '' }}</td><td class="diff-ln">{{ row.new if row.new is not none else '' }}</td><td class="diff-code">{{ row.text }}</td></tr>{% endfor %}
+    </tbody></table>
+  </div></details>
+  {% endif %}
+  {% if p.payload.new_content or p.payload.file_change %}<details class="inlinefold replacement-fold" id="replacement-{{ p.pid }}"><summary>Full file after applying{% if stats.after_lines is defined %} · {{ stats.after_lines }} lines{% endif %}</summary><pre>{{ p.payload.new_content }}</pre></details>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro deletion_ack(p) -%}
+{% if p.file_review and p.file_review.stats.large_deletion %}<label class="deletion-ack"><input type="checkbox" name="acknowledge_deletions" value="true" required> I reviewed the removed content and intend this large deletion.</label>{% endif %}
+{%- endmacro %}

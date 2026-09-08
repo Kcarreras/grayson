@@ -11,6 +11,8 @@ wheels/
 
 # grayson session state and cached warehouse data
 .grayson/
+/.seekql/
+/.codex-remote-attachments/
 
 # a grayson workspace must not be initialized in the tool repo itself
 /grayson.toml
