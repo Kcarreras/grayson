@@ -94,6 +94,24 @@ and the denial now includes the failing database path and underlying error.
 
 No session migration or manual journal-mode change is needed.
 
+If calls work until a session starts, check for Cursor's qualified server name
+(for example `project-0-sql-qa-workspace-grayson`). The guard accepts the bare
+`grayson` identity and `project-<index>-<workspace-folder>-grayson` when that
+workspace's `.cursor/mcp.json` registers `grayson` and the indexed entry in
+Cursor's `workspace_roots` resolves to that workspace. Other workspace names,
+unrelated servers, and ambiguous registrations remain blocked. Refresh the
+guard with the same command above after installing this fix. Keep the configured
+server key as `grayson`; do not rename it to Cursor's generated identity.
+
+Cursor can also dispatch MCP through `CallDynamicTool`, with the target in
+`tool_input.namespace`. The guard validates that route during both `preToolUse`
+and `beforeMCPExecution`, including when `mcp_server_name` is absent. A conflicting
+server identity is denied. `GetDynamicTools` discovery is allowed, but discovering
+a tool does not permit calling another server. Denials report hook, tool and
+routing identity so unknown event shapes can be diagnosed without exposing SQL
+or nested tool arguments. Do not replace these checks with a substring match
+or an unconditional exemption for dynamic tool calls.
+
 ## Adopting regression checks
 
 [Regression checks](REGRESSIONS.md) add optional files under the existing
