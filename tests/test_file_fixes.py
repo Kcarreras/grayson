@@ -501,6 +501,53 @@ def test_retry_and_revision_invalidate_old_approval(session):
     assert retry["pid"] == new["pid"] and retry["status"] == "applied"
 
 
+@pytest.mark.parametrize("status", ["applied", "rejected"])
+def test_automatic_retry_uses_current_source_after_terminal_proposal(session, status):
+    source, old = _draft(session)
+    if status == "applied":
+        _approve(session, old)
+        file_fixes.apply(session, old["pid"])
+    else:
+        proposals.decide(session, old["pid"], False)
+    source.write_bytes(b"select 3;\r\n-- new source\r\n")
+    new = file_fixes.draft(session, "model.sql", "select 2;\n", "Fix model")
+    assert new["pid"] != old["pid"] and new["status"] == "proposed"
+    assert (
+        new["payload"]["file_change"]["before_sha256"]
+        == file_fixes.source_snapshot(session, "model.sql")["sha256"]
+    )
+    assert "-select 3;" in new["payload"]["diff"]
+    assert file_fixes.draft(session, "model.sql", "select 2;\n", "Fix model")["pid"] == new["pid"]
+    assert session.proposal(old["pid"])["status"] == status
+    assert source.read_bytes() == b"select 3;\r\n-- new source\r\n"
+
+
+def test_automatic_retry_distinguishes_missing_and_empty_source(session):
+    old = file_fixes.draft(session, "model.sql", "select 2;\n", "Fix model")
+    source = session.workspace.root / "model.sql"
+    source.write_bytes(b"")
+    new = file_fixes.draft(session, "model.sql", "select 2;\n", "Fix model")
+    assert old["pid"] != new["pid"]
+    assert old["payload"]["file_change"]["before_sha256"] is None
+    assert (
+        new["payload"]["file_change"]["before_sha256"]
+        == file_fixes.source_snapshot(session, "model.sql")["sha256"]
+    )
+
+
+def test_explicit_full_content_retry_retains_operation_after_source_changes(session):
+    source = session.workspace.root / "model.sql"
+    source.write_text("select 1;")
+    old = file_fixes.draft(session, "model.sql", "select 2;", "Fix", request_id="explicit")
+    _approve(session, old)
+    file_fixes.apply(session, old["pid"])
+    source.write_text("select 3;")
+    retry = file_fixes.draft(session, "model.sql", "select 2;", "Fix", request_id="explicit")
+    assert retry["pid"] == old["pid"] and retry["status"] == "applied"
+    assert len(session.proposals()) == 1
+    assert source.read_text() == "select 3;"
+
+
 def test_request_id_cannot_be_reused_for_different_edits(session):
     _draft(session)
     _edit(session, [{"old_text": "1", "new_text": "3"}], request_id="same")

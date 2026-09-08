@@ -151,6 +151,7 @@ def _save_draft(session, body, title, finding_fid, worker, key, fingerprint, sup
     except FileExistsError as e:
         raise ProposalError("another file operation is in progress; retry this draft") from e
     con = None
+    cancelled = []
     try:
         os.close(fd)
         con = session._con()
@@ -181,6 +182,18 @@ def _save_draft(session, body, title, finding_fid, worker, key, fingerprint, sup
             )
             for prefix in ("file_approval:", "criteria_approval:"):
                 con.execute("DELETE FROM meta WHERE key=?", (prefix + supersedes,))
+            # Retire permissions requested by the old fix in this transaction,
+            # so a stale console form cannot grant scope after the revision.
+            for iid, request in con.execute(
+                "SELECT iid, request FROM interventions "
+                "WHERE kind='scope_request' AND status='open'"
+            ).fetchall():
+                request = json.loads(request)
+                if request.get("criteria_pid") == supersedes or request.get("context") == (
+                    f"Success criteria for fix {supersedes}."
+                ):
+                    con.execute("UPDATE interventions SET status='cancelled' WHERE iid=?", (iid,))
+                    cancelled.append(iid)
         n = con.execute("SELECT COALESCE(MAX(rowid), 0) FROM proposals").fetchone()[0]
         pid = f"p_{n + 1:03d}"
         con.execute(
@@ -197,6 +210,8 @@ def _save_draft(session, body, title, finding_fid, worker, key, fingerprint, sup
         if con is not None:
             con.close()
         lock.unlink(missing_ok=True)
+    for iid in cancelled:
+        session.log_event("system", "intervention_cancelled", {"iid": iid})
     session.log_event(
         worker or "agent",
         "proposal_added",
@@ -257,24 +272,27 @@ def draft(
     if finding_fid is not None and session.finding(finding_fid) is None:
         raise ProposalError(f"proposal references unknown finding '{finding_fid}'")
     path = _target(session, target_file)
-    key, fingerprint, existing = _request(
-        session,
-        {
-            "target": path.relative_to(session.workspace.root).as_posix(),
-            "content": new_content,
-            "edits": edits,
-            "source": expected_source_sha256,
-            "title": title,
-            "finding": finding_fid,
-            "rationale": rationale,
-            "criteria": success_criteria,
-            "supersedes": supersedes,
-        },
-        request_id,
-    )
+    request = {
+        "target": path.relative_to(session.workspace.root).as_posix(),
+        "content": new_content,
+        "edits": edits,
+        "source": expected_source_sha256,
+        "title": title,
+        "finding": finding_fid,
+        "rationale": rationale,
+        "criteria": success_criteria,
+        "supersedes": supersedes,
+    }
+    # Explicit IDs identify a caller's operation even after application. Without
+    # one, deduplicate only against the current source, including missing files.
+    if request_id is None:
+        before = _read(path)
+        request["current_source"] = _sha(before) if before is not None else None
+    key, fingerprint, existing = _request(session, request, request_id)
     if existing:
         return existing
-    before = _read(path)
+    if request_id is not None:
+        before = _read(path)
     try:
         old_text = (before or b"").decode("utf-8")
     except UnicodeDecodeError as e:
