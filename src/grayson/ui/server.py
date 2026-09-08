@@ -1763,6 +1763,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "session_title": title,
                 "kind": kind,
                 "record": item["record"],
+                "record_state": item.get("state"),
+                "context_notice": item.get("context_notice"),
                 "lineage": lineage,
                 "from_library": from_library,
                 "author": item.get("author"),

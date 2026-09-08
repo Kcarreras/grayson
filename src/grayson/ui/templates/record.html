@@ -94,11 +94,13 @@
 <div class="pagehead">
   <div class="titlerow"><h1>Session report · {{ rs.title or session_title or session_id }}</h1></div>
   <span class="actions">
+    {% if record_state == "historical" %}<span class="badge plain">historical snapshot</span>{% endif %}
     {% if rs.outcome %}{{ outcome(rs.outcome) }}
     {% elif rs.stage %}<span class="badge plain">{{ rs.stage }}</span>{% endif %}
     {% if rs.workflow %}<span class="badge plain">{{ rs.workflow }}</span>{% endif %}
   </span>
 </div>
+{% if context_notice %}<div class="banner">{{ context_notice }}</div>{% endif %}
 <div class="card">
   <div class="kv">
     <div class="item"><b>Targets</b> <span class="mono">{{ (rs.targets or []) | join(", ") or "—" }}</span></div>

@@ -40,6 +40,78 @@ def test_session_report_structure(workspace, fake_snow_env, sid):
     assert "open_checks" in report["readiness"]
 
 
+def test_deliverable_open_session_versioned_and_escaped(workspace, fake_snow_env, sid):
+    from pathlib import Path
+
+    from conftest import call_mcp
+    from grayson.core.session import Session
+    from grayson.mcp.server import build_server
+
+    server = build_server(workspace)
+    session = Session(workspace, sid)
+    stage = session.stage
+    session.set_meta("report_narrative", '<script>alert("unsafe")</script>')
+    first = call_mcp(server, "session_deliverable", {"session_id": sid})
+    second = call_mcp(server, "session_deliverable", {"session_id": sid})
+    assert first["draft"] is True
+    assert first["html"] != second["html"]
+    assert session.stage == stage
+    html = Path(first["html"]).read_text(encoding="utf-8")
+    assert "WORKING DRAFT" in html
+    assert "<details>" in html
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "Content-Security-Policy" in html
+    assert "Historical evidence" in Path(first["markdown"]).read_text(encoding="utf-8")
+    data = json.loads(Path(first["json"]).read_text(encoding="utf-8"))
+    assert data["session"]["id"] == sid
+    assert not (workspace.records_dir / sid / "report.md").exists()
+
+
+def test_old_report_retrieved_as_historical(tmp_path):
+    from grayson.records import annotate_states, get_library_record
+
+    folder = tmp_path / "s_old"
+    folder.mkdir()
+    (folder / "report.json").write_text(
+        json.dumps({"kind": "report", "id": "report", "session_id": "s_old"})
+    )
+    report = get_library_record(tmp_path, "s_old", "report")
+    assert report["state"] == "historical"
+    assert "Revalidate" in report["context_notice"]
+    assert annotate_states([report])[0]["state"] == "historical"
+
+
+def test_report_marks_superseded_and_rejected_findings(workspace, fake_snow_env, sid):
+    from grayson.core.session import Session
+    from grayson.report import build_report, render_markdown
+
+    report = build_report(Session(workspace, sid))
+    report["findings"] = [
+        {
+            "fid": "f_001",
+            "title": "Old diagnosis",
+            "accepted": True,
+            "superseded_by": "f_002",
+            "severity": "low",
+            "confidence": "low",
+            "payload": {},
+        },
+        {
+            "fid": "f_002",
+            "title": "Discarded diagnosis",
+            "accepted": False,
+            "rejected": True,
+            "severity": "low",
+            "confidence": "low",
+            "payload": {},
+        },
+    ]
+    markdown = render_markdown(report)
+    assert "**Status:** superseded by f_002" in markdown
+    assert "**Status:** rejected" in markdown
+
+
 def test_session_report_markdown_file(workspace, fake_snow_env, sid, tmp_path):
     run = invoke("query", "run", sid, "-q", "SELECT * FROM DB.S.T1")
     dest = tmp_path / "report.md"

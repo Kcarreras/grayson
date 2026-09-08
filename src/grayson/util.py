@@ -9,7 +9,7 @@ import os
 import re
 import secrets
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -76,9 +76,27 @@ def parse_table_list(value: str) -> list[str]:
 def ensure_within(root: Path, candidate: Path) -> Path:
     """Resolve candidate and require it to live under root (no traversal escapes)."""
     resolved = candidate.resolve()
-    if not resolved.is_relative_to(root.resolve()):
+    if not _containment_key(resolved).is_relative_to(_containment_key(root.resolve())):
         raise ValueError(f"path {candidate} escapes workspace root {root}")
     return resolved
+
+
+def _containment_key(path: Path) -> Path | PureWindowsPath:
+    """Compare already-resolved Windows DOS/UNC paths in one namespace.
+
+    Non-strict Windows realpath can retain its extended prefix when a missing
+    directory appears between OS probes (ERROR_PATH_NOT_FOUND becomes
+    ERROR_FILE_NOT_FOUND). The prefix is representational, not another root.
+    Only normalize for comparison: keep the resolved spelling for file IO and
+    do not reinterpret device or volume namespaces as ordinary DOS paths.
+    """
+    if isinstance(path, PureWindowsPath):
+        text = str(path)
+        if text.lower().startswith("\\\\?\\unc\\"):
+            return PureWindowsPath("\\\\" + text[8:])
+        if re.fullmatch(r"\\\\\?\\[A-Za-z]:", path.drive):
+            return PureWindowsPath(text[4:])
+    return path
 
 
 # -- library YAML ----------------------------------------------------------

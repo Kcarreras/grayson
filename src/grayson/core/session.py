@@ -1099,6 +1099,18 @@ class Session:
         self.log_event(
             actor, "proposal_verified", {"pid": pid, "verdict": verification.get("verdict")}
         )
+        if self.stage == "fixes":
+            from grayson.core.engine import EnforcementError, advance_stage
+
+            # Verification is activity, not a passing verdict. Keep the normal
+            # evidence gates and never move a closed or looped-back session.
+            with contextlib.suppress(EnforcementError):
+                advance_stage(
+                    self,
+                    "verification",
+                    actor="system",
+                    overrides_dir=self.workspace.workflows_dir,
+                )
 
     # -- summary / cleanup ----------------------------------------------
 

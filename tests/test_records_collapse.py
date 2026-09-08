@@ -102,7 +102,7 @@ def test_annotate_states_is_a_pure_join():
         "f_001": "resolved",
         "f_002": "superseded",
         "p_001": "verified",
-        "report": "current",
+        "report": "historical",
     }
 
 

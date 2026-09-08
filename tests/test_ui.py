@@ -585,6 +585,7 @@ def _close_with_report(session, workspace):
 def test_report_record_renders_locally_and_from_the_library(client, session, workspace, tmp_path):
     # Regression: a session's published report sat in the records list labelled
     # "proposal" and 500ed on click — the record page had no report branch.
+    import json
     import shutil
 
     from fastapi.testclient import TestClient
@@ -593,12 +594,21 @@ def test_report_record_renders_locally_and_from_the_library(client, session, wor
     from grayson.workspace import Workspace
 
     _close_with_report(session, workspace)
+    # Simulate a report published before historical-context metadata existed.
+    path = workspace.records_dir / session.id / "report.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    old.pop("state", None)
+    old.pop("context_notice", None)
+    old["record"].pop("context_notice", None)
+    path.write_text(json.dumps(old), encoding="utf-8")
     listing = client.get(f"/records?t={TOKEN}").text
     assert "session report" in listing and "closed clean" in listing
+    assert "historical snapshot" in listing and "Revalidate claims" in listing
     page = client.get(f"/records/{session.id}/report/report?t={TOKEN}")
     assert page.status_code == 200
     assert "Session report" in page.text and "looked sound" in page.text
     assert "closed clean" in page.text
+    assert "historical snapshot" in page.text and "Revalidate claims" in page.text
 
     # a teammate's workspace: same library records, no local session
     other = tmp_path / "other"
@@ -614,6 +624,9 @@ def test_report_record_renders_locally_and_from_the_library(client, session, wor
     page = other_client.get(f"/records/{session.id}/report/report?t={TOKEN}")
     assert page.status_code == 200
     assert "from a teammate" in page.text and "Session report" in page.text
+    assert "historical snapshot" in page.text and "Revalidate claims" in page.text
+    listing = other_client.get(f"/records?t={TOKEN}").text
+    assert "historical snapshot" in listing and "Revalidate claims" in listing
 
 
 def test_record_page_shows_the_cited_queries(client, session, workspace):

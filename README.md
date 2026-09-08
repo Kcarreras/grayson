@@ -183,6 +183,7 @@ to refresh harness instructions and check your library without starting over.
 | Doc | What's in it |
 |---|---|
 | [docs/SESSIONS.md](docs/SESSIONS.md) | Running sessions: harness setup, the loop in detail, charts, guard profiles and settings |
+| [docs/DELIVERABLES.md](docs/DELIVERABLES.md) | Mid-session HTML deliverables, evidence snapshots and historical context |
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | Workflow templates: the core seven, required vs suggested checks, forking and ownership, lint |
 | [docs/LIBRARY.md](docs/LIBRARY.md) | The team library: knowledge provenance, standing and pruning, the knowledge policy, user ids, records that compound, knowledge-only access |
 | [docs/CHECKS.md](docs/CHECKS.md) | Feeding external checks (dbt, Airflow, …) in as pre-vetted leads |

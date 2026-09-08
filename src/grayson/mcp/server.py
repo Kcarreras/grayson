@@ -459,6 +459,35 @@ def build_server(workspace: Workspace) -> Any:
             return _err(e)
 
     @mcp.tool(
+        description="Build a curated interactive HTML deliverable, without closing the session. "
+        "Pass presentation={html, css, javascript, summary, datasets, visuals}. HTML/CSS/JS "
+        "are freeform: design polished SVG/canvas charts, filters, tabs and interactions. "
+        "datasets maps names to {qid, columns?: [str], max_rows?: int}; Grayson resolves "
+        "rows from successfully executed SQL, never accepts supplied dataset values. "
+        "visuals maps unique HTML container IDs to {title, datasets: [name], note?: str}. "
+        "Use grayson.data(name) for frozen rows, grayson.dataset(name) for rows and limits, "
+        "grayson.evidence(name) for SQL provenance. All APIs are synchronous. "
+        "Unsafe JS integers are decimal strings and binary cells are base64 strings; "
+        "grayson.dataset(name).cell_encodings lists their row/column/type. "
+        "Compute analytical transformations in guarded SQL first; JS controls presentation "
+        "and exploration. Inline any needed library code: external scripts/fetch are blocked. "
+        "The custom page runs in a sandbox; Grayson retains separate inspectable evidence. "
+        "Source validation does not certify arbitrary JS charts or interpretations. "
+        "summary is the curated Markdown companion; full session Markdown is also retained. "
+        "Returns versioned local file paths, including evidence and editable presentation JSON. "
+        "Omit presentation for a basic session snapshot."
+    )
+    def session_deliverable(
+        session_id: str, title: str = "", presentation: dict | None = None
+    ) -> dict:
+        from grayson.deliverables import export_deliverable
+
+        try:
+            return export_deliverable(_session(session_id), title, presentation)
+        except (OSError, ValueError) as e:
+            return _err(e)
+
+    @mcp.tool(
         description="Set the session's report narrative — your written story of the "
         "investigation. Renders in its own clearly labeled 'agent-written' section of "
         "the report and never alters the deterministic sections. Must cite at least "
