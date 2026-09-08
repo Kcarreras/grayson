@@ -436,6 +436,28 @@ def investigation_open():
                 ) from error
     return False
 
+
+def is_grayson_server(name):
+    if name == "grayson":
+        return True
+    if not isinstance(name, str):
+        return False
+    # Cursor can qualify project MCP identities, for example
+    # project-0-sql-qa-workspace-grayson. Bind that alias to this workspace's
+    # configured grayson entry, not to any server whose name ends in grayson.
+    if re.fullmatch(r"project-[0-9]+-" + re.escape(ROOT.name) + r"-grayson", name) is None:
+        return False
+    try:
+        config = json.loads((ROOT / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        servers = config.get("mcpServers", {})
+        return (
+            isinstance(servers, dict)
+            and isinstance(servers.get("grayson"), dict)
+            and name not in servers
+        )
+    except (OSError, ValueError, AttributeError):
+        return False
+
 #: shell tokens that mean "reaching the warehouse directly", checked against
 #: the normalized command
 COMMAND_DENY = [
@@ -565,8 +587,8 @@ def main() -> None:
             return
         if active:
             if hook == "beforeMCPExecution":
-                if event.get("mcp_server_name") != "grayson":
-                    why = FILE_FIX_WHY
+                if not is_grayson_server(event.get("mcp_server_name")):
+                    why = FILE_FIX_WHY + " (MCP identity is not the configured grayson server)"
             elif command or hook == "beforeShellExecution" or tool == "Shell":
                 why = FILE_FIX_WHY
             elif hook == "preToolUse":

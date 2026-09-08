@@ -94,6 +94,14 @@ and the denial now includes the failing database path and underlying error.
 
 No session migration or manual journal-mode change is needed.
 
+If calls work until a session starts, check for Cursor's qualified server name
+(for example `project-0-sql-qa-workspace-grayson`). The guard accepts the bare
+`grayson` identity and `project-<index>-<workspace-folder>-grayson` when that
+workspace's `.cursor/mcp.json` registers `grayson`. Other workspace names,
+unrelated servers, and ambiguous registrations remain blocked. Refresh the
+guard with the same command above after installing this fix. Keep the configured
+server key as `grayson`; do not rename it to Cursor's generated identity.
+
 ## Adopting regression checks
 
 [Regression checks](REGRESSIONS.md) add optional files under the existing
