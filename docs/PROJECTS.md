@@ -62,7 +62,10 @@ verification and genuinely blocked runs return to revision instead.
 Use the console's **Change approval level**, or `project approval SID LEVEL
 REVISION`, to change human review points without discarding valid work. This is
 human-only, remains subject to team/workspace ceilings, and does not change
-warehouse permissions or acceptance criteria.
+warehouse permissions or acceptance criteria. Tightening to Guided returns an
+unverified, unapproved candidate to its human review gate, including when a
+workspace or library ceiling changes. Existing evidence and active verifiers
+are preserved; paused sessions wait for resume.
 
 Per-workflow project defaults edit on the workflow page using the ordinary
 review-before-save flow. Per-run settings are part of the brief. Workspace policy
@@ -182,8 +185,10 @@ unrestricted direct credential access can bypass that path, as described in
 destination using the existing DDL proposal UI. It intentionally does not generate
 OR REPLACE. The person approves and executes it, then records application.
 Approving a stale candidate's package is refused. No project tool runs DDL.
-Deployment targets must use unquoted identifiers; quoted targets are rejected
-before approval because the current scope registry canonicalizes names to uppercase.
+Project source tables and deployment targets must use unquoted identifiers because
+the current scope registry canonicalizes names to uppercase. Quoted source names
+are rejected during brief validation, including baseline SQL, and in candidate SQL;
+quoted deployment targets are rejected before approval.
 
 `project deployment-check` reads the actual destination, rerunning acceptance
 queries in a separate audit session containing the approved sources and target.

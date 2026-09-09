@@ -108,6 +108,8 @@ class Contract(StrictModel):
 
     @model_validator(mode="after")
     def coverage(self):
+        if any('"' in name for name in self.scope):
+            raise ValueError("project source tables must use unquoted DB.SCHEMA.OBJECT identifiers")
         for items in (self.joins, self.checks):
             ids = [item.id for item in items]
             if len(ids) != len(set(ids)):

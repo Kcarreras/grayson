@@ -48,6 +48,10 @@ def sources(tree: exp.Expression) -> set[str]:
             if isinstance(source, exp.Table):
                 if not isinstance(source.this, exp.Identifier):
                     raise ValueError("table functions are not project input relations")
+                if len(source.parts) > 1 and any(p.args.get("quoted") for p in source.parts):
+                    raise ValueError(
+                        "project source tables must use unquoted DB.SCHEMA.OBJECT identifiers"
+                    )
                 out.add(".".join(p.name for p in source.parts).upper())
     return out
 

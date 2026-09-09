@@ -50,6 +50,23 @@ def state(session: Session) -> dict | None:
     return value
 
 
+def _candidate_phase(s, level):
+    """Reconcile pending SQL with current gates without interrupting a verifier."""
+    phase = s["phase"]
+    if not s.get("candidate") or s.get("lease", {}).get("expires", 0) > time.time():
+        return phase
+    if phase == "candidate_review" and level != "guided":
+        return "verifying"
+    if (
+        phase == "verifying"
+        and not s.get("verification")
+        and level == "guided"
+        and s.get("candidate_approved") != s["candidate_digest"]
+    ):
+        return "candidate_review"
+    return phase
+
+
 def _mutate(session, revision, event, change, actor="agent"):
     con = session._con()
     try:
@@ -61,6 +78,14 @@ def _mutate(session, revision, event, change, actor="agent"):
         if current and current.get("format") != 1:
             raise ValueError("unsupported project format")
         updated = change(copy.deepcopy(current))
+        if updated["phase"] in {"candidate_review", "verifying"}:
+            level = policy.effective(
+                session,
+                updated["contract"]["policy"]["approval"],
+                override=updated.get("approval_override")
+                or updated["contract"]["policy"]["approval"],
+            )["approval"]
+            updated["phase"] = _candidate_phase(updated, level)
         updated["active_seconds"] = elapsed(current) if current else 0
         updated["active_since"] = time.time() if updated["phase"] in ACTIVE_PHASES else None
         proposal = updated.pop("_new_proposal", None)
@@ -745,7 +770,8 @@ def control(session, action, reason, revision, actor="user"):
             if s["phase"] not in {"paused", "blocked"}:
                 raise ValueError("only a paused or blocked project can resume")
             previous = s.pop("paused_from", None)
-            restore = s["phase"] == "paused" and previous not in {
+            was_paused = s["phase"] == "paused"
+            restore = was_paused and previous not in {
                 None,
                 "paused",
                 "blocked",
@@ -755,12 +781,11 @@ def control(session, action, reason, revision, actor="user"):
                 s["phase"] = previous
             else:
                 s["phase"] = "needs_revision" if s["candidate"] else "building"
-            if (
-                s["phase"] == "candidate_review"
-                and policy.effective(session, s["contract"]["policy"]["approval"])["approval"]
-                != "guided"
-            ):
-                s["phase"] = "verifying"
+            if was_paused and previous == "verifying":
+                level = policy.effective(session, s["contract"]["policy"]["approval"])["approval"]
+                pending_phase = _candidate_phase({**s, "phase": "verifying", "lease": {}}, level)
+                if pending_phase == "candidate_review":
+                    s["phase"] = pending_phase
             s["stalled"] = 0
         else:
             if action == "pause" and s["phase"] != "paused":
@@ -781,11 +806,6 @@ def set_approval(session, level, revision, actor="user"):
         if not s or s["phase"] in TERMINAL:
             raise ValueError("project is missing or finished")
         s["approval_override"] = level
-        effective_level = policy.effective(
-            session, s["contract"]["policy"]["approval"], override=level
-        )["approval"]
-        if s["phase"] == "candidate_review" and effective_level != "guided":
-            s["phase"] = "verifying"
         # Quality, evidence and the brief stay unchanged. Only human interrupt
         # points change, still narrowed by workspace/library ceilings.
         return s
@@ -818,6 +838,12 @@ def status(session):
     if not s:
         return {"project": None, "next_action": "draft a project brief"}
     effective = policy.effective(session, s["contract"]["policy"]["approval"])
+    if _candidate_phase(s, effective["approval"]) != s["phase"]:
+        # Workspace/library ceilings can change outside a project mutation.
+        # Persist the gate and its revision so the console and runner agree.
+        return _mutate(
+            session, s["revision"], "candidate_gate_changed", lambda value: value, "system"
+        )
     p = s["contract"]["policy"]
     blocker = query_blocker(session)
     actions = {

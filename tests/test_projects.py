@@ -424,6 +424,42 @@ def test_project_rejects_quoted_deployment_targets_before_approval(project, targ
     assert not s.proposals()
 
 
+@pytest.mark.parametrize("source", ['DB.S."DailySales"', '"SalesDb".S.ORDERS', 'DB."Sales".ORDERS'])
+def test_project_rejects_quoted_sources_before_drafting(project, source):
+    s, _ = project
+    spec = contract()
+    spec["scope"] = [source, "DB.S.CUSTOMERS"]
+    s = Session.create(
+        s.workspace,
+        workflow="pipeline-development",
+        strict_scope=True,
+        targets=spec["scope"],
+        guard=GuardSettings(),
+        guard_profile="moderate",
+    )
+    with pytest.raises(ValueError, match="source tables must use unquoted"):
+        engine.draft(s, spec)
+    assert engine.state(s) is None
+
+
+@pytest.mark.parametrize("location", ["baseline", "candidate"])
+def test_quoted_source_cannot_alias_an_unquoted_scope_entry(project, location):
+    s, _ = project
+    if location == "baseline":
+        spec = contract()
+        spec["checks"][-1]["baseline_sql"] = 'SELECT ID, AMOUNT FROM DB.S."orders"'
+        with pytest.raises(ValueError, match="source tables must use unquoted"):
+            engine.draft(s, spec)
+        assert engine.state(s) is None
+    else:
+        approve(s)
+        c = candidate(True)
+        c["nodes"][0]["sql"] = 'SELECT ID, CUSTOMER_ID, AMOUNT FROM DB.S."orders"'
+        with pytest.raises(ValueError, match="source tables must use unquoted"):
+            submit(s, c)
+        assert engine.state(s)["candidate"] is None
+
+
 def test_wrong_semantic_value_fails_even_with_correct_totals(project):
     s, executor = project
     approve(s)
@@ -1290,6 +1326,81 @@ def test_lowering_approval_releases_candidate_gate(project, paused):
     assert view["project"]["candidate_digest"] == before["candidate_digest"]
     verify(s, executor)
     assert engine.state(s)["verification"]["verdict"] == "pass"
+
+
+@pytest.mark.parametrize("ceiling", ["run", "workspace", "library"])
+@pytest.mark.parametrize("paused", [False, True])
+def test_tightening_approval_returns_pending_candidate_to_human(project, tmp_path, ceiling, paused):
+    from fastapi.testclient import TestClient
+
+    from grayson.config_edit import set_values
+    from grayson.library import write_library_settings
+    from grayson.projects.runner import drive
+    from grayson.ui.server import build_app
+
+    s, executor = project
+    approve(s)
+    submit(s, candidate(True))
+    before = engine.state(s)
+    if paused:
+        engine.control(s, "pause", "Adjust review level", before["revision"])
+    if ceiling == "run":
+        engine.set_approval(s, "guided", engine.state(s)["revision"])
+    elif ceiling == "workspace":
+        set_values(s.workspace.root, {"projects.max_approval": "guided"})
+    else:
+        library = tmp_path / "team-library"
+        library.mkdir()
+        write_library_settings(library, {"project_max_approval": "guided"})
+        set_values(s.workspace.root, {"library.path": str(library)})
+    if paused:
+        assert engine.status(s)["project"]["phase"] == "paused"
+        engine.control(s, "resume", "Continue", engine.state(s)["revision"])
+    elif ceiling == "workspace":
+        assert engine.status(s)["project"]["phase"] == "candidate_review"
+
+    def unexpected_provider(_):
+        pytest.fail("The runner must wait for candidate approval without invoking the provider")
+
+    view = drive(s, unexpected_provider, max_steps=4, executor=executor)
+    p = view["project"]
+    assert p["phase"] == "candidate_review"
+    assert p["runner_steps"] == 0 and s.budget_consumed_count() == 0
+    assert p["candidate_digest"] == before["candidate_digest"]
+    assert engine.state(s)["phase"] == "candidate_review"
+    assert engine.status(s)["project"]["revision"] == p["revision"]
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{s.id}?t=test")
+    assert page.status_code == 200 and "Approve this candidate" in page.text
+    engine.approve_candidate(s, p["revision"], p["candidate_digest"])
+    assert verify(s, executor)["verification"]["verdict"] == "pass"
+
+
+def test_tightening_approval_preserves_live_verifier_and_existing_approval(project):
+    import time
+
+    s, _ = project
+    approve(s)
+    submit(s, candidate(True))
+
+    def claim(p):
+        p["lease"] = {"token": "active-verifier", "expires": time.time() + 60}
+        return p
+
+    engine._mutate(s, engine.state(s)["revision"], "test_claim", claim)
+    p = engine.set_approval(s, "guided", engine.state(s)["revision"])["project"]
+    assert p["phase"] == "verifying" and p["lease"]["token"] == "active-verifier"
+
+    def release(p):
+        p["lease"] = {}
+        return p
+
+    engine._mutate(s, p["revision"], "test_release", release)
+    p = engine.status(s)["project"]
+    assert p["phase"] == "candidate_review"
+    engine.approve_candidate(s, p["revision"], p["candidate_digest"])
+    p = engine.set_approval(s, "guided", engine.state(s)["revision"])["project"]
+    assert p["phase"] == "verifying" and p["candidate_approved"] == p["candidate_digest"]
 
 
 def test_human_pause_resume_releases_abandoned_runner(project):
