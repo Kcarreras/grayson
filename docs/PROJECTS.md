@@ -207,6 +207,10 @@ or make the missing integration checks explicit before relying on the pipeline.
 Evidence freshness is time-bounded; separate queries are not a transactionally
 consistent warehouse snapshot. Use pinned source versions/time-travel or stable
 batch boundaries when concurrent data changes could invalidate comparisons.
+The approved `evidence_minutes` window starts with the first probe, so finishing
+later probes does not refresh older observations. If a suite outlasts that window,
+its passing results cannot authorize completion. Choose a sufficient window before
+approving the brief, or revise it through human approval; the runner never extends it.
 
 The session opens on **Build**: the current proposal, a clickable source-to-output
 diagram, the latest change and the next decision. Deployment SQL can be reviewed,

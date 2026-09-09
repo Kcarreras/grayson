@@ -469,6 +469,7 @@ def record_review(session, spec, revision):
 
 
 def _fresh(s):
+    """Bound the age of the earliest probe, not just the report's last result."""
     report = s.get("verification")
     return bool(
         report
@@ -621,8 +622,8 @@ def _verify_deployment(session, s, target, token, executor):
         connection=s["connection"],
         title="Deployment verification: " + session.id,
         actor="agent",
+        project_verification_parent=session.id,
     )
-    child.set_meta("project_verification_parent", session.id)
     current = state(session)
 
     def attach(v):

@@ -164,6 +164,7 @@ class Session:
         strict_scope: bool | None = None,
         connection: str | None = None,
         actor: str = "user",
+        project_verification_parent: str | None = None,
     ) -> Session:
         # ids are a second-resolution stamp plus two random bytes: several
         # sessions created in one second (a test loop, a script) can collide,
@@ -199,6 +200,8 @@ class Session:
                 "connection": connection or workspace.config.connection,
                 "scope_extra": json.dumps([]),
             }
+            if project_verification_parent:
+                meta["project_verification_parent"] = project_verification_parent
             con.executemany("INSERT INTO meta(key, value) VALUES(?, ?)", meta.items())
             con.commit()
         finally:

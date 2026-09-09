@@ -611,6 +611,13 @@ def abandon_session(
         raise EnforcementError(
             "abandoning needs a reason — it is the only record of why this session has no result"
         )
+    from grayson.projects.engine import control as project_control
+    from grayson.projects.engine import state as project_state
+
+    project = project_state(session)
+    if project:
+        project_control(session, "cancel", reason, project["revision"], actor)
+        return readiness(session, overrides_dir)
     ready = readiness(session, overrides_dir)
     cancelled = [iv["iid"] for iv in session.interventions("open")]
     for iid in cancelled:

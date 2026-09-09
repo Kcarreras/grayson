@@ -452,6 +452,7 @@ def test_deployment_checks_actual_target_and_preserves_source_scope(
     proposals.mark_applied(s, pid)
     scope = s.scope_tables.copy()
     if setup_failure:
+        before_sessions = set(s.workspace.list_session_ids())
         with monkeypatch.context() as patch:
             if setup_failure == "create":
 
@@ -460,19 +461,21 @@ def test_deployment_checks_actual_target_and_preserves_source_scope(
 
                 patch.setattr(Session, "create", fail_create)
             else:
-                set_meta = Session.set_meta
+                log_event = Session.log_event
 
-                def fail_parent_link(child, key, value):
-                    if key == "project_verification_parent":
-                        raise OSError("temporary metadata storage failure")
-                    return set_meta(child, key, value)
+                def fail_after_metadata(child, actor, event_type, payload):
+                    if event_type == "session_created" and child.workflow == "table-health":
+                        raise OSError("temporary initialization failure")
+                    return log_event(child, actor, event_type, payload)
 
-                patch.setattr(Session, "set_meta", fail_parent_link)
+                patch.setattr(Session, "log_event", fail_after_metadata)
             with pytest.raises(OSError):
                 engine.deployment_check(s, package["revision"], executor)
         recovered = engine.state(s)
         assert recovered["phase"] == package["phase"]
         assert not recovered["lease"]
+        for audit_id in set(s.workspace.list_session_ids()) - before_sessions:
+            assert Session(s.workspace, audit_id).get_meta("project_verification_parent") == s.id
     result = engine.deployment_check(s, engine.state(s)["revision"], executor)["project"]
     assert result["deployed_verification"]["verdict"] == "fail"
     assert s.scope_tables == scope
@@ -795,6 +798,27 @@ def test_runner_self_corrects_nonobject_intervention_payload(project, malformed)
     assert s.interventions("open")[0]["request"]["question"] == "Which date window?"
 
 
+def test_generic_abandonment_cancels_project_state(project):
+    s, _ = project
+    approve(s)
+    s.add_intervention("free_response", "Pending decision", "", {"question": "When?"})
+
+    def active_work(state):
+        state["lease"] = {"token": "verifier", "expires": engine.time.time() + 60}
+        state["runner"] = {"token": "runner", "expires": engine.time.time() + 60}
+        return state
+
+    engine._mutate(s, engine.state(s)["revision"], "test_active_work", active_work)
+    with pytest.raises(checkpoints.EnforcementError, match="user action"):
+        checkpoints.abandon_session(s, actor="agent", reason="Stopped")
+    checkpoints.abandon_session(s, reason="No longer needed")
+    result = engine.state(s)
+    assert result["phase"] == "cancelled"
+    assert not result["lease"] and not result["runner"]
+    assert s.stage == "closed" and s.outcome == "abandoned"
+    assert not s.interventions("open")
+
+
 def test_project_cancel_cancels_only_open_interventions(project):
     s, _ = project
     approve(s)
@@ -830,6 +854,30 @@ def test_pause_cancels_inflight_verification(project):
         "project"
     ]
     assert resumed["phase"] == "needs_revision" and resumed["verification"] is None
+
+
+def test_long_verification_does_not_refresh_early_evidence(project, monkeypatch):
+    s, executor = project
+    spec = contract()
+    spec["policy"]["evidence_minutes"] = 1
+    approve(s, spec)
+    submit(s, candidate(True))
+    now = [engine.time.time()]
+    monkeypatch.setattr(engine.time, "time", lambda: now[0])
+
+    class SlowExecutor:
+        def execute(self, sql, timeout_seconds=0):
+            result = executor.execute(sql, timeout_seconds)
+            now[0] += 10
+            return result
+
+    result = verify(s, SlowExecutor())
+    report = result["verification"]
+    assert report["verdict"] == "pass" and report["finished"] == now[0]
+    assert report["finished"] - report["started"] > 60
+    assert not engine.status(s)["evidence_current"]
+    with pytest.raises(ValueError, match="fresh"):
+        review_and_checkpoints(s)
 
 
 def test_stale_evidence_cannot_complete(project, monkeypatch):
