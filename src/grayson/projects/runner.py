@@ -237,7 +237,7 @@ def command_provider(argv: list[str], timeout_seconds=300):
     return call
 
 
-def watch(session, provider, *, poll_seconds=5, max_steps=100, on_change=None):
+def watch(session, provider, *, poll_seconds=5, max_steps=100, on_change=None, executor=None):
     """Stay attached across human reviews; never answer or approve on their behalf."""
     if poll_seconds < 1:
         raise ValueError("poll_seconds must be at least 1")
@@ -256,7 +256,7 @@ def watch(session, provider, *, poll_seconds=5, max_steps=100, on_change=None):
         if s["phase"] == "awaiting_deployment":
             proposal = session.proposal(s["deployment"]["pid"])
             if proposal and proposal["status"] == "applied":
-                engine.deployment_check(session, s["revision"])
+                engine.deployment_check(session, s["revision"], executor)
                 continue
         waiting = s["phase"] in {
             "awaiting_brief",
@@ -269,5 +269,5 @@ def watch(session, provider, *, poll_seconds=5, max_steps=100, on_change=None):
         if not waiting:
             if view["query_blocker"]:
                 return view
-            view = drive(session, provider, max_steps=max_steps)
+            view = drive(session, provider, max_steps=max_steps, executor=executor)
         time.sleep(poll_seconds)

@@ -163,6 +163,8 @@ after approval or reported deployment. Without it, the command returns at human
 boundaries and can be invoked again. Process restarts retain all project state;
 an abandoned active lease can be cleared by human pause/resume. The watcher is an
 attached process, not a system-installed service or an external scheduler.
+Embedded callers may pass `executor=` to `drive` or `watch`; the supplied executor
+is retained for discovery, candidate checks, diagnostics and deployment verification.
 
 Provider processes are **not sandboxed by this runner**. Retain the documented
 read-only warehouse role and credential isolation. The common guarded query path

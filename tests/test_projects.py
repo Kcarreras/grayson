@@ -531,8 +531,9 @@ def test_deployment_compares_output_with_intermediate_semantic_checks(project, d
     assert s.outcome == "project_verified"
 
 
-def test_supervisor_repairs_and_stops_at_deployment_boundary(project):
-    from grayson.projects.runner import drive
+@pytest.mark.parametrize("mode", ["drive", "watch"])
+def test_supervisor_repairs_and_stops_at_deployment_boundary(project, monkeypatch, mode):
+    from grayson.projects.runner import drive, watch
 
     s, executor = project
     approve(s)
@@ -569,13 +570,54 @@ def test_supervisor_repairs_and_stops_at_deployment_boundary(project):
                     },
                 }
             return {"action": "finish"}
+        if p["phase"] == "deployment_review":
+            return {"action": "accept_deployment"}
         return {"action": "deployment"}
 
-    result = drive(s, provider, executor=executor)["project"]
-    assert result["phase"] == "awaiting_deployment"
+    if mode == "watch":
+        from grayson.core import proposals
+
+        def unexpected_connection(*args, **kwargs):
+            raise AssertionError("watch switched away from the supplied executor")
+
+        monkeypatch.setattr("grayson.core.run.get_executor", unexpected_connection)
+        sleeps = []
+
+        def no_sleep(seconds):
+            sleeps.append(seconds)
+            assert len(sleeps) < 10, "watcher did not complete the verified deployment"
+
+        monkeypatch.setattr("grayson.projects.runner.time.sleep", no_sleep)
+
+        def human_deploy(change):
+            assert change["phase"] not in {"blocked", "deployment_failed"}
+            if change["phase"] == "awaiting_deployment":
+                current = engine.state(s)
+                pid = current["deployment"]["pid"]
+                # Simulate the separate human approval/execution boundary.
+                assert s.proposal(pid)["status"] == "proposed"
+                proposals.decide(s, pid, True, actor="user")
+                rows = executor.execute(current["candidate_sql"]).rows
+                with sqlite3.connect(executor.db_path) as con:
+                    con.execute(
+                        'CREATE TABLE "DB.S.ENRICHED" '
+                        "(ID INT, CUSTOMER_ID INT, AMOUNT REAL, REGION TEXT)"
+                    )
+                    con.executemany(
+                        'INSERT INTO "DB.S.ENRICHED" VALUES (?,?,?,?)',
+                        [(r["ID"], r["CUSTOMER_ID"], r["AMOUNT"], r["REGION"]) for r in rows],
+                    )
+                proposals.mark_applied(s, pid)
+
+        result = watch(s, provider, executor=executor, on_change=human_deploy)["project"]
+    else:
+        result = drive(s, provider, executor=executor)["project"]
+    assert result["phase"] == ("complete" if mode == "watch" else "awaiting_deployment")
     assert "needs_revision" in seen_phases
     assert result["iterations"] == 2 and not result["runner"]
-    assert s.proposal(result["deployment"]["pid"])["status"] == "proposed"
+    assert s.proposal(result["deployment"]["pid"])["status"] == (
+        "applied" if mode == "watch" else "proposed"
+    )
 
 
 def test_pause_cancels_inflight_verification(project):
