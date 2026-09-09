@@ -348,10 +348,11 @@ def verification_queries(candidate: Candidate, contract: Contract) -> list[dict]
                 )
                 or "TRUE"
             )
-            # Compare null counts as well as values. A null -> zero conversion must
-            # not pass merely because the totals happen to agree.
+            # Compare row counts as well as values. Collapsed rows and null -> zero
+            # conversions must not pass merely because the totals happen to agree.
             mismatch = (
                 "a.GRAYSON_PRESENT IS NULL OR b.GRAYSON_PRESENT IS NULL OR "
+                "a.GRAYSON_NON_NULL <> b.GRAYSON_NON_NULL OR "
                 "a.GRAYSON_NULL <> b.GRAYSON_NULL OR "
                 "(a.GRAYSON_V IS NULL) <> (b.GRAYSON_V IS NULL) OR "
                 "ABS(a.GRAYSON_V - b.GRAYSON_V) > "

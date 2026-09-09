@@ -217,6 +217,72 @@ def test_catches_population_and_value_loss(project, mutation, expected):
     assert next(r for r in p["verification"]["results"] if r["id"] == expected)["status"] == "fail"
 
 
+@pytest.mark.parametrize("group_by", [[], ["CUSTOMER_ID"]])
+def test_measure_detects_collapsed_intermediate_rows(project, group_by):
+    s, executor = project
+    spec = contract()
+    spec.update(
+        goal="Total gross revenue per customer, retaining each order until the final rollup",
+        semantics={"grain": "One row per customer", "amount": "Retain orders until final rollup"},
+        semantic_checks={"grain": ["grain"], "amount": ["revenue", "source_revenue"]},
+        joins=[],
+    )
+    spec["checks"] = [check for check in spec["checks"] if check["id"] != "region"]
+    for check in spec["checks"]:
+        if check["kind"] in {"grain", "population"}:
+            check["keys"] = ["CUSTOMER_ID"]
+        if check["kind"] == "population":
+            check["baseline_sql"] = "SELECT DISTINCT CUSTOMER_ID FROM DB.S.ORDERS"
+        if check["kind"] == "measure":
+            check["group_by"] = ["CUSTOMER_ID"]
+            check["baseline_sql"] = (
+                "SELECT CUSTOMER_ID, SUM(AMOUNT) AS AMOUNT FROM DB.S.ORDERS GROUP BY CUSTOMER_ID"
+            )
+    spec["checks"].append(
+        {
+            "id": "source_revenue",
+            "name": "Orders survive until final rollup",
+            "kind": "measure",
+            "relation": "orders",
+            "column": "AMOUNT",
+            "group_by": group_by,
+            "baseline_sql": "SELECT CUSTOMER_ID, AMOUNT FROM DB.S.ORDERS",
+            "rationale": "Equal totals must not conceal collapsed order rows",
+        }
+    )
+    approve(s, spec)
+    c = {
+        "summary": "Customer revenue rollup",
+        "diagnosis": "Initial rollup before preservation checks",
+        "output": "totals",
+        "nodes": [
+            {
+                "id": "orders",
+                "sql": "SELECT CUSTOMER_ID, SUM(AMOUNT) AS AMOUNT "
+                "FROM DB.S.ORDERS GROUP BY CUSTOMER_ID",
+                "purpose": "Retain order amounts before the final rollup",
+            },
+            {
+                "id": "totals",
+                "sql": "SELECT CUSTOMER_ID, SUM(AMOUNT) AS AMOUNT FROM orders GROUP BY CUSTOMER_ID",
+                "purpose": "Final customer totals",
+            },
+        ],
+    }
+    submit(s, c)
+    bad = verify(s, executor)
+    assert bad["verification"]["verdict"] == "fail"
+    assert {r["id"] for r in bad["verification"]["results"] if r["status"] != "pass"} == {
+        "source_revenue"
+    }
+    assert bad["phase"] == "needs_revision"
+    c["nodes"][0]["sql"] = "SELECT CUSTOMER_ID, AMOUNT FROM DB.S.ORDERS"
+    c["diagnosis"] = "Preserve individual order rows until the approved final rollup"
+    c["addressed_checks"] = ["source_revenue"]
+    submit(s, c)
+    assert verify(s, executor)["verification"]["verdict"] == "pass"
+
+
 def test_sql_error_is_unproven_and_repairable(project):
     s, executor = project
     approve(s)
