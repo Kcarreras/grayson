@@ -763,7 +763,18 @@ h1 + .lede { margin-top: 8px; margin-bottom: 24px; }
 .section-nav a { font-size: var(--t-sm); font-weight: 550; padding: 5px 10px;
   border-radius: 6px; color: var(--muted); }
 .section-nav a:hover { text-decoration: none; background: var(--act-soft); color: var(--act); }
-.section-nav .nav-action { color: var(--act); }
+.session-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+  margin: -12px 0 24px; }
+.session-tools-label { color: var(--muted); font-size: var(--t-sm); }
+.session-tools a { display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px; border-radius: 6px; }
+.session-tools a:hover { text-decoration: none; background: var(--act-soft); }
+.session-tools strong { color: var(--act); font-size: var(--t-sm); font-weight: 550; }
+.session-tool-outcome { color: var(--muted); font-size: var(--t-xs); }
+@media(max-width:650px) {
+  .session-tools { gap: 4px 12px; }
+  .session-tools-label { flex-basis: 100%; }
+}
 .seg-b { border: 0; background: transparent; font-family: var(--sans); min-height: 34px; }
 .card { padding: 20px 22px; border-color: var(--border-soft); }
 .card.attn { border-color: var(--border); border-left: 3px solid var(--attn);

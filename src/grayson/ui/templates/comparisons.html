@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}grayson — Release comparisons{% endblock %}
+{% block title %}grayson — Dataset comparisons{% endblock %}
 {% block head %}<style>
 .comparison-sides { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 .comparison-sides > fieldset { min-width:0; }
@@ -13,7 +13,7 @@
 </style>{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>Comparisons</nav>
-<h1>Make the release decision with evidence</h1><p class="lede">Compare environments, pipelines, or time windows with a shared definition of acceptable change.</p>
+<h1>Compare datasets</h1><p class="lede">Choose two tables and acceptable differences, then run an evidence-backed comparison.</p>
 
 {% if comparisons %}<h2>Saved comparisons</h2><div class="grid">{% for c in comparisons %}{% if c.error %}<div class="banner">{{ c.id }}: {{ c.error }}</div>{% else %}<a class="card" href="/session/{{ s.id }}/comparisons/{{ c.spec.id }}?t={{ token }}"><span class="otitle">{{ c.spec.name }}</span><p class="small muted">{{ c.spec.left.label }} → {{ c.spec.right.label }}</p><span class="chip">{{ c.spec['keys'] | length }} matching key{{ 's' if c.spec['keys'] | length != 1 }}</span><span class="chip">{{ c.spec.columns | length }} compared column{{ 's' if c.spec.columns | length != 1 }}</span></a>{% endif %}{% endfor %}</div>{% endif %}
 {% if s.stage != 'closed' %}
