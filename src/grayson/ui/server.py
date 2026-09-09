@@ -159,6 +159,10 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         for sid in workspace.list_session_ids():
             try:
                 s = Session(workspace, sid)
+                # Deployment audit children remain addressable through evidence
+                # links, but are not independent investigations to work through.
+                if s.get_meta("project_verification_parent"):
+                    continue
             except (OSError, ValueError):
                 continue
             ready = engine.readiness(s, workspace.workflows_dir)

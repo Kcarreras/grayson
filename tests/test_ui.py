@@ -58,6 +58,36 @@ def test_dashboard_lists_session(client, session):
     assert session.id in r.text
 
 
+def test_dashboard_omits_deployment_audits_but_keeps_their_evidence(client, session, workspace):
+    parent = Session.create(
+        workspace,
+        workflow="pipeline-development",
+        targets=session.targets,
+        guard=session.guard_settings,
+        guard_profile="moderate",
+        strict_scope=True,
+        title="Pipeline project",
+    )
+    audit = Session.create(
+        workspace,
+        workflow="table-health",
+        targets=session.targets,
+        guard=session.guard_settings,
+        guard_profile="moderate",
+        strict_scope=True,
+        title="Internal deployment audit",
+    )
+    engine.seed_from_workflow(audit)
+    audit.set_meta("project_verification_parent", parent.id)
+    qid = run_statement(audit, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    page = client.get(f"/?t={TOKEN}")
+    assert page.status_code == 200
+    assert parent.id in page.text and session.id in page.text
+    assert audit.id not in page.text and "Internal deployment audit" not in page.text
+    evidence = client.get(f"/session/{audit.id}/query/{qid}?t={TOKEN}")
+    assert evidence.status_code == 200 and qid in evidence.text
+
+
 def test_session_navigation_targets_exist_without_optional_content(client, session):
     """An empty investigation must not expose dead chart/proposal jumps."""
     import re

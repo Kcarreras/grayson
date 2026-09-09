@@ -277,6 +277,32 @@ def test_candidate_change_invalidates_checks_and_review(project):
         engine.finish(s, p["revision"])
 
 
+@pytest.mark.parametrize("prior_status", ["complete", "waived"])
+def test_revised_candidate_requires_current_checkpoint_dependencies(project, prior_status):
+    s, executor = project
+    approve(s)
+    submit(s, candidate(True))
+    verify(s, executor)
+    review_and_checkpoints(s)
+    if prior_status == "waived":
+        s.reopen_checkpoint("source_understood")
+        checkpoints.waive_checkpoint(s, "source_understood", "Prior candidate exception")
+    revised = candidate(True)
+    revised["nodes"][2]["columns"]["AMOUNT"] = "l.AMOUNT + 0"
+    submit(s, revised)
+    current = verify(s, executor)
+    assert current["verification"]["verdict"] == "pass"
+    evidence = [r["qid"] for r in current["verification"]["results"]]
+    with pytest.raises(checkpoints.EnforcementError, match="source_understood"):
+        checkpoints.complete_checkpoint(s, "candidate_verified", evidence)
+    checkpoints.complete_checkpoint(s, "source_understood", evidence)
+    with pytest.raises(checkpoints.EnforcementError, match="candidate_verified"):
+        checkpoints.complete_checkpoint(s, "interpretation_reviewed", evidence)
+    checkpoints.complete_checkpoint(s, "candidate_verified", evidence)
+    checkpoints.complete_checkpoint(s, "interpretation_reviewed", evidence)
+    assert not checkpoints.readiness(s)["open_checks"]
+
+
 @pytest.mark.parametrize(
     "sql",
     [

@@ -168,7 +168,15 @@ def complete_checkpoint(
         )
     # Ordering, where a workflow declares it: bug-hunter's "no cause-hunting until
     # it reproduces" was prose in a description and enforced by nothing.
-    cleared = {c["key"] for c in session.checkpoints() if c["status"] in ("complete", "waived")}
+    cleared = {
+        c["key"]
+        for c in session.checkpoints()
+        if c["status"] in ("complete", "waived")
+        and (
+            not project
+            or session.get_meta("project_checkpoint:" + c["key"]) == project["candidate_digest"]
+        )
+    }
     unmet = tpl.unmet_dependencies(key, cleared)
     if unmet:
         raise EnforcementError(
