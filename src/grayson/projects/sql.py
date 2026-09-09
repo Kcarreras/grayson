@@ -15,6 +15,14 @@ from sqlglot.optimizer.scope import traverse_scope
 
 from grayson.checks.regression import Expectation
 from grayson.projects.models import Candidate, Contract
+from grayson.util import is_object_name
+
+
+def deployment_target(value: str) -> str:
+    """Use only names compatible with the scope registry's uppercase semantics."""
+    if not is_object_name(value) or '"' in value:
+        raise ValueError("deployment target must use unquoted DB.SCHEMA.OBJECT identifiers")
+    return value.upper()
 
 
 def ident(value: str) -> str:
@@ -151,7 +159,7 @@ def deployment_equivalence_queries(candidate: Candidate, contract: Contract) -> 
     Incompatible schemas or unsupported comparisons remain unproven SQL errors.
     """
     prefix = compile_candidate(candidate, contract)["prefix"]
-    target = contract.deployment_target.upper()
+    target = deployment_target(contract.deployment_target)
     return [
         {
             "id": "deployment." + suffix,

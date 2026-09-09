@@ -176,6 +176,8 @@ unrestricted direct credential access can bypass that path, as described in
 destination using the existing DDL proposal UI. It intentionally does not generate
 OR REPLACE. The person approves and executes it, then records application.
 Approving a stale candidate's package is refused. No project tool runs DDL.
+Deployment targets must use unquoted identifiers; quoted targets are rejected
+before approval because the current scope registry canonicalizes names to uppercase.
 
 `project deployment-check` reads the actual destination, rerunning acceptance
 queries in a separate audit session containing the approved sources and target.
@@ -221,7 +223,11 @@ The brief may explicitly grant `policy.max_revalidations` (default zero, maximum
 reruns the unchanged checks in a separate audit session, and keeps the original
 result historical. Deployed projects test the deployed target. Retries with the
 same request ID return the same run. Replays cannot change the brief/candidate or
-grant further replays. Each replay has the approved per-run query/time budget;
+grant further replays. If audit-session creation is interrupted, retry the same
+request ID: ordinary creation errors release its lease immediately, and a process
+exit leaves a creation lease that expires after 60 seconds. Recovery retains the
+original allowance; an unattached audit session cannot execute queries.
+Each replay has the approved per-run query/time budget;
 the finite replay count bounds total authorised work. Failed replays block with
 their evidence for investigation rather than quietly repairing production.
 

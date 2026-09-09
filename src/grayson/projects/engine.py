@@ -17,8 +17,13 @@ from grayson.checks.regression import Expectation, evaluate
 from grayson.core.session import Session
 from grayson.projects import policy
 from grayson.projects.models import Candidate, Contract, PlanStep, Review
-from grayson.projects.sql import baseline, compile_candidate, verification_queries
-from grayson.util import is_object_name, utcnow
+from grayson.projects.sql import (
+    baseline,
+    compile_candidate,
+    deployment_target,
+    verification_queries,
+)
+from grayson.util import utcnow
 
 KEY = "project_v1"
 TERMINAL = {"complete", "cancelled"}
@@ -127,6 +132,12 @@ def _approved(session, s):
         raise ValueError("connection or scope changed; draft and approve a revised brief")
     if s["phase"] in TERMINAL or s["phase"] in {"paused", "blocked"}:
         raise ValueError(f"project is {s['phase']}; a human must resume or revise the brief")
+    if s.get("replay_only"):
+        parent = state(Session(session.workspace, s["revalidation_of"]))
+        if not any(
+            r.get("session") == session.id for r in parent.get("revalidations", {}).values()
+        ):
+            raise ValueError("revalidation creation is not attached to its approved grant")
 
 
 def draft(session: Session, spec: dict, revision: int = 0) -> dict:
@@ -147,8 +158,8 @@ def draft(session: Session, spec: dict, revision: int = 0) -> dict:
         raise ValueError("project kind must match the workflow")
     if not session.strict_scope or set(contract.scope) != session.scope_tables:
         raise ValueError("projects require strict scope matching the session's explicit tables")
-    if contract.deployment_target and not is_object_name(contract.deployment_target):
-        raise ValueError("deployment target must be DB.SCHEMA.OBJECT")
+    if contract.deployment_target:
+        deployment_target(contract.deployment_target)
     for check in contract.checks:
         if check.baseline_sql:
             baseline(check.baseline_sql, set(contract.scope))
@@ -517,8 +528,7 @@ def deployment_package(session, revision):
         target = s["contract"]["deployment_target"]
         if not target:
             raise ValueError("approve a brief with an explicit deployment_target first")
-        if not is_object_name(target):
-            raise ValueError("invalid deployment target")
+        target = deployment_target(target)
         ddl = (
             f"CREATE {s['contract']['materialization'].upper()} {target.upper()} AS\n"
             f"{s['candidate_sql']}"
@@ -551,6 +561,7 @@ def deployment_check(session, revision, executor=None):
     _editable(s)
     _approved(session, s)
     d = s.get("deployment")
+    target = deployment_target(s["contract"]["deployment_target"])
     proposal = session.proposal(d["pid"]) if d else None
     if (
         not proposal
@@ -597,7 +608,7 @@ def deployment_check(session, revision, executor=None):
     from grayson.projects.sql import deployment_equivalence_queries, ident
 
     original = f'"CANDIDATE" AS (SELECT * FROM {ident(s["candidate"]["output"])})'
-    actual = f'"CANDIDATE" AS (SELECT * FROM {s["contract"]["deployment_target"].upper()})'
+    actual = f'"CANDIDATE" AS (SELECT * FROM {target})'
     queries = [
         {**check, "sql": check["sql"].replace(original, actual, 1)}
         for check in s["verification_queries"]

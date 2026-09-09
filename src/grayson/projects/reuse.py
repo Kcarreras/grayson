@@ -2,6 +2,7 @@
 
 import copy
 import re
+import secrets
 import time
 
 from grayson.projects import engine
@@ -20,25 +21,75 @@ def revalidate(session, request_id, revision, executor=None):
         raise ValueError("request_id must be 1-80 letters, digits, underscores or hyphens")
     source = engine.state(session)
     existing = source.get("revalidations", {}).get(request_id) if source else None
-    if existing:
-        if existing.get("session"):
-            return engine.status(Session(session.workspace, existing["session"]))
-        raise ValueError(
-            "revalidation was reserved but interrupted; use a new request within the limit"
-        )
+    if existing and existing.get("session"):
+        return engine.status(Session(session.workspace, existing["session"]))
+    token = secrets.token_hex(16)
 
     def reserve(s):
         if not s or s["phase"] != "complete" or s.get("revalidation_of") or s.get("replay_only"):
             raise ValueError("only an original completed project can authorise revalidation")
         runs = s.setdefault("revalidations", {})
-        if len(runs) >= s["contract"]["policy"]["max_revalidations"]:
+        prior = runs.get(request_id)
+        if prior and (prior.get("session") or prior.get("expires", 0) > time.time()):
+            raise ValueError("revalidation creation is in progress; retry the same request later")
+        if not prior and len(runs) >= s["contract"]["policy"]["max_revalidations"]:
             raise ValueError(
                 "no preapproved revalidations remain; request a new human-approved project"
             )
-        runs[request_id] = {"reserved_at": utcnow(), "session": None}
+        runs[request_id] = {
+            "reserved_at": utcnow(),
+            "session": None,
+            "token": token,
+            "expires": time.time() + 60,
+        }
         return s
 
-    engine._mutate(session, revision, "revalidation_reserved", reserve, "system")
+    engine._mutate(
+        session,
+        source["revision"] if existing else revision,
+        "revalidation_reserved",
+        reserve,
+        "system",
+    )
+    try:
+        child = _create_revalidation(session, request_id, token)
+    except Exception:
+        # Ordinary failures release the creation lease immediately. A process exit
+        # leaves a short lease that the same request can reclaim on retry.
+        def release(s):
+            entry = s["revalidations"].get(request_id, {})
+            if entry.get("token") == token and not entry.get("session"):
+                entry.update(token=None, expires=0)
+            return s
+
+        engine._mutate(
+            session, engine.state(session)["revision"], "revalidation_released", release, "system"
+        )
+        raise
+    result = engine.verify(child, engine.state(child)["revision"], executor)["project"]
+
+    def conclude(s):
+        if s["verification"]["verdict"] == "pass":
+            s.update(
+                phase="complete",
+                completion={
+                    "by": "system",
+                    "at": utcnow(),
+                    "label": "machine revalidated under prior human grant; no new human acceptance",
+                },
+            )
+        else:
+            s.update(
+                phase="blocked", block_reason="Previously verified SQL failed fresh revalidation"
+            )
+        return s
+
+    return engine._mutate(child, result["revision"], "revalidation_finished", conclude, "system")
+
+
+def _create_revalidation(session, request_id, token):
+    from grayson.core.session import Session
+
     source = engine.state(session)
     deployed = source.get("deployed_verification")
     report = deployed or source["verification"]
@@ -74,6 +125,7 @@ def revalidate(session, request_id, revision, executor=None):
         revalidations={},
         verification_sessions=[],
         verification=None,
+        last_verification=None,
         review=None,
         deployment=None,
         deployed_verification=None,
@@ -98,29 +150,16 @@ def revalidate(session, request_id, revision, executor=None):
     current = engine.state(session)
 
     def attach(s):
-        s["revalidations"][request_id]["session"] = child.id
+        entry = s["revalidations"].get(request_id, {})
+        if entry.get("token") != token or entry.get("session"):
+            raise ValueError("revalidation reservation changed; retry the original request")
+        entry["session"] = child.id
+        entry.pop("token", None)
+        entry.pop("expires", None)
         return s
 
     engine._mutate(session, current["revision"], "revalidation_attached", attach, "system")
-    result = engine.verify(child, engine.state(child)["revision"], executor)["project"]
-
-    def conclude(s):
-        if s["verification"]["verdict"] == "pass":
-            s.update(
-                phase="complete",
-                completion={
-                    "by": "system",
-                    "at": utcnow(),
-                    "label": "machine revalidated under prior human grant; no new human acceptance",
-                },
-            )
-        else:
-            s.update(
-                phase="blocked", block_reason="Previously verified SQL failed fresh revalidation"
-            )
-        return s
-
-    return engine._mutate(child, result["revision"], "revalidation_finished", conclude, "system")
+    return child
 
 
 def propose_regression(session, criterion_id, check_id):

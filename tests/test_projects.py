@@ -321,6 +321,17 @@ def test_unknown_contract_fields_fail_closed():
         Contract.model_validate(spec)
 
 
+@pytest.mark.parametrize("target", ['DB.S."DailySales"', '"SalesDb".S.DAILY', 'DB."Sales".DAILY'])
+def test_project_rejects_quoted_deployment_targets_before_approval(project, target):
+    s, _ = project
+    spec = contract()
+    spec["deployment_target"] = target
+    with pytest.raises(ValueError, match="unquoted"):
+        engine.draft(s, spec)
+    assert engine.state(s) is None
+    assert not s.proposals()
+
+
 def test_wrong_semantic_value_fails_even_with_correct_totals(project):
     s, executor = project
     approve(s)
@@ -677,9 +688,8 @@ def test_mcp_surface_has_no_approval_tools(project):
     assert result["project"]["phase"] == "awaiting_brief"
 
 
-def test_revalidation_is_finite_idempotent_and_keeps_history(project):
-    from grayson.projects.reuse import revalidate
-
+@pytest.fixture
+def revalidatable_project(project):
     original, executor = project
     s = Session.create(
         original.workspace,
@@ -697,6 +707,13 @@ def test_revalidation_is_finite_idempotent_and_keeps_history(project):
     verify(s, executor)
     review_and_checkpoints(s)
     original_result = engine.finish(s, engine.state(s)["revision"])["project"]
+    return s, executor, original_result
+
+
+def test_revalidation_is_finite_idempotent_and_keeps_history(revalidatable_project):
+    from grayson.projects.reuse import revalidate
+
+    s, executor, original_result = revalidatable_project
     replay = revalidate(s, "source-change-1", original_result["revision"], executor)["project"]
     assert replay["phase"] == "complete" and replay["revalidation_of"] == s.id
     assert engine.state(s)["verification"] == original_result["verification"]
@@ -704,6 +721,54 @@ def test_revalidation_is_finite_idempotent_and_keeps_history(project):
     assert duplicate["revision"] == replay["revision"]
     with pytest.raises(ValueError, match="no preapproved"):
         revalidate(s, "source-change-2", engine.state(s)["revision"], executor)
+
+
+@pytest.mark.parametrize("failure", ["create_error", "process_exit"])
+def test_revalidation_recovers_unattached_reservation(revalidatable_project, monkeypatch, failure):
+    from grayson.projects import reuse
+
+    s, executor, original = revalidatable_project
+    revision = original["revision"]
+    existing_sessions = set(s.workspace.list_session_ids())
+    with monkeypatch.context() as patch:
+        if failure == "create_error":
+
+            def fail_create(*args, **kwargs):
+                raise OSError("session storage temporarily unavailable")
+
+            patch.setattr(Session, "create", fail_create)
+            expected = OSError
+        else:
+            mutate = engine._mutate
+
+            def interrupt_attach(session, revision, event, *args, **kwargs):
+                if event == "revalidation_attached":
+                    raise SystemExit("simulated process exit")
+                return mutate(session, revision, event, *args, **kwargs)
+
+            patch.setattr(engine, "_mutate", interrupt_attach)
+            expected = SystemExit
+        with pytest.raises(expected):
+            reuse.revalidate(s, "recover-me", revision, executor)
+    reservation = engine.state(s)["revalidations"]["recover-me"]
+    assert reservation["session"] is None
+    if failure == "process_exit":
+        with pytest.raises(ValueError, match="in progress"):
+            reuse.revalidate(s, "recover-me", revision, executor)
+        orphan_ids = set(s.workspace.list_session_ids()) - existing_sessions
+        assert len(orphan_ids) == 1
+        orphan = Session(s.workspace, orphan_ids.pop())
+        assert "not attached" in engine.query_blocker(orphan)
+        assert orphan.budget_consumed_count() == 0
+        now = reuse.time.time()
+        monkeypatch.setattr(reuse.time, "time", lambda: now + 61)
+    recovered = reuse.revalidate(s, "recover-me", revision, executor)["project"]
+    assert recovered["phase"] == "complete"
+    duplicate = reuse.revalidate(s, "recover-me", revision, executor)["project"]
+    assert duplicate["revision"] == recovered["revision"]
+    assert len(engine.state(s)["revalidations"]) == 1
+    with pytest.raises(ValueError, match="no preapproved"):
+        reuse.revalidate(s, "extra-run", engine.state(s)["revision"], executor)
 
 
 def test_recipe_and_regression_are_proposals(project):
