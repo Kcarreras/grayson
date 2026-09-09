@@ -465,7 +465,16 @@ def test_deployment_checks_actual_target_and_preserves_source_scope(
     )
     con.commit()
     con.close()
-    result = engine.deployment_check(s, result["revision"], executor)["project"]
+    # The runner must keep the supplied executor through deployment verification.
+    from grayson.projects.runner import dispatch
+
+    def unexpected_connection(*args, **kwargs):
+        raise AssertionError("deployment switched away from the supplied executor")
+
+    monkeypatch.setattr("grayson.core.run.get_executor", unexpected_connection)
+    result = dispatch(
+        s, {"action": "deployment_check"}, executor=executor, revision=result["revision"]
+    )["project"]
     assert result["deployed_verification"]["verdict"] == "pass"
     engine.accept_deployment(s, result["revision"])
     assert s.stage == "closed" and s.outcome == "project_verified"

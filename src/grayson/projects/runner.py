@@ -83,6 +83,8 @@ def dispatch(session, action, executor=None, revision=None):
         return engine.submit_candidate(session, payload, rev)
     if name == "verify":
         return engine.verify(session, rev, executor)
+    if name == "deployment_check":
+        return engine.deployment_check(session, rev, executor)
     if name == "diagnose":
         return engine.diagnose(session, payload["check_id"], payload.get("max_rows", 20), executor)
     if name == "review":
@@ -111,7 +113,6 @@ def dispatch(session, action, executor=None, revision=None):
     return {
         "finish": engine.finish,
         "deployment": engine.deployment_package,
-        "deployment_check": engine.deployment_check,
         "accept_deployment": engine.accept_deployment,
     }[name](session, rev)
 
