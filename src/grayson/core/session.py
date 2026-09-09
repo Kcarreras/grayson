@@ -165,6 +165,7 @@ class Session:
         connection: str | None = None,
         actor: str = "user",
         project_verification_parent: str | None = None,
+        project_revalidation_parent: str | None = None,
     ) -> Session:
         # ids are a second-resolution stamp plus two random bytes: several
         # sessions created in one second (a test loop, a script) can collide,
@@ -202,6 +203,8 @@ class Session:
             }
             if project_verification_parent:
                 meta["project_verification_parent"] = project_verification_parent
+            if project_revalidation_parent:
+                meta["project_revalidation_parent"] = project_revalidation_parent
             con.executemany("INSERT INTO meta(key, value) VALUES(?, ?)", meta.items())
             con.commit()
         finally:

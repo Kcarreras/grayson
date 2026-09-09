@@ -446,18 +446,19 @@ def test_project_rejects_quoted_sources_before_drafting(project, source):
 
 
 @pytest.mark.parametrize("location", ["baseline", "candidate"])
-def test_quoted_source_cannot_alias_an_unquoted_scope_entry(project, location):
+@pytest.mark.parametrize("source", ['DB.S."orders"', "DB.S.ORDERſ"])
+def test_unsupported_source_cannot_alias_an_unquoted_scope_entry(project, location, source):
     s, _ = project
     if location == "baseline":
         spec = contract()
-        spec["checks"][-1]["baseline_sql"] = 'SELECT ID, AMOUNT FROM DB.S."orders"'
+        spec["checks"][-1]["baseline_sql"] = "SELECT ID, AMOUNT FROM " + source
         with pytest.raises(ValueError, match="source tables must use unquoted"):
             engine.draft(s, spec)
         assert engine.state(s) is None
     else:
         approve(s)
         c = candidate(True)
-        c["nodes"][0]["sql"] = 'SELECT ID, CUSTOMER_ID, AMOUNT FROM DB.S."orders"'
+        c["nodes"][0]["sql"] = "SELECT ID, CUSTOMER_ID, AMOUNT FROM " + source
         with pytest.raises(ValueError, match="source tables must use unquoted"):
             submit(s, c)
         assert engine.state(s)["candidate"] is None
@@ -482,6 +483,30 @@ def test_project_rejects_sources_without_three_identifier_parts(project, source)
     with pytest.raises(ValueError, match="source tables must use unquoted DB.SCHEMA.OBJECT"):
         engine.draft(s, spec)
     assert engine.state(s) is None
+
+
+@pytest.mark.parametrize(
+    "name", ["DB.S.CAFÉ", "DÉB.S.ORDERS", "DB.SCÉMA.ORDERS", "DB.S." + "A" * 256]
+)
+def test_project_object_names_reject_non_ascii_and_overlength_parts(name):
+    from grayson.projects.sql import deployment_target
+
+    spec = contract()
+    spec["scope"] = [name]
+    with pytest.raises(ValueError, match="source tables must use unquoted"):
+        Contract.model_validate(spec)
+    with pytest.raises(ValueError, match="deployment target must use unquoted"):
+        deployment_target(name)
+
+
+def test_project_object_names_allow_ascii_grammar_and_maximum_length():
+    from grayson.projects.sql import deployment_target
+
+    name = "_Db1.S$2." + "a" * 255
+    spec = contract()
+    spec["scope"] = [name]
+    assert Contract.model_validate(spec).scope == [name.upper()]
+    assert deployment_target(name) == name.upper()
 
 
 def test_wrong_semantic_value_fails_even_with_correct_totals(project):
@@ -1171,9 +1196,14 @@ def test_revalidation_is_finite_idempotent_and_keeps_history(revalidatable_proje
         revalidate(s, "source-change-2", engine.state(s)["revision"], executor)
 
 
-@pytest.mark.parametrize("failure", ["create_error", "process_exit"])
+@pytest.mark.parametrize(
+    "failure", ["create_error", "metadata_error", "attach_error", "process_exit"]
+)
 def test_revalidation_recovers_unattached_reservation(revalidatable_project, monkeypatch, failure):
+    from fastapi.testclient import TestClient
+
     from grayson.projects import reuse
+    from grayson.ui.server import build_app
 
     s, executor, original = revalidatable_project
     revision = original["revision"]
@@ -1186,28 +1216,49 @@ def test_revalidation_recovers_unattached_reservation(revalidatable_project, mon
 
             patch.setattr(Session, "create", fail_create)
             expected = OSError
+        elif failure == "metadata_error":
+            log_event = Session.log_event
+
+            def fail_after_metadata(child, actor, event_type, payload):
+                if event_type == "session_created":
+                    raise OSError("interrupted child initialization")
+                return log_event(child, actor, event_type, payload)
+
+            patch.setattr(Session, "log_event", fail_after_metadata)
+            expected = OSError
         else:
             mutate = engine._mutate
+            expected = SystemExit if failure == "process_exit" else OSError
 
             def interrupt_attach(session, revision, event, *args, **kwargs):
                 if event == "revalidation_attached":
-                    raise SystemExit("simulated process exit")
+                    raise expected("simulated attachment failure")
                 return mutate(session, revision, event, *args, **kwargs)
 
             patch.setattr(engine, "_mutate", interrupt_attach)
-            expected = SystemExit
         with pytest.raises(expected):
             reuse.revalidate(s, "recover-me", revision, executor)
     reservation = engine.state(s)["revalidations"]["recover-me"]
     assert reservation["session"] is None
+    orphan_ids = set(s.workspace.list_session_ids()) - existing_sessions
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    if failure != "create_error":
+        assert len(orphan_ids) == 1
+        orphan = Session(s.workspace, next(iter(orphan_ids)))
+        assert orphan.get_meta("project_revalidation_parent") == s.id
+        assert "not attached" in engine.query_blocker(orphan)
+        assert run_statement(orphan, "SELECT * FROM DB.S.ORDERS", executor=executor)["status"] == (
+            "rejected"
+        )
+        assert orphan.budget_consumed_count() == 0
+        if failure == "process_exit":
+            # Older initialized orphans must be recognized from their project state too.
+            orphan.set_meta("project_revalidation_parent", "")
+        page = client.get("/?t=test")
+        assert page.status_code == 200 and orphan.id not in page.text
     if failure == "process_exit":
         with pytest.raises(ValueError, match="in progress"):
             reuse.revalidate(s, "recover-me", revision, executor)
-        orphan_ids = set(s.workspace.list_session_ids()) - existing_sessions
-        assert len(orphan_ids) == 1
-        orphan = Session(s.workspace, orphan_ids.pop())
-        assert "not attached" in engine.query_blocker(orphan)
-        assert orphan.budget_consumed_count() == 0
         now = reuse.time.time()
         monkeypatch.setattr(reuse.time, "time", lambda: now + 61)
     recovered = reuse.revalidate(s, "recover-me", revision, executor)["project"]
@@ -1215,6 +1266,10 @@ def test_revalidation_recovers_unattached_reservation(revalidatable_project, mon
     duplicate = reuse.revalidate(s, "recover-me", revision, executor)["project"]
     assert duplicate["revision"] == recovered["revision"]
     assert len(engine.state(s)["revalidations"]) == 1
+    attached_id = engine.state(s)["revalidations"]["recover-me"]["session"]
+    page = client.get("/?t=test")
+    assert page.status_code == 200 and attached_id in page.text
+    assert all(sid not in page.text for sid in orphan_ids)
     with pytest.raises(ValueError, match="no preapproved"):
         reuse.revalidate(s, "extra-run", engine.state(s)["revision"], executor)
 

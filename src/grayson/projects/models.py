@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from grayson.checks.regression import Expectation
-from grayson.util import is_object_name
+from grayson.projects.identifiers import is_project_object_name
 
 
 class StrictModel(BaseModel):
@@ -109,9 +109,7 @@ class Contract(StrictModel):
 
     @model_validator(mode="after")
     def coverage(self):
-        if any(
-            not is_object_name(name) or '"' in name or name.count(".") != 2 for name in self.scope
-        ):
+        if any(not is_project_object_name(name) for name in self.scope):
             raise ValueError("project source tables must use unquoted DB.SCHEMA.OBJECT identifiers")
         for items in (self.joins, self.checks):
             ids = [item.id for item in items]

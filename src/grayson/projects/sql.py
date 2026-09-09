@@ -14,13 +14,13 @@ from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
 from grayson.checks.regression import Expectation
+from grayson.projects.identifiers import is_project_object_name
 from grayson.projects.models import Candidate, Contract
-from grayson.util import is_object_name
 
 
 def deployment_target(value: str) -> str:
     """Use only names compatible with the scope registry's uppercase semantics."""
-    if not is_object_name(value) or '"' in value or value.count(".") != 2:
+    if not is_project_object_name(value):
         raise ValueError("deployment target must use unquoted DB.SCHEMA.OBJECT identifiers")
     return value.upper()
 
@@ -48,11 +48,15 @@ def sources(tree: exp.Expression) -> set[str]:
             if isinstance(source, exp.Table):
                 if not isinstance(source.this, exp.Identifier):
                     raise ValueError("table functions are not project input relations")
-                if len(source.parts) > 1 and any(p.args.get("quoted") for p in source.parts):
+                name = ".".join(p.name for p in source.parts)
+                if len(source.parts) > 1 and (
+                    any(p.args.get("quoted") for p in source.parts)
+                    or not is_project_object_name(name)
+                ):
                     raise ValueError(
                         "project source tables must use unquoted DB.SCHEMA.OBJECT identifiers"
                     )
-                out.add(".".join(p.name for p in source.parts).upper())
+                out.add(name.upper())
     return out
 
 

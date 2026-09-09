@@ -190,6 +190,8 @@ Project source tables and deployment targets must use fully qualified, unquoted
 The current scope registry canonicalizes names to uppercase. Quoted source names
 are rejected during brief validation, including baseline SQL, and in candidate SQL;
 quoted deployment targets are rejected before approval.
+Each name component follows Snowflake's ASCII bare-identifier grammar and
+255-character limit; validation runs before uppercase normalization.
 
 `project deployment-check` reads the actual destination, rerunning acceptance
 queries in a separate audit session containing the approved sources and target.
@@ -229,6 +231,11 @@ Old `/session/SID/project` links redirect to the same session workspace.
 Download JSON from History; session reports also include project verdicts and attribution.
 
 ## Reuse and bounded revalidation
+
+Revalidation children are internal until attached to their parent's approved
+request. Incomplete or failed setup attempts stay out of the dashboard and cannot
+query; successfully attached runs remain visible. Retrying an interrupted request
+preserves its original finite allowance.
 
 `project recipe SID NAME` returns a workflow draft containing a verified method
 and a clearly labelled historical example. Save it through ordinary workflow

@@ -154,6 +154,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request) -> Any:
+        from grayson.projects.engine import state as project_state
+        from grayson.projects.engine import unattached_revalidation
+
         _check(request)
         sessions = []
         for sid in workspace.list_session_ids():
@@ -163,12 +166,12 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 # links, but are not independent investigations to work through.
                 if s.get_meta("project_verification_parent"):
                     continue
+                project = project_state(s)
+                if unattached_revalidation(s, project):
+                    continue
             except (OSError, ValueError):
                 continue
             ready = engine.readiness(s, workspace.workflows_dir)
-            from grayson.projects.engine import state as project_state
-
-            project = project_state(s)
             is_project = engine.workflow_for(s, workspace.workflows_dir).project is not None
             sessions.append(
                 {

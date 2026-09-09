@@ -124,6 +124,7 @@ def _create_revalidation(session, request_id, token):
         connection=source["connection"],
         title="Revalidate: " + session.id,
         actor="system",
+        project_revalidation_parent=session.id,
     )
     child.set_meta("workflow_snapshot_v1", session.get_meta("workflow_snapshot_v1"))
     cloned = copy.deepcopy(source)

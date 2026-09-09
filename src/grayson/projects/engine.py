@@ -54,6 +54,22 @@ def state(session: Session) -> dict | None:
     return value
 
 
+def unattached_revalidation(session, project):
+    """Recognize internal setup sessions, including older initialized orphans."""
+    parent_id = session.get_meta("project_revalidation_parent") or (project or {}).get(
+        "revalidation_of"
+    )
+    if not parent_id:
+        return False
+    try:
+        parent = state(Session(session.workspace, parent_id)) or {}
+    except (OSError, ValueError):
+        return True
+    return not any(
+        entry.get("session") == session.id for entry in parent.get("revalidations", {}).values()
+    )
+
+
 def _candidate_phase(s, level):
     """Reconcile pending SQL with current gates without interrupting a verifier."""
     phase = s["phase"]
@@ -175,12 +191,8 @@ def _approved(session, s):
         raise ValueError("connection or scope changed; draft and approve a revised brief")
     if s["phase"] in TERMINAL or s["phase"] in {"paused", "blocked"}:
         raise ValueError(f"project is {s['phase']}; a human must resume or revise the brief")
-    if s.get("replay_only"):
-        parent = state(Session(session.workspace, s["revalidation_of"]))
-        if not any(
-            r.get("session") == session.id for r in parent.get("revalidations", {}).values()
-        ):
-            raise ValueError("revalidation creation is not attached to its approved grant")
+    if s.get("replay_only") and unattached_revalidation(session, s):
+        raise ValueError("revalidation creation is not attached to its approved grant")
 
 
 def draft(session: Session, spec: dict, revision: int = 0) -> dict:
@@ -350,6 +362,8 @@ def query_blocker(session, allocated=False) -> str | None:
     if parent:
         return query_blocker(Session(session.workspace, parent), allocated)
     s = state(session)
+    if unattached_revalidation(session, s):
+        return "revalidation creation is not attached to its approved grant"
     if not s:
         return None
     try:
