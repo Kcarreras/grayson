@@ -555,8 +555,6 @@ def deployment_package(session, revision):
 
 def deployment_check(session, revision, executor=None):
     """Read the deployed target under the explicitly approved output scope."""
-    from grayson.core.run import run_statement
-
     s = state(session)
     _editable(s)
     _approved(session, s)
@@ -573,15 +571,34 @@ def deployment_check(session, revision, executor=None):
     if s["revision"] != revision:
         raise ValueError("project changed; reload before deployment verification")
     token = secrets.token_hex(16)
+    previous_phase = s.get("lease", {}).get("previous_phase", s["phase"])
 
     def claim(v):
         _editable(v)
-        v["lease"] = {"token": token, "expires": time.time() + 86400}
+        v["lease"] = {"token": token, "expires": time.time() + 60, "previous_phase": previous_phase}
         v["phase"] = "verifying"
         v["deployed_verification"] = None
         return v
 
     _mutate(session, revision, "deployment_verification_started", claim)
+    try:
+        return _verify_deployment(session, s, target, token, executor)
+    finally:
+        current = state(session)
+        if current.get("lease", {}).get("token") == token:
+
+            def release(v):
+                if v.get("lease", {}).get("token") == token:
+                    v.update(lease={}, phase=previous_phase, deployed_verification=None)
+                return v
+
+            _mutate(session, current["revision"], "deployment_verification_interrupted", release)
+
+
+def _verify_deployment(session, s, target, token, executor):
+    from grayson.core.run import run_statement
+
+    d = s["deployment"]
     # A separate audit session prevents temporarily widening the project's source
     # scope. Its allowance is already part of the approved brief and DDL package.
     settings = session.guard_settings.model_copy()
@@ -601,7 +618,10 @@ def deployment_check(session, revision, executor=None):
     current = state(session)
 
     def attach(v):
+        if v.get("lease", {}).get("token") != token:
+            raise ValueError("deployment verification was cancelled or replaced")
         v.setdefault("verification_sessions", []).append(child.id)
+        v["lease"]["expires"] = time.time() + v["contract"]["policy"]["max_minutes"] * 60 + 300
         return v
 
     _mutate(session, current["revision"], "deployment_session", attach)

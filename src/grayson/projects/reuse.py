@@ -22,7 +22,7 @@ def revalidate(session, request_id, revision, executor=None):
     source = engine.state(session)
     existing = source.get("revalidations", {}).get(request_id) if source else None
     if existing and existing.get("session"):
-        return engine.status(Session(session.workspace, existing["session"]))
+        return _resume_revalidation(Session(session.workspace, existing["session"]), executor)
     token = secrets.token_hex(16)
 
     def reserve(s):
@@ -66,9 +66,27 @@ def revalidate(session, request_id, revision, executor=None):
             session, engine.state(session)["revision"], "revalidation_released", release, "system"
         )
         raise
-    result = engine.verify(child, engine.state(child)["revision"], executor)["project"]
+    return _resume_revalidation(child, executor)
+
+
+def _resume_revalidation(child, executor):
+    result = engine.state(child)
+    if (
+        child.stage == "closed"
+        or result["phase"] in {"complete", "blocked", "cancelled", "paused"}
+        or result.get("lease", {}).get("expires", 0) > time.time()
+    ):
+        return engine.status(child)
+    # Reuse completed evidence after a crash between verification and conclusion.
+    # An unfinished or stale attempt still uses the same child's finite budget.
+    if not result.get("verification") or not engine._fresh(result):
+        result = engine.verify(child, result["revision"], executor)["project"]
+    if result["phase"] in {"blocked", "cancelled", "paused"}:
+        return engine.status(child)
 
     def conclude(s):
+        engine._editable(s)
+        engine._approved(child, s)
         if s["verification"]["verdict"] == "pass":
             s.update(
                 phase="complete",

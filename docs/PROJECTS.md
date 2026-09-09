@@ -185,6 +185,8 @@ It also compares every output column against the candidate in both directions,
 so semantic checks on intermediate relations cannot mask changed deployed values.
 The output grain checks enforce uniqueness; incompatible schemas or unsupported
 value comparisons leave verification unproven.
+An audit-session setup error releases the deployment-check lease and restores the
+prior phase so the check can be retried. Failed attempts never retain a passing report.
 Those queries consume the original project's budget. The source session's scope
 is not temporarily widened. `project accept-deployment` follows the configured
 acceptance policy after fresh passing results. Candidate correctness and deployed
@@ -227,6 +229,9 @@ grant further replays. If audit-session creation is interrupted, retry the same
 request ID: ordinary creation errors release its lease immediately, and a process
 exit leaves a creation lease that expires after 60 seconds. Recovery retains the
 original allowance; an unattached audit session cannot execute queries.
+If the child was already attached, retry resumes that same run. Fresh completed
+evidence is concluded without rerunning queries; an active verifier or an explicit
+pause is left alone. Completed and failed runs remain idempotent.
 Each replay has the approved per-run query/time budget;
 the finite replay count bounds total authorised work. Failed replays block with
 their evidence for investigation rather than quietly repairing production.

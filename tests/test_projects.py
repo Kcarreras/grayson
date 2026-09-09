@@ -394,7 +394,10 @@ def test_unchanged_candidate_reruns_exhaust_stalled_budget(project):
     assert "no verification progress" in final["block_reason"]
 
 
-def test_deployment_checks_actual_target_and_preserves_source_scope(project):
+@pytest.mark.parametrize("setup_failure", [None, "create", "metadata"])
+def test_deployment_checks_actual_target_and_preserves_source_scope(
+    project, monkeypatch, setup_failure
+):
     from grayson.core import proposals
     from grayson.projects.models import Candidate, Contract
     from grayson.projects.sql import compile_candidate
@@ -422,7 +425,29 @@ def test_deployment_checks_actual_target_and_preserves_source_scope(project):
     con.close()
     proposals.mark_applied(s, pid)
     scope = s.scope_tables.copy()
-    result = engine.deployment_check(s, package["revision"], executor)["project"]
+    if setup_failure:
+        with monkeypatch.context() as patch:
+            if setup_failure == "create":
+
+                def fail_create(*args, **kwargs):
+                    raise OSError("temporary session storage failure")
+
+                patch.setattr(Session, "create", fail_create)
+            else:
+                set_meta = Session.set_meta
+
+                def fail_parent_link(child, key, value):
+                    if key == "project_verification_parent":
+                        raise OSError("temporary metadata storage failure")
+                    return set_meta(child, key, value)
+
+                patch.setattr(Session, "set_meta", fail_parent_link)
+            with pytest.raises(OSError):
+                engine.deployment_check(s, package["revision"], executor)
+        recovered = engine.state(s)
+        assert recovered["phase"] == package["phase"]
+        assert not recovered["lease"]
+    result = engine.deployment_check(s, engine.state(s)["revision"], executor)["project"]
     assert result["deployed_verification"]["verdict"] == "fail"
     assert s.scope_tables == scope
     assert all(r["session_id"] != s.id for r in result["deployed_verification"]["results"])
@@ -769,6 +794,61 @@ def test_revalidation_recovers_unattached_reservation(revalidatable_project, mon
     assert len(engine.state(s)["revalidations"]) == 1
     with pytest.raises(ValueError, match="no preapproved"):
         reuse.revalidate(s, "extra-run", engine.state(s)["revision"], executor)
+
+
+@pytest.mark.parametrize("interruption", ["before_verify", "after_pass", "after_fail"])
+def test_revalidation_resumes_attached_child(revalidatable_project, monkeypatch, interruption):
+    from grayson.projects import reuse
+
+    s, executor, original = revalidatable_project
+    if interruption == "after_fail":
+        with sqlite3.connect(executor.db_path) as con:
+            con.execute('UPDATE "DB.S.CUSTOMERS" SET ACTIVE=0 WHERE CUSTOMER_ID=20')
+    with monkeypatch.context() as patch:
+        if interruption == "before_verify":
+
+            def interrupt_verify(*args, **kwargs):
+                raise SystemExit("exit after attachment")
+
+            patch.setattr(engine, "verify", interrupt_verify)
+        else:
+            mutate = engine._mutate
+
+            def interrupt_conclusion(session, revision, event, *args, **kwargs):
+                if event == "revalidation_finished":
+                    raise SystemExit("exit before conclusion")
+                return mutate(session, revision, event, *args, **kwargs)
+
+            patch.setattr(engine, "_mutate", interrupt_conclusion)
+        with pytest.raises(SystemExit):
+            reuse.revalidate(s, "attached-retry", original["revision"], executor)
+    child_id = engine.state(s)["revalidations"]["attached-retry"]["session"]
+    child = Session(s.workspace, child_id)
+    queries_before = child.budget_consumed_count()
+    if interruption == "before_verify":
+        now = reuse.time.time()
+
+        def live_attempt(state):
+            state["lease"] = {"token": "other-verifier", "expires": now + 60}
+            return state
+
+        engine._mutate(child, engine.state(child)["revision"], "test_live_attempt", live_attempt)
+        pending = reuse.revalidate(s, "attached-retry", original["revision"], executor)["project"]
+        assert pending["phase"] == "verifying"
+        assert child.budget_consumed_count() == queries_before
+        monkeypatch.setattr(reuse.time, "time", lambda: now + 61)
+    recovered = reuse.revalidate(s, "attached-retry", original["revision"], executor)["project"]
+    assert recovered["phase"] == ("blocked" if interruption == "after_fail" else "complete")
+    if interruption != "before_verify":
+        assert child.budget_consumed_count() == queries_before
+    queries_after = child.budget_consumed_count()
+    assert (
+        reuse.revalidate(s, "attached-retry", original["revision"], executor)["project"]
+        == recovered
+    )
+    assert child.budget_consumed_count() == queries_after
+    assert len(engine.state(s)["revalidations"]) == 1
+    assert engine.state(s)["revalidations"]["attached-retry"]["session"] == child_id
 
 
 def test_recipe_and_regression_are_proposals(project):
