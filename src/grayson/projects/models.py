@@ -182,3 +182,16 @@ class PlanStep(StrictModel):
     depends_on: list[str] = Field(default_factory=list)
     status: Literal["pending", "working", "done", "blocked"] = "pending"
     evidence: list[str] = Field(default_factory=list)
+
+
+class PlanAction(StrictModel):
+    steps: list[PlanStep]
+
+
+class InterventionAction(StrictModel):
+    kind: Literal["label_sample", "confirm_semantics", "choose", "free_response", "scope_request"]
+    title: str = Field(min_length=1)
+    payload: dict = Field(
+        description="Request object for the selected intervention kind",
+        examples=[{"question": "Which data window should this analysis use?"}],
+    )

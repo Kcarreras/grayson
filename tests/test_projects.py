@@ -620,6 +620,131 @@ def test_supervisor_repairs_and_stops_at_deployment_boundary(project, monkeypatc
     )
 
 
+def test_runner_cannot_claim_an_active_verifier(project):
+    from grayson.projects.runner import drive
+
+    s, executor = project
+    approve(s)
+    submit(s, candidate(True))
+    attempted = []
+
+    def unexpected_provider(context):
+        pytest.fail("competing runner must not reach its provider")
+
+    class CompetingExecutor:
+        def execute(self, sql, timeout_seconds=0):
+            if not attempted:
+                attempted.append(True)
+                before = engine.state(s)
+                with pytest.raises(ValueError, match="verification is in progress"):
+                    drive(s, unexpected_provider, executor=executor)
+                assert engine.state(s) == before
+            return executor.execute(sql, timeout_seconds)
+
+    result = verify(s, CompetingExecutor())
+    assert result["verification"]["verdict"] == "pass"
+    assert attempted and not result.get("runner")
+
+
+def test_runner_does_not_block_a_verifier_started_during_reasoning(project):
+    from grayson.projects.runner import drive
+
+    s, executor = project
+    spec = contract()
+    spec["policy"]["max_stalled_iterations"] = 1
+    approve(s, spec)
+
+    def provider(context):
+        submit(s, candidate(True))
+
+        def another_verifier(state):
+            state["lease"] = {"token": "concurrent", "expires": engine.time.time() + 60}
+            return state
+
+        engine._mutate(s, engine.state(s)["revision"], "test_verifier_started", another_verifier)
+        return {"action": "query", "payload": {"sql": "SELECT * FROM DB.S.ORDERS"}}
+
+    result = drive(s, provider, executor=executor)["project"]
+    assert result["phase"] == "verifying"
+    assert result["lease"]["token"] == "concurrent"
+    assert not result["runner"]
+    with pytest.raises(ValueError, match="verification is in progress"):
+        engine.control(s, "block", "Stale action", result["revision"], actor="agent")
+    assert engine.state(s)["lease"] == result["lease"]
+
+
+def test_provider_plan_schema_matches_dispatch_payload(project):
+    from grayson.projects.runner import drive
+
+    s, executor = project
+    approve(s)
+
+    def provider(context):
+        schema = context["actions"]["plan"]
+        assert schema["type"] == "object"
+        assert "steps" in schema["required"]
+        assert schema["properties"]["steps"]["type"] == "array"
+        return {
+            "action": "plan",
+            "payload": {
+                "steps": [
+                    {"id": "inspect", "task": "Inspect source grain"},
+                    {"id": "build", "task": "Build the candidate", "depends_on": ["inspect"]},
+                ]
+            },
+        }
+
+    result = drive(s, provider, max_steps=1, executor=executor)["project"]
+    assert [step["id"] for step in result["plan"]] == ["inspect", "build"]
+    assert result["phase"] == "building"
+
+
+@pytest.mark.parametrize("malformed", ["structured intervention request", None, [], 5])
+def test_runner_self_corrects_nonobject_intervention_payload(project, malformed):
+    from grayson.projects.runner import drive
+
+    s, executor = project
+    approve(s)
+    turns = []
+
+    def provider(context):
+        turns.append(context)
+        if len(turns) == 2:
+            assert "error" in context["previous_result"]
+        return {
+            "action": "intervention",
+            "payload": {
+                "kind": "free_response",
+                "title": "Confirm the data window",
+                "payload": malformed if len(turns) == 1 else {"question": "Which date window?"},
+            },
+        }
+
+    result = drive(s, provider, max_steps=2, executor=executor)["project"]
+    assert len(turns) == 2 and result["phase"] == "building"
+    assert len(s.interventions("open")) == 1
+    assert s.interventions("open")[0]["request"]["question"] == "Which date window?"
+
+
+def test_project_cancel_cancels_only_open_interventions(project):
+    s, _ = project
+    approve(s)
+    first = s.add_intervention("free_response", "Open question", "", {"question": "When?"})
+    answered = s.add_intervention("free_response", "Answered question", "", {"question": "Who?"})
+    s.respond_intervention(answered, {"text": "Confirmed owner"})
+    revision = engine.state(s)["revision"]
+    with pytest.raises(ValueError, match="human"):
+        engine.control(s, "cancel", "No longer needed", revision, actor="agent")
+    assert s.intervention(first)["status"] == "open"
+    engine.control(s, "cancel", "No longer needed", revision, actor="user")
+    assert s.stage == "closed" and not s.interventions("open")
+    assert s.intervention(first)["status"] == "cancelled"
+    assert s.intervention(answered)["response"] == {"text": "Confirmed owner"}
+    events = s.events(event_type="intervention_cancelled")
+    assert [event["payload"]["iid"] for event in events] == [first]
+    assert events[0]["actor"] == "user"
+
+
 def test_pause_cancels_inflight_verification(project):
     s, executor = project
     approve(s)

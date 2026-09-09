@@ -74,6 +74,18 @@ def _mutate(session, revision, event, change, actor="agent"):
             )
             updated["deployment"]["pid"] = pid
         if updated["phase"] in TERMINAL:
+            if updated["phase"] == "cancelled":
+                pending = con.execute(
+                    "SELECT iid FROM interventions WHERE status='open'"
+                ).fetchall()
+                con.execute("UPDATE interventions SET status='cancelled' WHERE status='open'")
+                con.executemany(
+                    "INSERT INTO events(ts,actor,type,payload) VALUES(?,?,?,?)",
+                    [
+                        (utcnow(), actor, "intervention_cancelled", json.dumps({"iid": row[0]}))
+                        for row in pending
+                    ],
+                )
             outcome = "project_verified" if updated["phase"] == "complete" else "abandoned"
             con.executemany(
                 "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE "
@@ -730,6 +742,8 @@ def control(session, action, reason, revision, actor="user"):
     def change(s):
         if not s or s["phase"] in TERMINAL:
             raise ValueError("project is missing or finished")
+        if action == "block" and actor != "user":
+            _editable(s)
         if action == "resume":
             if s["phase"] not in {"paused", "blocked"}:
                 raise ValueError("only a paused or blocked project can resume")
