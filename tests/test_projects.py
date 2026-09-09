@@ -435,6 +435,57 @@ def test_deployment_checks_actual_target_and_preserves_source_scope(project):
     assert s.stage == "closed" and s.outcome == "project_verified"
 
 
+@pytest.mark.parametrize("deployed_region", ["corrupt", None])
+def test_deployment_compares_output_with_intermediate_semantic_checks(project, deployed_region):
+    from grayson.core import proposals
+
+    s, executor = project
+    spec = contract()
+    spec["checks"][0].update(
+        relation="customers",
+        keys=["CUSTOMER_ID"],
+        baseline_sql="SELECT CUSTOMER_ID, REGION FROM DB.S.CUSTOMERS WHERE ACTIVE=1",
+    )
+    approve(s, spec)
+    submit(s, candidate(True))
+    assert verify(s, executor)["verification"]["verdict"] == "pass"
+    review_and_checkpoints(s)
+    engine.finish(s, engine.state(s)["revision"])
+    package = engine.deployment_package(s, engine.state(s)["revision"])["project"]
+    pid = package["deployment"]["pid"]
+    proposals.decide(s, pid, True, actor="user")
+    rows = executor.execute(package["candidate_sql"]).rows
+    with sqlite3.connect(executor.db_path) as con:
+        con.execute(
+            'CREATE TABLE "DB.S.ENRICHED" (ID INT, CUSTOMER_ID INT, AMOUNT REAL, REGION TEXT)'
+        )
+        con.executemany(
+            'INSERT INTO "DB.S.ENRICHED" VALUES (?,?,?,?)',
+            [(r["ID"], r["CUSTOMER_ID"], r["AMOUNT"], deployed_region) for r in rows],
+        )
+    proposals.mark_applied(s, pid)
+    result = engine.deployment_check(s, package["revision"], executor)["project"]
+    by_id = {r["id"]: r for r in result["deployed_verification"]["results"]}
+    assert by_id["region"]["status"] == "pass"  # Source intermediate remains correct.
+    assert by_id["population.missing"]["status"] == "pass"
+    assert by_id["revenue"]["status"] == "pass"
+    assert result["deployed_verification"]["verdict"] == "fail"
+    assert by_id["deployment.missing_rows"]["status"] == "fail"
+    assert by_id["deployment.unexpected_rows"]["status"] == "fail"
+    with pytest.raises(ValueError, match="passing deployment checks"):
+        engine.accept_deployment(s, result["revision"])
+    # Correcting just the semantic values restores deployment acceptance.
+    with sqlite3.connect(executor.db_path) as con:
+        con.executemany(
+            'UPDATE "DB.S.ENRICHED" SET REGION=? WHERE ID=?',
+            [(r["REGION"], r["ID"]) for r in rows],
+        )
+    result = engine.deployment_check(s, result["revision"], executor)["project"]
+    assert result["deployed_verification"]["verdict"] == "pass"
+    engine.accept_deployment(s, result["revision"])
+    assert s.outcome == "project_verified"
+
+
 def test_supervisor_repairs_and_stops_at_deployment_boundary(project):
     from grayson.projects.runner import drive
 

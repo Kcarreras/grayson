@@ -594,17 +594,24 @@ def deployment_check(session, revision, executor=None):
         return v
 
     _mutate(session, current["revision"], "deployment_session", attach)
-    from grayson.projects.sql import ident
+    from grayson.projects.sql import deployment_equivalence_queries, ident
 
     original = f'"CANDIDATE" AS (SELECT * FROM {ident(s["candidate"]["output"])})'
     actual = f'"CANDIDATE" AS (SELECT * FROM {s["contract"]["deployment_target"].upper()})'
+    queries = [
+        {**check, "sql": check["sql"].replace(original, actual, 1)}
+        for check in s["verification_queries"]
+    ]
+    queries += deployment_equivalence_queries(
+        Candidate.model_validate(s["candidate"]), Contract.model_validate(s["contract"])
+    )
     results = []
     started = time.time()
-    for check in s["verification_queries"]:
+    for check in queries:
         current = state(session)
         if current.get("lease", {}).get("token") != token:
             return status(session)
-        sql = check["sql"].replace(original, actual, 1)
+        sql = check["sql"]
         output = run_statement(
             child, sql, label="deployed project: " + check["name"], executor=executor
         )

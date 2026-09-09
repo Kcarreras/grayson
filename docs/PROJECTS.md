@@ -179,6 +179,10 @@ Approving a stale candidate's package is refused. No project tool runs DDL.
 
 `project deployment-check` reads the actual destination, rerunning acceptance
 queries in a separate audit session containing the approved sources and target.
+It also compares every output column against the candidate in both directions,
+so semantic checks on intermediate relations cannot mask changed deployed values.
+The output grain checks enforce uniqueness; incompatible schemas or unsupported
+value comparisons leave verification unproven.
 Those queries consume the original project's budget. The source session's scope
 is not temporarily widened. `project accept-deployment` follows the configured
 acceptance policy after fresh passing results. Candidate correctness and deployed

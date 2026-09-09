@@ -143,6 +143,31 @@ def compile_candidate(candidate: Candidate, contract: Contract) -> dict:
     return {"prefix": prefix, "sql": prefix + '\nSELECT * FROM "CANDIDATE"', "risks": risks}
 
 
+def deployment_equivalence_queries(candidate: Candidate, contract: Contract) -> list[dict]:
+    """Compare every output value, even when semantic checks target intermediates.
+
+    The accompanying output grain checks reject duplicates; these full-row set
+    comparisons establish coverage in both directions without hashing values.
+    Incompatible schemas or unsupported comparisons remain unproven SQL errors.
+    """
+    prefix = compile_candidate(candidate, contract)["prefix"]
+    target = contract.deployment_target.upper()
+    return [
+        {
+            "id": "deployment." + suffix,
+            "name": "Deployed output: " + label,
+            "sql": prefix + "\nSELECT COUNT(*) AS N FROM ("
+            f"SELECT * FROM {left} EXCEPT SELECT * FROM {right}) GRAYSON_DIFFERENCE",
+            "expectation": Expectation(kind="scalar", column="N", value=0).model_dump(mode="json"),
+            "repair": "Compare the deployed schema and every output value with the approved SQL.",
+        }
+        for suffix, label, left, right in (
+            ("missing_rows", "missing expected rows", '"CANDIDATE"', target),
+            ("unexpected_rows", "unexpected rows", target, '"CANDIDATE"'),
+        )
+    ]
+
+
 def verification_queries(candidate: Candidate, contract: Contract) -> list[dict]:
     compiled = compile_candidate(candidate, contract)
     prefix = compiled["prefix"]
