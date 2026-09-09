@@ -413,8 +413,11 @@ def test_unknown_contract_fields_fail_closed():
         Contract.model_validate(spec)
 
 
-@pytest.mark.parametrize("target", ['DB.S."DailySales"', '"SalesDb".S.DAILY', 'DB."Sales".DAILY'])
-def test_project_rejects_quoted_deployment_targets_before_approval(project, target):
+@pytest.mark.parametrize(
+    "target",
+    ['DB.S."DailySales"', '"SalesDb".S.DAILY', 'DB."Sales".DAILY', "DAILY", "S.DAILY", "DB..DAILY"],
+)
+def test_project_rejects_unsupported_deployment_targets_before_approval(project, target):
     s, _ = project
     spec = contract()
     spec["deployment_target"] = target
@@ -458,6 +461,27 @@ def test_quoted_source_cannot_alias_an_unquoted_scope_entry(project, location):
         with pytest.raises(ValueError, match="source tables must use unquoted"):
             submit(s, c)
         assert engine.state(s)["candidate"] is None
+
+
+@pytest.mark.parametrize("source", ["ORDERS", "S.ORDERS", "DB..ORDERS", "DB.S.ORDERS.EXTRA"])
+def test_project_rejects_sources_without_three_identifier_parts(project, source):
+    original, _ = project
+    spec = contract()
+    spec["scope"] = [source, "DB.S.CUSTOMERS"]
+    for check in spec["checks"]:
+        if check.get("baseline_sql"):
+            check["baseline_sql"] = check["baseline_sql"].replace("DB.S.ORDERS", source)
+    s = Session.create(
+        original.workspace,
+        workflow="pipeline-development",
+        strict_scope=True,
+        targets=spec["scope"],
+        guard=GuardSettings(),
+        guard_profile="moderate",
+    )
+    with pytest.raises(ValueError, match="source tables must use unquoted DB.SCHEMA.OBJECT"):
+        engine.draft(s, spec)
+    assert engine.state(s) is None
 
 
 def test_wrong_semantic_value_fails_even_with_correct_totals(project):
@@ -1401,6 +1425,42 @@ def test_tightening_approval_preserves_live_verifier_and_existing_approval(proje
     engine.approve_candidate(s, p["revision"], p["candidate_digest"])
     p = engine.set_approval(s, "guided", engine.state(s)["revision"])["project"]
     assert p["phase"] == "verifying" and p["candidate_approved"] == p["candidate_digest"]
+
+
+def test_concurrent_status_readers_reconcile_candidate_gate_once(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+
+    from grayson.config_edit import set_values
+
+    s, _ = project
+    approve(s)
+    submit(s, candidate(True))
+    before = engine.state(s)
+    set_values(s.workspace.root, {"projects.max_approval": "guided"})
+    read_state = engine.state
+    barrier, reader = Barrier(2), local()
+
+    def simultaneous_initial_read(session):
+        value = read_state(session)
+        if not getattr(reader, "started", False):
+            reader.started = True
+            assert value["revision"] == before["revision"]
+            barrier.wait(timeout=10)
+        return value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(engine, "state", simultaneous_initial_read)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            views = list(pool.map(lambda _: engine.status(s), range(2)))
+    for view in views:
+        assert view["project"]["phase"] == "candidate_review"
+        assert view["project"]["revision"] == before["revision"] + 1
+        assert view["project"]["candidate_digest"] == before["candidate_digest"]
+    assert engine.status(s)["project"]["revision"] == before["revision"] + 1
+    # Ordinary mutations must still reject stale revisions rather than retrying.
+    with pytest.raises(ValueError, match="project changed"):
+        engine.set_approval(s, "bounded", before["revision"])
 
 
 def test_human_pause_resume_releases_abandoned_runner(project):

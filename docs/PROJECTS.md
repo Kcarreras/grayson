@@ -185,8 +185,9 @@ unrestricted direct credential access can bypass that path, as described in
 destination using the existing DDL proposal UI. It intentionally does not generate
 OR REPLACE. The person approves and executes it, then records application.
 Approving a stale candidate's package is refused. No project tool runs DDL.
-Project source tables and deployment targets must use unquoted identifiers because
-the current scope registry canonicalizes names to uppercase. Quoted source names
+Project source tables and deployment targets must use fully qualified, unquoted
+`DB.SCHEMA.OBJECT` names so connection defaults cannot change the approved objects.
+The current scope registry canonicalizes names to uppercase. Quoted source names
 are rejected during brief validation, including baseline SQL, and in candidate SQL;
 quoted deployment targets are rejected before approval.
 

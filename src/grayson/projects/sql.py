@@ -20,7 +20,7 @@ from grayson.util import is_object_name
 
 def deployment_target(value: str) -> str:
     """Use only names compatible with the scope registry's uppercase semantics."""
-    if not is_object_name(value) or '"' in value:
+    if not is_object_name(value) or '"' in value or value.count(".") != 2:
         raise ValueError("deployment target must use unquoted DB.SCHEMA.OBJECT identifiers")
     return value.upper()
 

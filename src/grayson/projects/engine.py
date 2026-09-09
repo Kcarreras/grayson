@@ -30,6 +30,10 @@ TERMINAL = {"complete", "cancelled"}
 ACTIVE_PHASES = {"building", "verifying", "needs_revision", "needs_review"}
 
 
+class ProjectChangedError(ValueError):
+    """The supplied revision no longer matches durable project state."""
+
+
 def elapsed(s):
     return s.get("active_seconds", 0) + (
         max(0, time.time() - s["active_since"]) if s.get("active_since") else 0
@@ -74,7 +78,9 @@ def _mutate(session, revision, event, change, actor="agent"):
         row = con.execute("SELECT value FROM meta WHERE key=?", (KEY,)).fetchone()
         current = json.loads(row[0]) if row else None
         if (current or {}).get("revision", 0) != revision:
-            raise ValueError("project changed; read project_status and retry against its revision")
+            raise ProjectChangedError(
+                "project changed; read project_status and retry against its revision"
+            )
         if current and current.get("format") != 1:
             raise ValueError("unsupported project format")
         updated = change(copy.deepcopy(current))
@@ -834,16 +840,23 @@ def plan(session, steps, revision):
 
 
 def status(session):
-    s = state(session)
-    if not s:
-        return {"project": None, "next_action": "draft a project brief"}
-    effective = policy.effective(session, s["contract"]["policy"]["approval"])
-    if _candidate_phase(s, effective["approval"]) != s["phase"]:
+    while True:
+        s = state(session)
+        if not s:
+            return {"project": None, "next_action": "draft a project brief"}
+        effective = policy.effective(session, s["contract"]["policy"]["approval"])
+        if _candidate_phase(s, effective["approval"]) == s["phase"]:
+            break
         # Workspace/library ceilings can change outside a project mutation.
         # Persist the gate and its revision so the console and runner agree.
-        return _mutate(
-            session, s["revision"], "candidate_gate_changed", lambda value: value, "system"
-        )
+        try:
+            return _mutate(
+                session, s["revision"], "candidate_gate_changed", lambda value: value, "system"
+            )
+        except ProjectChangedError:
+            # Another reader or writer won. Re-read rather than failing a status
+            # request; only this idempotent reconciliation retries stale revisions.
+            continue
     p = s["contract"]["policy"]
     blocker = query_blocker(session)
     actions = {
