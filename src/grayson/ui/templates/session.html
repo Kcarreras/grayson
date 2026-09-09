@@ -54,8 +54,18 @@
   {% if charts %}<a href="#analysis">Analysis</a>{% endif %}
   <a href="#checkpoints">Checkpoints</a><a href="#findings">Findings</a>
   {% if proposals %}<a href="#proposals">Fix proposals</a>{% endif %}<a href="#queries">Query log</a><a href="#actions">Session actions</a>
-  <a class="nav-action" href="/session/{{ s.id }}/impact?t={{ token }}">Investigate changes ↗</a>
-  <a class="nav-action" href="/session/{{ s.id }}/comparisons?t={{ token }}">Compare releases ↗</a>
+</nav>
+
+<nav class="session-tools" aria-label="Session tools">
+  <span class="session-tools-label">Session tools</span>
+  <a href="/session/{{ s.id }}/impact?t={{ token }}">
+    <strong>Investigate a change <span aria-hidden="true">→</span></strong>
+    <span class="session-tool-outcome">Plan → new QA session</span>
+  </a>
+  <a href="/session/{{ s.id }}/comparisons?t={{ token }}">
+    <strong>Compare datasets <span aria-hidden="true">→</span></strong>
+    <span class="session-tool-outcome">Two tables → evidence report</span>
+  </a>
 </nav>
 
 {% if s.stage == "closed" and s.outcome %}

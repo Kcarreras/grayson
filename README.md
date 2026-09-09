@@ -117,9 +117,9 @@ need no migration to use it.
 
 Define explicit success criteria before approving a fix, then let Grayson compute
 pass/fail/unproven from fresh queries. Preserve a passed criterion as a regression
-check without changing its expectation. Use **Investigate changes** to connect
+check without changing its expectation. Use **Investigate a change** to connect
 recorded changes to explicit dependencies, assumptions and checks, or **Compare
-releases** for mapped record parity, aggregate tolerances and evidence-linked
+datasets** for mapped record parity, aggregate tolerances and evidence-linked
 mismatch reports. Each workflow is available through CLI, MCP and console.
 
 These are optional, versioned additions: existing sessions and library formats

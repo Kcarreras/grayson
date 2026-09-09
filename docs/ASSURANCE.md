@@ -106,7 +106,7 @@ grayson session brief <new-session-id>
 grayson impact run-checks <new-session-id>
 ```
 
-**Investigate changes** on a session opens the same workflow. A plan combines
+**Investigate a change** under **Session tools** opens the same workflow. A plan combines
 recorded definition/hash changes, observed schema drift, explicit downstream
 dependencies, fact standing and anchors, related relationships, historical
 findings/fixes, and currently approved regression checks. Local unowned SQL
@@ -133,7 +133,7 @@ MCP twins: `impact_plan`, `impact_show`, `impact_launch`, `impact_run_checks`.
 
 ## 3. Compare releases, pipelines, or equivalent time windows
 
-Open **Compare releases** on a session. Choose an existing session for each
+Open **Compare datasets** under **Session tools**. Choose an existing session for each
 environment, name each table, declare matching keys and value mappings, and
 set filters and tolerances. A comparison can use two connections or two tables
 in one connection. Sessions keep their existing guard, scope, and query budget.
