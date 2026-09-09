@@ -334,6 +334,55 @@ def test_wrong_semantic_value_fails_even_with_correct_totals(project):
     assert by_id["region"]["status"] == "fail"
 
 
+@pytest.mark.parametrize("relation", ["customers", "candidate"])
+def test_value_checks_reject_baseline_only_keys(project, relation, tmp_path):
+    s, executor = project
+    spec = contract()
+    values = spec["checks"][0]
+    values.update(
+        relation=relation,
+        keys=["CUSTOMER_ID"],
+        baseline_sql="SELECT CUSTOMER_ID, REGION FROM DB.S.CUSTOMERS WHERE ACTIVE=1",
+    )
+    c = candidate(True)
+    if relation == "customers":
+        c["nodes"][1]["sql"] += " AND 1=0"
+        # The approved join allows missing enrichment, but its independent
+        # semantic check must still reject an empty intermediate relation.
+        spec["joins"][0]["max_unmatched_left"] = 3
+    else:
+        # Output IDs and totals are intact; the semantic baseline uses a
+        # different key and expects a customer absent from the output.
+        with sqlite3.connect(tmp_path / "warehouse.db") as con:
+            con.execute("INSERT INTO \"DB.S.CUSTOMERS\" VALUES (30, 'west', 1)")
+    approve(s, spec)
+    submit(s, c)
+    p = verify(s, executor)
+    by_id = {r["id"]: r for r in p["verification"]["results"]}
+    assert by_id["population.missing"]["status"] == "pass"
+    assert by_id["revenue"]["status"] == "pass"
+    assert p["verification"]["verdict"] == "fail"
+    assert by_id["region.missing"]["status"] == "fail"
+    with pytest.raises(ValueError, match="passing verification"):
+        review_and_checkpoints(s)
+
+
+def test_unchanged_candidate_reruns_exhaust_stalled_budget(project):
+    s, executor = project
+    spec = contract()
+    spec["policy"]["max_stalled_iterations"] = 2
+    approve(s, spec)
+    submit(s)
+    initial = verify(s, executor)
+    assert initial["verification"]["verdict"] == "fail"
+    assert initial["stalled"] == 0  # Some checks passed on the first attempt.
+    assert verify(s, executor)["stalled"] == 1
+    final = verify(s, executor)
+    assert final["stalled"] == 2
+    assert final["phase"] == "blocked"
+    assert "no verification progress" in final["block_reason"]
+
+
 def test_deployment_checks_actual_target_and_preserves_source_scope(project):
     from grayson.core import proposals
     from grayson.projects.models import Candidate, Contract

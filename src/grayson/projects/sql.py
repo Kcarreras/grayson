@@ -287,6 +287,14 @@ def verification_queries(candidate: Candidate, contract: Contract) -> list[dict]
                 extra=extra,
                 repair=repair,
             )
+            add(
+                check.id + ".missing",
+                check.name + ": missing expected keys",
+                f'SELECT COUNT(*) AS N FROM "GRAYSON_BASE" b WHERE NOT EXISTS '
+                f"(SELECT 1 FROM {relation} a WHERE {equality})",
+                extra=extra,
+                repair=repair,
+            )
         elif check.kind == "measure":
             base = baseline(check.baseline_sql, set(contract.scope))
             group = ", ".join(ident(k) for k in check.group_by)

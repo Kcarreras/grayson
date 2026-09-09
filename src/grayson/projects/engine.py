@@ -263,6 +263,7 @@ def submit_candidate(session, spec, revision):
             candidate_sql=compiled["sql"],
             risks=compiled["risks"],
             verification_queries=queries,
+            last_verification=s.get("verification") or s.get("last_verification"),
             verification=None,
             review=None,
             candidate_approved="",
@@ -332,6 +333,13 @@ def verify(session, revision, executor=None):
         s["lease"] = {"token": token, "expires": time.time() + p.max_minutes * 60 + 300}
         s["phase"] = "verifying"
         s["review"] = None
+        # Keep the latest completed attempt across reruns and interrupted runs.
+        # Candidate history alone misses repeated verification of the same SQL.
+        s["last_verification"] = (
+            s.get("verification")
+            or s.get("last_verification")
+            or (s["history"][-1].get("verification") if s["history"] else None)
+        )
         s["verification"] = None
         return s
 
@@ -390,7 +398,7 @@ def verify(session, revision, executor=None):
                     if all(r["status"] == "pass" for r in full)
                     else "unproven"
                 )
-                previous = v["history"][-1].get("verification") if v["history"] else None
+                previous = v.get("last_verification")
                 passed = {r["id"] for r in full if r["status"] == "pass"}
                 old_passed = {
                     r["id"] for r in (previous or {}).get("results", []) if r["status"] == "pass"
