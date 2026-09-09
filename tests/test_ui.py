@@ -58,6 +58,36 @@ def test_dashboard_lists_session(client, session):
     assert session.id in r.text
 
 
+def test_dashboard_omits_deployment_audits_but_keeps_their_evidence(client, session, workspace):
+    parent = Session.create(
+        workspace,
+        workflow="pipeline-development",
+        targets=session.targets,
+        guard=session.guard_settings,
+        guard_profile="moderate",
+        strict_scope=True,
+        title="Pipeline project",
+    )
+    audit = Session.create(
+        workspace,
+        workflow="table-health",
+        targets=session.targets,
+        guard=session.guard_settings,
+        guard_profile="moderate",
+        strict_scope=True,
+        title="Internal deployment audit",
+    )
+    engine.seed_from_workflow(audit)
+    audit.set_meta("project_verification_parent", parent.id)
+    qid = run_statement(audit, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    page = client.get(f"/?t={TOKEN}")
+    assert page.status_code == 200
+    assert parent.id in page.text and session.id in page.text
+    assert audit.id not in page.text and "Internal deployment audit" not in page.text
+    evidence = client.get(f"/session/{audit.id}/query/{qid}?t={TOKEN}")
+    assert evidence.status_code == 200 and qid in evidence.text
+
+
 def test_session_navigation_targets_exist_without_optional_content(client, session):
     """An empty investigation must not expose dead chart/proposal jumps."""
     import re
@@ -95,6 +125,52 @@ def test_session_detail(client, session):
     assert r.status_code == 200
     assert "Checkpoints" in r.text
     assert "sample_for_review" in r.text  # a required check key
+
+
+def test_qa_focus_prioritises_pending_findings_without_hiding_history(client, session):
+    import re
+
+    qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    settled = session.add_finding(
+        "standard_v1",
+        "high",
+        "high",
+        "Already reviewed",
+        {"summary": "Settled explanation", "evidence": [qid]},
+    )
+    session.accept_finding(settled)
+    pending = session.add_finding(
+        "standard_v1",
+        "medium",
+        "high",
+        "Needs a decision",
+        {"summary": "Review this evidence", "evidence": [qid]},
+    )
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert "Needs your attention" in page and "finding to review" in page
+    assert page.index(f'id="{pending}"') < page.index(f'id="{settled}"')
+    assert "open" in re.search(r'<details[^>]*id="' + pending + r'"[^>]*>', page).group()
+    assert "open" not in re.search(r'<details[^>]*id="' + settled + r'"[^>]*>', page).group()
+    assert "Settled explanation" in page and f"/query/{qid}" in page
+    session.set_meta("stage", "closed")
+    closed = client.get(f"/session/{session.id}?t={TOKEN}").text
+    assert 'aria-label="Session focus"' not in closed
+
+
+def test_qa_completed_and_waived_checks_keep_evidence_in_a_closed_fold(client, session):
+    import re
+
+    qid = run_statement(session, "SELECT * FROM DB.S.URLS", executor=FakeExecutor())["qid"]
+    checks = session.checkpoints()
+    session.complete_checkpoint(checks[0]["key"], [qid], "Inspected the source", "agent")
+    session.waive_checkpoint(checks[1]["key"], "Not applicable to this fixture", "user")
+    page = client.get(f"/session/{session.id}?t={TOKEN}").text
+    opening = re.search(r'<details[^>]*id="settled-checkpoints"[^>]*>', page).group()
+    assert "open" not in opening
+    assert "2 completed or waived checkpoints" in page
+    assert "Inspected the source" in page and "Not applicable to this fixture" in page
+    query = client.get(f"/session/{session.id}/query/{qid}?t={TOKEN}")
+    assert f"/session/{session.id}?t={TOKEN}#queries" in query.text
 
 
 def test_rename_session_via_ui(client, session):

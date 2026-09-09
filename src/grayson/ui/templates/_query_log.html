@@ -1,0 +1,25 @@
+<h2 id="queries">Query log {{ help("guard") }}</h2>
+{% if queries %}
+{{ list_tools("queries", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first"), ("duration", "desc", "Slowest first"), ("rows", "desc", "Most rows")], [("executed", "executed"), ("rejected", "rejected"), ("error", "errors")], "Find a query, purpose, or worker…", false) }}
+{% endif %}
+<div class="card scroll" style="max-height: 360px; overflow-y: auto;">
+<table>
+{% set has_worker = queries | selectattr("worker") | list | length > 0 %}
+{% set has_label = queries | selectattr("label") | list | length > 0 %}
+<thead><tr><th data-sortkey="id">Query</th><th>Status</th><th data-sortkey="rows">Rows</th><th data-sortkey="duration">Time (ms)</th>{% if has_worker %}<th>Worker</th>{% endif %}{% if has_label %}<th>Purpose {{ help("purpose") }}</th>{% endif %}</tr></thead>
+<tbody data-list="queries" data-noun="query">
+{% for q in queries %}
+<tr data-item data-s-id="{{ q.qid }}" data-s-duration="{{ q.duration_ms or 0 }}" data-s-rows="{{ q.row_count or 0 }}" data-tags="{{ q.status if q.status in ['executed', 'rejected'] else 'error' }}">
+  <td class="mono">{{ qc(q.qid) }}</td>
+  <td>{{ query_status(q.status) }}
+      {% if q.guard_rule %}<div class="faint mono small">{{ q.guard_rule }}</div>{% endif %}</td>
+  <td class="num">{{ q.row_count if q.row_count is not none else "" }}{% if q.truncated %} <span class="faint">(capped)</span>{% endif %}</td>
+  <td class="num muted">{{ q.duration_ms if q.duration_ms is not none else '—' }}</td>
+  {% if has_worker %}<td class="muted mono small">{{ q.worker or "—" }}</td>{% endif %}
+  {% if has_label %}<td class="muted small">{{ q.label or "—" }}</td>{% endif %}
+</tr>
+{% endfor %}
+{% if not queries %}<tr><td colspan="4" class="muted">No queries yet.</td></tr>{% endif %}
+</tbody>
+</table>
+</div>

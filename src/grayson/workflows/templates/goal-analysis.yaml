@@ -1,0 +1,38 @@
+name: goal-analysis
+title: Develop an evidence-backed analysis
+description: >
+  Answer an approved analytical question through bounded exploration, candidate
+  SQL, generated verification and a critical review. An inconclusive result is
+  valid; never search until a preferred result appears.
+tags: [projects, autonomous, analysis]
+suggested_guard_profile: moderate
+suggested_strict_scope: true
+project:
+  format: 1
+  kind: analysis
+  approval: milestones
+setup_inputs:
+  - key: goal
+    prompt: What decision should this analysis inform and what output do you need?
+  - key: semantics
+    prompt: What population, measures, exclusions and time window define the question?
+required_checks:
+  - key: source_understood
+    title: Establish population and definitions
+    description: Verify source grain and completeness against the approved brief.
+    uses_inputs: [goal, semantics]
+  - key: candidate_verified
+    title: Verify the analysis dataset
+    description: Cite fresh project checks for grain, population, measures and all joins.
+    depends_on: [source_understood]
+  - key: interpretation_reviewed
+    title: Challenge the conclusion
+    description: >
+      Record a project review of alternative explanations, exclusions, uncertainty
+      and unsupported causal claims. Cite evidence and disclose limitations.
+    depends_on: [candidate_verified]
+suggested_checks:
+  - key: sensitivity
+    title: Test sensitivity to reasonable assumptions
+    description: Compare plausible alternatives within the approved definitions and record uncertainty.
+findings_schema: standard_v1

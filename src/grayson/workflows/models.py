@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from grayson.charts.spec import KINDS as CHART_KINDS
 from grayson.findings.library import FindingField
+from grayson.projects.models import ProjectDefaults
 
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 
@@ -92,6 +93,7 @@ class WorkflowTemplate(BaseModel):
     model_config = _ROUND_TRIP
 
     name: str
+    project: ProjectDefaults | None = None
     title: str = ""
     description: str = ""
     #: free labels for finding a workflow in a catalog that has grown past a

@@ -127,6 +127,12 @@ remain usable. See [the contracts and walkthroughs](docs/ASSURANCE.md).
 
 ## Getting started
 
+**Goal-driven SQL projects:** `pipeline-development` and `goal-analysis` add
+bounded autonomous iteration alongside the existing QA workflows. Approve a
+brief, let the agent develop and repair candidates against generated join,
+population, value and semantic checks, then review the result. DDL remains yours
+to approve and run. See [Autonomous SQL projects](docs/PROJECTS.md).
+
 Requires [uv](https://docs.astral.sh/uv/) and, for real warehouses only, the
 [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli)
 with a named connection — grayson delegates all auth to `snow` and never

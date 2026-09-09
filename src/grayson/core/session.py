@@ -23,7 +23,7 @@ STAGES = ["setup", "analysis", "synthesis", "review", "fixes", "verification", "
 #: session that merely ran out of road. 'abandoned' is the honest label for a
 #: session closed without any result (broken, mistaken, no longer relevant):
 #: it skipped the gates on purpose, says why, and published nothing.
-OUTCOMES = ["clean", "findings", "abandoned"]
+OUTCOMES = ["clean", "findings", "abandoned", "project_verified"]
 
 #: aliases accepted anywhere a session id is expected; resolve to the newest session
 LATEST_ALIASES = {"latest", "last", "."}
@@ -164,6 +164,8 @@ class Session:
         strict_scope: bool | None = None,
         connection: str | None = None,
         actor: str = "user",
+        project_verification_parent: str | None = None,
+        project_revalidation_parent: str | None = None,
     ) -> Session:
         # ids are a second-resolution stamp plus two random bytes: several
         # sessions created in one second (a test loop, a script) can collide,
@@ -199,6 +201,10 @@ class Session:
                 "connection": connection or workspace.config.connection,
                 "scope_extra": json.dumps([]),
             }
+            if project_verification_parent:
+                meta["project_verification_parent"] = project_verification_parent
+            if project_revalidation_parent:
+                meta["project_revalidation_parent"] = project_revalidation_parent
             con.executemany("INSERT INTO meta(key, value) VALUES(?, ?)", meta.items())
             con.commit()
         finally:
@@ -208,6 +214,14 @@ class Session:
         # be recorded under the human's name, same class of misattribution the stage
         # and close paths carried
         session.log_event(actor, "session_created", {"workflow": workflow, "targets": targets})
+        # Project runs pin their method. Standard investigations keep their
+        # existing live-template behaviour for backward compatibility.
+        from grayson.workflows import WorkflowNotFound, get_workflow
+
+        with contextlib.suppress(WorkflowNotFound):
+            tpl = get_workflow(workflow, workspace.workflows_dir)
+            if tpl.project is not None:
+                session.set_meta("workflow_snapshot_v1", tpl.model_dump_json())
         return session
 
     def close_db(self) -> None:  # placeholder for symmetry; connections are per-call

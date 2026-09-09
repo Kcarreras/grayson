@@ -57,7 +57,8 @@
   </div>
   <div class="session-side">
     <a class="btn secondary sm" href="/session/{{ s.id }}?t={{ token }}" aria-label="Open {{ s.title or s.id }}">Open session →</a>
-  {{ stage_bar(s.stage, stages) }}
+  {% if row.project_phase %}<span class="badge act">{{ row.project_phase | replace('_', ' ') }}</span>
+  {% else %}{{ stage_bar(s.stage, stages) }}{% endif %}
   </div>
 </div>
 {% endfor %}

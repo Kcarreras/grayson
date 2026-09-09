@@ -40,6 +40,7 @@
 {% macro outcome(o, note="") -%}
 {% if o == "clean" %}<span class="badge ok">closed clean</span>
 {% elif o == "findings" %}<span class="badge plain">closed on findings</span>
+{% elif o == "project_verified" %}<span class="badge ok">project verified</span>
 {% elif o == "abandoned" %}<span class="badge todo"{% if note %} title="{{ note }}"{% endif %}>abandoned</span>{% endif %}
 {%- endmacro %}
 

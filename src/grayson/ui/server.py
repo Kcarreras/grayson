@@ -154,16 +154,30 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request) -> Any:
+        from grayson.projects.engine import state as project_state
+        from grayson.projects.engine import unattached_revalidation
+
         _check(request)
         sessions = []
         for sid in workspace.list_session_ids():
             try:
                 s = Session(workspace, sid)
+                # Deployment audit children remain addressable through evidence
+                # links, but are not independent investigations to work through.
+                if s.get_meta("project_verification_parent"):
+                    continue
+                project = project_state(s)
+                if unattached_revalidation(s, project):
+                    continue
             except (OSError, ValueError):
                 continue
             ready = engine.readiness(s, workspace.workflows_dir)
+            is_project = engine.workflow_for(s, workspace.workflows_dir).project is not None
             sessions.append(
                 {
+                    "project_phase": (project or {}).get("phase", "awaiting_brief")
+                    if is_project
+                    else None,
                     "summary": s.summary(),
                     "open_interventions": len(s.interventions("open")),
                     "pending_proposals": len(s.proposals("proposed")),
@@ -1565,6 +1579,8 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         changes: dict[str, object] = {}
         if only == "auto_push":
             changes["library.auto_push"] = form.get("auto_push") == "true"
+        elif only == "projects":
+            changes["projects.max_approval"] = str(form.get("max_approval", ""))
         else:
             changes["connection.name"] = form.get("connection", "")
             changes["defaults.guard_profile"] = form.get("guard_profile", "")
@@ -1890,25 +1906,39 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             out.append({"spec": spec, "data": data, "svg": Markup(svg), "is_new": is_new})
         return out
 
-    def _session_context(s: Session, error: str | None = None) -> dict:
+    def _session_context(s: Session, error: str | None = None, section: str = "build") -> dict:
+        if engine.workflow_for(s, workspace.workflows_dir).project is not None:
+            from grayson.ui.project_view import build_context
+
+            return {
+                **build_context(s, error, section),
+                "charts": _charts_context(s) if section == "build" else [],
+            }
         from grayson.checks.regression import RegressionStore
         from grayson.core.file_fixes import review_digest
         from grayson.ui.diffs import review_proposal
+        from grayson.ui.session_view import focus, review_order
 
         queries = s.query_log(100)
         proposals = [review_proposal(s, p) for p in s.proposals()]
         revisions = {p["payload"].get("supersedes"): p["pid"] for p in proposals}
         for p in proposals:
             p["superseded_by"] = revisions.get(p["pid"])
+        summary = s.summary()
+        ready = engine.readiness(s, workspace.workflows_dir)
+        findings = review_order(s.findings())
+        interventions = s.interventions()
         return {
             "nav": "sessions",
+            "project_workflow": False,
             "guard_profiles": sorted(workspace.config.guard_profiles),
-            "s": s.summary(),
+            "s": summary,
             "setup_inputs": s.setup_inputs(),
-            "readiness": engine.readiness(s, workspace.workflows_dir),
+            "readiness": ready,
+            "session_focus": focus(summary, ready, interventions, proposals),
             "checkpoints": engine.checkpoints_view(s, workspace.workflows_dir),
-            "findings": s.findings(),
-            "interventions": s.interventions(),
+            "findings": findings,
+            "interventions": interventions,
             "proposals": proposals,
             "file_fix_digests": {
                 p["pid"]: review_digest(p) for p in proposals if p["payload"].get("file_change")
@@ -1927,7 +1957,12 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     @app.get("/session/{sid}", response_class=HTMLResponse)
     def session_detail(request: Request, sid: str) -> Any:
         _check(request)
-        return templates.TemplateResponse(request, "session.html", _session_context(_session(sid)))
+        section = request.query_params.get("view", "build")
+        if section not in {"build", "checks", "brief", "queries", "history"}:
+            section = "build"
+        return templates.TemplateResponse(
+            request, "session.html", _session_context(_session(sid), section=section)
+        )
 
     @app.get("/session/{sid}/query/{qid}", response_class=HTMLResponse)
     def query_detail(request: Request, sid: str, qid: str) -> Any:
@@ -1937,12 +1972,17 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         if row is None:
             raise HTTPException(status_code=404, detail=f"no query '{qid}'")
         executed = row.get("sql_executed")
+        parent_id = s.get_meta("project_verification_parent")
+        owner = _session(parent_id) if parent_id else s
         return templates.TemplateResponse(
             request,
             "query.html",
             {
                 "nav": "sessions",
                 "s": s.summary(),
+                "query_owner": owner.summary(),
+                "project_query": engine.workflow_for(owner, workspace.workflows_dir).project
+                is not None,
                 "q": row,
                 "sql_html": highlight_sql(row.get("sql_raw") or ""),
                 # show the guard's rewrite (e.g. an injected LIMIT) only when
@@ -2254,6 +2294,12 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         from grayson.core.proposals import ProposalError
 
         try:
+            p = s.proposal(pid)
+            if decision == "approve" and p and p["payload"].get("project_candidate_digest"):
+                from grayson.core.file_fixes import review_digest
+
+                if digest != review_digest(p):
+                    raise ProposalError("The deployment proposal changed; reload before approving")
             if decision == "apply":
                 from grayson.core import file_fixes
 
@@ -2280,6 +2326,9 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     from grayson.ui.assurance import register
 
     register(app, workspace, templates, _check, _session, _redirect)
+    from grayson.ui.projects import register as register_projects
+
+    register_projects(app, workspace, templates, _check, _session, _redirect)
     return app
 
 

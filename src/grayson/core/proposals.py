@@ -109,6 +109,21 @@ def decide(
         from grayson.core import criteria
 
         proposal = session.proposal(pid)
+        if proposal and proposal["payload"].get("project_candidate_digest"):
+            from grayson.projects.engine import _fresh, _human, state
+
+            _human(actor)
+            project = state(session)
+            if (
+                not project
+                or proposal["payload"]["project_candidate_digest"] != project["candidate_digest"]
+                or proposal["payload"]["project_contract_digest"] != project["contract_digest"]
+            ):
+                raise ProposalError("project candidate changed; review its new deployment package")
+            if approve and (not _fresh(project) or project["phase"] != "awaiting_deployment"):
+                raise ProposalError(
+                    "refresh project verification and review before approving this DDL"
+                )
         if approve and proposal and proposal["payload"].get("file_change"):
             from grayson.core import file_fixes
 
@@ -137,6 +152,16 @@ def mark_applied(
     p = session.proposal(pid)
     if p is None:
         raise ProposalError(f"no proposal '{pid}'")
+    if p["payload"].get("project_candidate_digest"):
+        from grayson.projects.engine import state
+
+        project = state(session)
+        if (
+            not project
+            or p["payload"]["project_candidate_digest"] != project["candidate_digest"]
+            or p["payload"]["project_contract_digest"] != project["contract_digest"]
+        ):
+            raise ProposalError("project candidate changed; this deployment is superseded")
     if p["payload"].get("file_change"):
         raise ProposalError(
             "use proposal apply (MCP: proposal_apply); Grayson writes and records this fix"
@@ -230,6 +255,8 @@ def verify(
         raise ProposalError(
             "this fix has success criteria; use criteria run for a computed verdict"
         )
+    if p["payload"].get("project_candidate_digest"):
+        raise ProposalError("use project deployment-check for a computed deployed verdict")
     # Verification comes after the user approved and the fix was applied — it must
     # not be a back door that stamps an un-approved (or rejected) proposal 'verified'.
     if p["status"] not in {"approved", "applied", "verification_failed"}:

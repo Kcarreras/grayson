@@ -3,7 +3,8 @@
 {% block title %}grayson — {{ q.qid }}{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/?t={{ token }}">Sessions</a><span class="sep">/</span>
-  <a href="/session/{{ s.id }}?t={{ token }}">{{ s.title or s.id }}</a><span class="sep">/</span>
+  {% set owner = query_owner or s %}
+  <a href="/session/{{ owner.id }}?t={{ token }}{{ '&view=queries' if project_query else '#queries' }}">{{ owner.title or owner.id }}</a><span class="sep">/</span>
   <span class="mono">{{ q.qid }}</span></nav>
 <div class="pagehead">
   <div class="titles"><h1>{{ q.label or q.qid }}</h1><span class="mono muted">{{ q.qid }}</span></div>

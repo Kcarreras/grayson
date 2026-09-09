@@ -1,0 +1,33 @@
+.project-workspace { max-width: 1240px; margin: 0 auto; }
+.project-workspace h1 { max-width: 1000px; }
+.project-workspace .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.project-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin: 24px 0; overflow-x: auto; }
+.project-tabs a { color: var(--muted); white-space: nowrap; padding: 12px 0; border-bottom: 2px solid transparent; text-decoration: none; }
+.project-tabs a[aria-current] { color: var(--act); border-bottom-color: var(--act); }
+.project-tabs span { font-size: var(--t-sm); margin-left: 8px; }
+.project-decision { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-left: 3px solid var(--act); }
+.project-next { font-weight: 600; margin: 6px 0; }
+.project-primary-action { flex-shrink: 0; }
+.project-summary { display: flex; flex-wrap: wrap; gap: 22px; color: var(--muted); font-size: var(--t-sm); margin: 16px 0 24px; }
+.project-summary a { margin-left: auto; }
+.project-build h2 { margin: 8px 0; }
+.pipeline-map { overflow: auto; margin: 24px 0 8px; background: var(--bg); border-radius: var(--radius); padding: 12px; }
+.pipeline-map svg { display: block; width: 100%; max-width: 850px; margin: 0 auto; }
+.pipeline-edge { stroke: var(--rg-edge); stroke-width: 2; fill: none; }
+#pipeline-arrow path { fill: var(--rg-edge); }
+.pipeline-node rect { fill: var(--panel2); stroke: var(--border); stroke-width: 1.5; }
+.pipeline-node text { fill: var(--ink); font: 13px var(--mono); }
+.pipeline-node .pipeline-kind { fill: var(--muted); font: 10px var(--sans); letter-spacing: 1px; }
+.pipeline-output rect { stroke: var(--act); }
+.pipeline-map a:hover rect, .pipeline-map a:focus rect { stroke: var(--act); fill: var(--act-soft); }
+.project-workspace .fold summary .muted { margin-left: 10px; font-weight: normal; }
+.project-workspace pre { max-height: 440px; overflow: auto; }
+.project-history { padding-left: 24px; border-left: 2px solid var(--border); margin-left: 8px; }
+.project-history li { padding-left: 8px; margin-bottom: 20px; }
+@media (max-width: 700px) {
+  .project-tabs { gap: 20px; }
+  .project-decision { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .project-summary { gap: 12px; }
+  .project-summary a { margin-left: 0; }
+  .project-workspace .two { grid-template-columns: 1fr; }
+}

@@ -73,6 +73,7 @@
       <span class="desc">{{ tpl.description.strip().split("\n")[0] | truncate(150, true, "…") }}</span>
     </span>
     <span class="marks">
+      {% if tpl.project %}<span class="badge act">project · {{ tpl.project.approval }}</span>{% endif %}
       {% if row.core %}<span class="badge plain">core</span>
       {% elif row.mine %}<span class="badge todo">mine</span>
       {% else %}<span class="badge act">team</span>{% endif %}

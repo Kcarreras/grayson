@@ -1,0 +1,40 @@
+{% for c in checkpoint_rows %}
+<tr>
+  <td><span class="ink checkpoint-label" tabindex="0" title="{{ c.description | trim or 'No description provided in this workflow.' }}">{{ c.title }}</span><div class="muted mono">{{ c.key }}</div></td>
+  <td>{% if c.status == "complete" %}<span class="badge ok">complete</span>
+      {% elif c.status == "waived" %}<span class="badge attn">waived</span>
+      {% else %}<span class="badge todo">open</span>{% endif %}</td>
+  <td>{% if c.status == "waived" %}<span class="muted small">not applicable</span>
+      {% else %}{% for q in c.evidence %}{{ qc(q) }} {% endfor %}
+      {% if c.evidence_off_scope %}
+      {# legitimate for lineage probes — but the human judging the checkpoint
+         should see how much of the citation list actually touched scope #}
+      <div class="attn-text small">{{ (c.evidence | length) - (c.evidence_off_scope | length) }}
+        of {{ c.evidence | length }} cited queries touched the tables under investigation
+        (off-scope: {{ c.evidence_off_scope | join(", ") }})</div>
+      {% endif %}
+      {% if c.charts %}
+      <div class="small">charts: {% for cid in c.charts %}<a class="chip" href="/session/{{ s.id }}/chart/{{ cid }}?t={{ token }}" title="A chart this checkpoint closed with">{{ cid }}</a> {% endfor %}</div>
+      {% elif c.status == "open" and c.requires_charts %}
+      {# the workflow wants a picture here: say so where the human watches the gate #}
+      <div class="faint small" title="This checkpoint closes only with a chart of this kind, built from a cited query">needs chart: {{ c.requires_charts | join("; ") }}</div>
+      {% endif %}{% endif %}</td>
+  <td class="muted small">
+    {{ c.note or "" }}
+    {% if c.status == "open" and s.stage != "closed" %}
+    {# a check that genuinely does not apply gets an honest exit — otherwise the
+       only way past the gate is a query chosen to satisfy it #}
+    <details class="inlinefold">
+      <summary title="A required check that genuinely does not apply here">waive…</summary>
+      <form class="row" method="post"
+            action="/session/{{ s.id }}/checkpoint/{{ c.key }}/waive?t={{ token }}"
+            style="margin-top: 6px; gap: 4px;">
+        <input type="text" name="reason" placeholder="why it does not apply" required
+               style="width: auto; flex: 1 1 180px;">
+        <button class="btn secondary sm" type="submit">Waive</button>
+      </form>
+    </details>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}

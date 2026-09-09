@@ -287,9 +287,15 @@ document.addEventListener("click", function (e) {
     if (jump(decodeURIComponent(a.getAttribute("href").slice(1)))) e.preventDefault();
   });
   if (location.hash.length > 1) {
-    var el = document.getElementById(decodeURIComponent(location.hash.slice(1)));
-    if (el) { unfold(el); spot(el); }
-    if (history.replaceState) history.replaceState(null, "", location.pathname + location.search);
+    var id = decodeURIComponent(location.hash.slice(1));
+    var el = document.getElementById(id);
+    if (el) unfold(el);
+    // Keep the hash until live-page scroll restoration has seen it. An explicit
+    // evidence link takes priority over a position saved by an earlier refresh.
+    requestAnimationFrame(function () {
+      jump(id);
+      if (history.replaceState) history.replaceState(null, "", location.pathname + location.search);
+    });
   }
 })();
 

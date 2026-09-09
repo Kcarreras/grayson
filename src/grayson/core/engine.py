@@ -24,6 +24,9 @@ class EnforcementError(ValueError):
 
 
 def workflow_for(session: Session, overrides_dir: Path | None = None) -> WorkflowTemplate:
+    snapshot = session.get_meta("workflow_snapshot_v1")
+    if snapshot:
+        return WorkflowTemplate.model_validate_json(snapshot)
     return get_workflow(session.workflow, overrides_dir)
 
 
@@ -147,6 +150,17 @@ def complete_checkpoint(
     charts: list[str] | None = None,
 ) -> dict:
     tpl = workflow_for(session, overrides_dir)
+    from grayson.projects.engine import _approved, _fresh
+    from grayson.projects.engine import state as project_state
+
+    project = project_state(session)
+    if project:
+        _approved(session, project)
+        report = project.get("verification")
+        if not _fresh(project) or not report or report["verdict"] != "pass":
+            raise EnforcementError("project checkpoints need fresh passing candidate verification")
+        if not set(evidence) & {r["qid"] for r in report["results"]}:
+            raise EnforcementError("cite verification evidence for the current project candidate")
     if tpl.check(key) is None and session.checkpoint(key) is None:
         known = ", ".join(tpl.required_check_keys() + tpl.suggested_check_keys())
         raise EnforcementError(
@@ -154,7 +168,15 @@ def complete_checkpoint(
         )
     # Ordering, where a workflow declares it: bug-hunter's "no cause-hunting until
     # it reproduces" was prose in a description and enforced by nothing.
-    cleared = {c["key"] for c in session.checkpoints() if c["status"] in ("complete", "waived")}
+    cleared = {
+        c["key"]
+        for c in session.checkpoints()
+        if c["status"] in ("complete", "waived")
+        and (
+            not project
+            or session.get_meta("project_checkpoint:" + c["key"]) == project["candidate_digest"]
+        )
+    }
     unmet = tpl.unmet_dependencies(key, cleared)
     if unmet:
         raise EnforcementError(
@@ -175,6 +197,8 @@ def complete_checkpoint(
     # can tell the difference between walking upstream and padding the citation
     # list, not just someone combing the event log
     session.complete_checkpoint(key, evidence, note, actor, off_scope=off_scope, charts=charts)
+    if project:
+        session.set_meta("project_checkpoint:" + key, project["candidate_digest"])
     if off_scope:
         session.log_event(
             actor, "evidence_off_scope", {"key": key, "qids": off_scope, "cited": len(evidence)}
@@ -218,6 +242,11 @@ def waive_checkpoint(
         session.waive_checkpoint(key, reason, actor)
     except (KeyError, ValueError) as e:
         raise EnforcementError(str(e.args[0] if e.args else e)) from e
+    from grayson.projects.engine import state as project_state
+
+    project = project_state(session)
+    if project:
+        session.set_meta("project_checkpoint:" + key, project["candidate_digest"])
     return session.checkpoint(key)
 
 
@@ -310,6 +339,16 @@ def readiness(session: Session, overrides_dir: Path | None = None) -> dict:
     open_checks = [
         k for k in keys if checkpoints.get(k, {}).get("status") not in ("complete", "waived")
     ]
+    from grayson.projects.engine import state as project_state
+
+    project = project_state(session)
+    if project:
+        open_checks = [
+            k
+            for k in keys
+            if k in open_checks
+            or session.get_meta("project_checkpoint:" + k) != project["candidate_digest"]
+        ]
     waived_checks = [
         {
             "key": k,
@@ -438,6 +477,10 @@ def advance_stage(
     escape hatch: it is honored only for the 'user' actor (an agent cannot
     self-authorize a bypass).
     """
+    from grayson.projects.engine import state as project_state
+
+    if project_state(session) and to_stage in {"fixes", "verification", "closed"}:
+        raise EnforcementError("project runs advance through project tools; use project finish")
     if to_stage not in STAGES:
         raise EnforcementError(f"unknown stage '{to_stage}' (stages: {', '.join(STAGES)})")
     if force and actor != "user":
@@ -502,6 +545,10 @@ def close_session(
     boundaries, and a clean close in particular is a human vouching for a
     negative result. Agents ask; they do not self-certify.
     """
+    from grayson.projects.engine import state as project_state
+
+    if project_state(session):
+        raise EnforcementError("finish project work through project finish or accept-deployment")
     if actor != "user":
         raise EnforcementError(
             "closing a session is a user action. Ask the user to close it (console, or "
@@ -564,6 +611,13 @@ def abandon_session(
         raise EnforcementError(
             "abandoning needs a reason — it is the only record of why this session has no result"
         )
+    from grayson.projects.engine import control as project_control
+    from grayson.projects.engine import state as project_state
+
+    project = project_state(session)
+    if project:
+        project_control(session, "cancel", reason, project["revision"], actor)
+        return readiness(session, overrides_dir)
     ready = readiness(session, overrides_dir)
     cancelled = [iv["iid"] for iv in session.interventions("open")]
     for iid in cancelled:

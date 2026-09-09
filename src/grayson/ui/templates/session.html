@@ -7,6 +7,7 @@
    intervention form page deliberately has no refresh (it would clear input). #}
 {% block head %}{% endblock %}
 {% block content %}
+{% if project_workflow %}{% include "_project_workspace.html" %}{% else %}
 {# query chip: links to the query page; hover shows the SQL (first 300 chars) #}
 {% macro qc(qid) -%}
 <a class="chip" href="/session/{{ s.id }}/query/{{ qid }}?t={{ token }}"
@@ -36,23 +37,16 @@
 
 {{ stage_timeline(s, stages, readiness, findings, proposals) }}
 
-{# each stat tile is a link to the section it counts; the base script scrolls
-   there and unfolds it first if it is collapsed #}
 {% set open_iv = interventions | selectattr("status","equalto","open") | list %}
-<div class="tiles">
-  <a class="tile" href="#queries" title="Go to the query log"><div class="num">{{ s.queries_executed }}</div><div class="lbl">Queries run</div></a>
-  <a class="tile" href="#checkpoints" title="Go to the checkpoints">
-    <div class="num {{ 'ok' if readiness.checks_complete }}">{{ checkpoints | selectattr("status","equalto","complete") | list | length }}/{{ checkpoints | length }}</div>
-    <div class="lbl">Checkpoints{% if readiness.waived_checks %},
-      {{ readiness.waived_checks | length }} waived{% endif %}</div></a>
-  <a class="tile" href="#findings" title="Go to the findings"><div class="num">{{ findings | length }}</div>
-    <div class="lbl">Findings ({{ findings | selectattr("accepted") | rejectattr("superseded_by") | list | length }} accepted)</div></a>
-  {% if open_iv %}
-  <a class="tile" href="#awaiting" title="Go to the open questions"><div class="num attn">{{ open_iv | length }}</div>
-    <div class="lbl">Awaiting your input</div></a>
-  {% else %}
-  <div class="tile"><div class="num">0</div><div class="lbl">Awaiting your input</div></div>
-  {% endif %}
+{% if session_focus %}<section class="card qa-focus" aria-label="Session focus">
+  <div class="overline">{{ session_focus.title }}</div>
+  {% if session_focus['items'] %}<div class="qa-decisions">{% for item in session_focus['items'] %}<a href="#{{ item.target }}"><strong>{{ item.count }}</strong> {{ item.label }} →</a>{% endfor %}</div>
+  {% else %}<p>{{ session_focus.message }} <a href="#{{ session_focus.target }}">View next steps →</a></p>{% endif %}
+</section>{% endif %}
+<div class="qa-summary" aria-label="Session totals">
+  <a href="#queries">{{ s.queries_executed }} {{ 'query' if s.queries_executed == 1 else 'queries' }} run</a>
+  <a href="#checkpoints">{{ checkpoints | selectattr('status','equalto','complete') | list | length }}/{{ checkpoints | length }} checkpoints complete{% if readiness.waived_checks %} · {{ readiness.waived_checks | length }} waived{% endif %}</a>
+  <a href="#findings">{{ readiness.findings_pending | length }} {{ 'finding' if readiness.findings_pending | length == 1 else 'findings' }} awaiting review · {{ readiness.findings_accepted }} accepted</a>
 </div>
 
 <nav class="section-nav" aria-label="Session sections">
@@ -70,11 +64,12 @@
     {{ outcome(s.outcome) }}
     <span class="muted small">{% if s.outcome == "clean" %}Confirmed by you: checks cleared, nothing found.
       {% elif s.outcome == "abandoned" %}Closed without a result; nothing published.
+      {% elif s.outcome == "project_verified" %}Project verification complete; see the project for approval attribution.
       {% else %}Closed with accepted findings.{% endif %}</span>
   </div>
   {% if s.outcome_note %}<div class="muted small" style="margin-top: 6px;">{{ s.outcome_note }}</div>{% endif %}
 </div>
-{% elif readiness.clean_close_available and s.stage != "closed" %}
+{% elif readiness.clean_close_available and s.stage != "closed" and not project_workflow %}
 <div class="card" style="margin: 12px 0;">
   <div class="overline" style="margin-bottom: 6px;">This run came back clean</div>
   <div class="muted small" style="margin-bottom: 10px;">
@@ -245,52 +240,16 @@
 <details class="section" id="checkpoints" data-fold="checkpoints" open>
 <summary><h2>Checkpoints {{ help("checkpoints") }}
   <span class="h-count">{{ checkpoints | selectattr("status","equalto","complete") | list | length }} of {{ checkpoints | length }} complete{% if readiness.waived_checks %}, {{ readiness.waived_checks | length }} waived{% endif %}</span></h2></summary>
-<div class="card scroll">
-<table>
+{% set outstanding_checks = checkpoints | rejectattr('status','in',['complete','waived']) | list %}
+{% set settled_checks = checkpoints | selectattr('status','in',['complete','waived']) | list %}
+{% if outstanding_checks %}<div class="card scroll"><table>
 <tr><th>Check</th><th>Status</th><th>Evidence {{ help("evidence") }}</th><th>Note</th></tr>
-{% for c in checkpoints %}
-<tr>
-  <td><span class="ink checkpoint-label" tabindex="0" title="{{ c.description | trim or 'No description provided in this workflow.' }}">{{ c.title }}</span><div class="muted mono">{{ c.key }}</div></td>
-  <td>{% if c.status == "complete" %}<span class="badge ok">complete</span>
-      {% elif c.status == "waived" %}<span class="badge attn">waived</span>
-      {% else %}<span class="badge todo">open</span>{% endif %}</td>
-  <td>{% if c.status == "waived" %}<span class="muted small">not applicable</span>
-      {% else %}{% for q in c.evidence %}{{ qc(q) }} {% endfor %}
-      {% if c.evidence_off_scope %}
-      {# legitimate for lineage probes — but the human judging the checkpoint
-         should see how much of the citation list actually touched scope #}
-      <div class="attn-text small">{{ (c.evidence | length) - (c.evidence_off_scope | length) }}
-        of {{ c.evidence | length }} cited queries touched the tables under investigation
-        (off-scope: {{ c.evidence_off_scope | join(", ") }})</div>
-      {% endif %}
-      {% if c.charts %}
-      <div class="small">charts: {% for cid in c.charts %}<a class="chip" href="/session/{{ s.id }}/chart/{{ cid }}?t={{ token }}" title="A chart this checkpoint closed with">{{ cid }}</a> {% endfor %}</div>
-      {% elif c.status == "open" and c.requires_charts %}
-      {# the workflow wants a picture here: say so where the human watches the gate #}
-      <div class="faint small" title="This checkpoint closes only with a chart of this kind, built from a cited query">needs chart: {{ c.requires_charts | join("; ") }}</div>
-      {% endif %}{% endif %}</td>
-  <td class="muted small">
-    {{ c.note or "" }}
-    {% if c.status == "open" and s.stage != "closed" %}
-    {# a check that genuinely does not apply gets an honest exit — otherwise the
-       only way past the gate is a query chosen to satisfy it #}
-    <details class="inlinefold">
-      <summary title="A required check that genuinely does not apply here">waive…</summary>
-      <form class="row" method="post"
-            action="/session/{{ s.id }}/checkpoint/{{ c.key }}/waive?t={{ token }}"
-            style="margin-top: 6px; gap: 4px;">
-        <input type="text" name="reason" placeholder="why it does not apply" required
-               style="width: auto; flex: 1 1 180px;">
-        <button class="btn secondary sm" type="submit">Waive</button>
-      </form>
-    </details>
-    {% endif %}
-  </td>
-</tr>
-{% endfor %}
-{% if not checkpoints %}<tr><td colspan="4" class="muted">No checkpoints.</td></tr>{% endif %}
-</table>
-</div>
+{% with checkpoint_rows = outstanding_checks %}{% include "_checkpoint_rows.html" %}{% endwith %}
+</table></div>{% elif checkpoints %}<p class="muted small">Every required checkpoint is complete or explicitly waived.</p>{% else %}<p class="muted">No checkpoints.</p>{% endif %}
+{% if settled_checks %}<details class="fold" id="settled-checkpoints" data-fold="qa-settled-checkpoints"><summary>{{ settled_checks | length }} completed or waived checkpoints · evidence and notes</summary>
+<div class="scroll"><table><tr><th>Check</th><th>Status</th><th>Evidence</th><th>Note</th></tr>
+{% with checkpoint_rows = settled_checks %}{% include "_checkpoint_rows.html" %}{% endwith %}
+</table></div></details>{% endif %}
 
 {% set open_suggested = readiness.suggested_checks | rejectattr("done") | list %}
 {% if open_suggested and s.stage != "closed" %}
@@ -305,10 +264,9 @@
 
 <h2 id="findings">Findings {{ help("findings") }} <span class="h-count">severity scale {{ help("severity") }}</span></h2>
 {% for f in findings %}
-{# newest three stay open; older and superseded findings collapse to their
-   title row. A manual toggle is remembered per finding in localStorage. #}
+{# Pending findings come first; settled findings retain their evidence in folds. #}
 <details class="card findcard{{ ' superseded' if f.superseded_by }}" id="{{ f.fid }}"
-  data-fold="{{ f.fid }}" {% if loop.revindex <= 3 and not f.superseded_by %}open{% endif %}>
+  data-fold="qa-{{ f.fid }}-{{ 'settled' if f.accepted or f.rejected or f.superseded_by else 'pending' }}" {% if loop.index <= 3 and not f.accepted and not f.rejected and not f.superseded_by and s.stage != 'closed' %}open{% endif %}>
   <summary class="chartsum">
     <span class="c-caret">▸</span>
     <b><span class="mono muted">{{ f.fid }}</span> · {{ f.title }}</b>
@@ -372,7 +330,7 @@
 {% endfor %}
 {% if not findings %}<div class="card empty">No findings recorded yet.</div>{% endif %}
 
-<details class="card" id="fix-delivery" {{ 'open' if not proposals }}>
+<details class="card" id="fix-delivery">
   <summary class="otitle">Fix delivery · {{ {'auto': 'Let the agent choose', 'local_file': 'Update a local file', 'sql_snippet': 'SQL to copy and run'}[s.fix_delivery] }}</summary>
   <p class="small muted">Choose how you want future fixes delivered. Existing proposals keep their current form.</p>
   <form class="row fix-delivery-form" method="post" action="/session/{{ s.id }}/fix-delivery?t={{ token }}">
@@ -446,31 +404,7 @@
 </div>
 {% endif %}
 
-<h2 id="queries">Query log {{ help("guard") }}</h2>
-{% if queries %}
-{{ list_tools("queries", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first"), ("duration", "desc", "Slowest first"), ("rows", "desc", "Most rows")], [("executed", "executed"), ("rejected", "rejected"), ("error", "errors")], "Find a query, purpose, or worker…", false) }}
-{% endif %}
-<div class="card scroll" style="max-height: 360px; overflow-y: auto;">
-<table>
-{% set has_worker = queries | selectattr("worker") | list | length > 0 %}
-{% set has_label = queries | selectattr("label") | list | length > 0 %}
-<thead><tr><th data-sortkey="id">Query</th><th>Status</th><th data-sortkey="rows">Rows</th><th data-sortkey="duration">Time (ms)</th>{% if has_worker %}<th>Worker</th>{% endif %}{% if has_label %}<th>Purpose {{ help("purpose") }}</th>{% endif %}</tr></thead>
-<tbody data-list="queries" data-noun="query">
-{% for q in queries %}
-<tr data-item data-s-id="{{ q.qid }}" data-s-duration="{{ q.duration_ms or 0 }}" data-s-rows="{{ q.row_count or 0 }}" data-tags="{{ q.status if q.status in ['executed', 'rejected'] else 'error' }}">
-  <td class="mono">{{ qc(q.qid) }}</td>
-  <td>{{ query_status(q.status) }}
-      {% if q.guard_rule %}<div class="faint mono small">{{ q.guard_rule }}</div>{% endif %}</td>
-  <td class="num">{{ q.row_count if q.row_count is not none else "" }}{% if q.truncated %} <span class="faint">(capped)</span>{% endif %}</td>
-  <td class="num muted">{{ q.duration_ms if q.duration_ms is not none else '—' }}</td>
-  {% if has_worker %}<td class="muted mono small">{{ q.worker or "—" }}</td>{% endif %}
-  {% if has_label %}<td class="muted small">{{ q.label or "—" }}</td>{% endif %}
-</tr>
-{% endfor %}
-{% if not queries %}<tr><td colspan="4" class="muted">No queries yet.</td></tr>{% endif %}
-</tbody>
-</table>
-</div>
+{% include "_query_log.html" %}
 
 <details class="fold">
   <summary>Event log ({{ events | length }} recent)</summary>
@@ -588,6 +522,7 @@
   <div id="lb-body" class="lb-body"></div>
   <div id="lb-caption" class="faint small mt-2"></div>
 </dialog>
+{% endif %}
 {% endblock %}
 {% block scripts %}
 <script>
