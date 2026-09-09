@@ -256,14 +256,10 @@ def submit_candidate(session, spec, revision):
             raise ValueError("progress stalled; request a human decision")
         compiled = compile_candidate(candidate, contract)
         queries = verification_queries(candidate, contract)
-        fingerprint = digest(
-            {
-                "nodes": [n.model_dump() for n in candidate.nodes],
-                "output": candidate.output,
-                "contract": s["contract_digest"],
-            }
-        )
-        if fingerprint == s["candidate_digest"]:
+        fingerprint = digest({"sql": compiled["sql"], "contract": s["contract_digest"]})
+        # Comparing SQL also preserves evidence for older stored fingerprints
+        # that included narrative fields. Do not rewrite those existing bindings.
+        if compiled["sql"] == s.get("candidate_sql"):
             raise ValueError(
                 "candidate SQL is unchanged; rerun verification or diagnose another approach"
             )
@@ -747,9 +743,27 @@ def control(session, action, reason, revision, actor="user"):
         if action == "resume":
             if s["phase"] not in {"paused", "blocked"}:
                 raise ValueError("only a paused or blocked project can resume")
-            s["phase"] = "needs_revision" if s["candidate"] else "building"
+            previous = s.pop("paused_from", None)
+            restore = s["phase"] == "paused" and previous not in {
+                None,
+                "paused",
+                "blocked",
+                "verifying",
+            }
+            if restore:
+                s["phase"] = previous
+            else:
+                s["phase"] = "needs_revision" if s["candidate"] else "building"
+            if (
+                s["phase"] == "candidate_review"
+                and policy.effective(session, s["contract"]["policy"]["approval"])["approval"]
+                != "guided"
+            ):
+                s["phase"] = "verifying"
             s["stalled"] = 0
         else:
+            if action == "pause" and s["phase"] != "paused":
+                s["paused_from"] = s["phase"]
             s["phase"] = {"pause": "paused", "cancel": "cancelled", "block": "blocked"}[action]
         s.update(block_reason=reason, lease={}, runner={})
         return s

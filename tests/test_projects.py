@@ -620,6 +620,49 @@ def test_supervisor_repairs_and_stops_at_deployment_boundary(project, monkeypatc
     )
 
 
+@pytest.fixture(params=["candidate_review", "ready_for_review", "awaiting_deployment"])
+def project_at_review_boundary(project, request):
+    s, executor = project
+    approve(s, contract(approval="guided" if request.param == "candidate_review" else "bounded"))
+    submit(s, candidate(True))
+    if request.param != "candidate_review":
+        verify(s, executor)
+        review_and_checkpoints(s)
+    if request.param == "awaiting_deployment":
+        engine.finish(s, engine.state(s)["revision"])
+        engine.deployment_package(s, engine.state(s)["revision"])
+    assert engine.state(s)["phase"] == request.param
+    return s
+
+
+def test_narrative_only_candidate_edits_preserve_progress(project_at_review_boundary):
+    s = project_at_review_boundary
+    before = engine.state(s)
+    changed = copy.deepcopy(before["candidate"])
+    changed["summary"] = "Clarified explanation"
+    changed["diagnosis"] = "No SQL changes"
+    for node in changed["nodes"]:
+        node["purpose"] += " (clarified wording)"
+    with pytest.raises(ValueError, match="SQL is unchanged"):
+        submit(s, changed)
+    assert engine.state(s) == before
+
+
+def test_pause_resume_restores_review_boundary(project_at_review_boundary):
+    s = project_at_review_boundary
+    before = engine.state(s)
+    engine.control(s, "pause", "Review later", before["revision"])
+    engine.control(s, "pause", "Still reviewing", engine.state(s)["revision"])
+    resumed = engine.control(s, "resume", "Continue", engine.state(s)["revision"])["project"]
+    assert resumed["phase"] == before["phase"]
+    for key in ("candidate_digest", "candidate_approved", "verification", "review", "deployment"):
+        assert resumed.get(key) == before.get(key)
+    assert not resumed["lease"] and not resumed["runner"]
+    engine.control(s, "block", "A real issue needs investigation", resumed["revision"])
+    resumed = engine.control(s, "resume", "Investigate", engine.state(s)["revision"])["project"]
+    assert resumed["phase"] == "needs_revision"
+
+
 def test_runner_cannot_claim_an_active_verifier(project):
     from grayson.projects.runner import drive
 
@@ -757,6 +800,10 @@ def test_pause_cancels_inflight_verification(project):
 
     result = verify(s, PausingExecutor())
     assert result["phase"] == "paused" and result["verification"] is None
+    resumed = engine.control(s, "resume", "Restart interrupted checks", result["revision"])[
+        "project"
+    ]
+    assert resumed["phase"] == "needs_revision" and resumed["verification"] is None
 
 
 def test_stale_evidence_cannot_complete(project, monkeypatch):
@@ -1087,13 +1134,18 @@ def test_supervisor_action_budget_survives_resume(project):
     assert result["phase"] == "blocked" and result["runner_steps"] == 2
 
 
-def test_lowering_approval_releases_candidate_gate(project):
+@pytest.mark.parametrize("paused", [False, True])
+def test_lowering_approval_releases_candidate_gate(project, paused):
     s, executor = project
     approve(s, contract(approval="guided"))
     submit(s, candidate(True))
     before = engine.state(s)
     assert before["phase"] == "candidate_review"
-    view = engine.set_approval(s, "bounded", before["revision"])
+    if paused:
+        engine.control(s, "pause", "Adjust review level", before["revision"])
+    view = engine.set_approval(s, "bounded", engine.state(s)["revision"])
+    if paused:
+        view = engine.control(s, "resume", "Continue", view["project"]["revision"])
     assert view["project"]["phase"] == "verifying"
     assert view["project"]["candidate_digest"] == before["candidate_digest"]
     verify(s, executor)

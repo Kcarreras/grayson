@@ -56,6 +56,8 @@ optimistic concurrency tokens; a stale write must refresh the brief and retry.
 An agent completion is labelled **machine verified; not human accepted**. Human
 acceptance and agent review are separate facts. You can pause or cancel in the
 console, or use `project control SID pause|resume|cancel REASON REVISION`.
+Resuming a paused review or deployment restores its previous phase. Interrupted
+verification and genuinely blocked runs return to revision instead.
 
 Use the console's **Change approval level**, or `project approval SID LEVEL
 REVISION`, to change human review points without discarding valid work. This is
@@ -119,7 +121,9 @@ Verification reruns all required probes through the common guard and audit path.
 Errors, missing cache data, partial scalar results and interrupted checks are
 **unproven**, never passes. All versions are retained. A repair names failed check
 IDs and a diagnosis; changing the candidate clears its verification, review,
-checkpoint validity and deployment binding. Re-submitting unchanged executable
+checkpoint validity and deployment binding. Descriptions are excluded from the
+candidate fingerprint; changing only narrative text preserves existing evidence
+and approvals. Re-submitting unchanged executable
 content cannot manufacture a new iteration. Repeated failures without additional
 passing checks stop for human input. Query and iteration limits are enforced;
 active-phase elapsed time excludes approval/deployment waits and explicit pauses.
