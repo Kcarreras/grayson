@@ -48,6 +48,13 @@
   .diff-fold > summary span { display: block; margin-left: 0; }
 }
 
+/* ---- QA session priorities ------------------------------------------- */
+.qa-focus { border-left: 3px solid var(--act); }
+.qa-decisions { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 12px; }
+.qa-decisions a { text-decoration: none; }
+.qa-decisions strong { font-size: var(--t-lg); margin-right: 4px; }
+.qa-summary { display: flex; flex-wrap: wrap; gap: 10px 24px; margin: 16px 0; font-size: var(--t-sm); }
+.qa-summary a { color: var(--muted); }
 /* ---- tokens ---------------------------------------------------------- */
 :root {
   color-scheme: dark;

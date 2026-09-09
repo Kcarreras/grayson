@@ -1910,22 +1910,28 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
         from grayson.checks.regression import RegressionStore
         from grayson.core.file_fixes import review_digest
         from grayson.ui.diffs import review_proposal
+        from grayson.ui.session_view import focus, review_order
 
         queries = s.query_log(100)
         proposals = [review_proposal(s, p) for p in s.proposals()]
         revisions = {p["payload"].get("supersedes"): p["pid"] for p in proposals}
         for p in proposals:
             p["superseded_by"] = revisions.get(p["pid"])
+        summary = s.summary()
+        ready = engine.readiness(s, workspace.workflows_dir)
+        findings = review_order(s.findings())
+        interventions = s.interventions()
         return {
             "nav": "sessions",
             "project_workflow": False,
             "guard_profiles": sorted(workspace.config.guard_profiles),
-            "s": s.summary(),
+            "s": summary,
             "setup_inputs": s.setup_inputs(),
-            "readiness": engine.readiness(s, workspace.workflows_dir),
+            "readiness": ready,
+            "session_focus": focus(summary, ready, interventions, proposals),
             "checkpoints": engine.checkpoints_view(s, workspace.workflows_dir),
-            "findings": s.findings(),
-            "interventions": s.interventions(),
+            "findings": findings,
+            "interventions": interventions,
             "proposals": proposals,
             "file_fix_digests": {
                 p["pid"]: review_digest(p) for p in proposals if p["payload"].get("file_change")
