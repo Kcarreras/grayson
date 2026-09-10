@@ -1,5 +1,7 @@
 {% from "_macros.html" import query_status, list_tools %}
 {% from "_sql_proposal.html" import sql_proposal, external_applied %}
+{# Both entry points (session.html and project.html) extend base.html, which
+   renders the shared error alert above this content. Do not duplicate it here. #}
 {% macro qc(qid) -%}<a class="chip" href="/session/{{ s.id }}/query/{{ qid }}?t={{ token }}" title="{{ qsql.get(qid, '') }}">{{ qid }}</a>{%- endmacro %}
 {% macro action(name, label, digest="") -%}
 <form method="post" action="/session/{{ s.id }}/project/{{ name }}?t={{ token }}">
