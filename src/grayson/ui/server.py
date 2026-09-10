@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from grayson import __version__
 from grayson.checks import ChecksStore
@@ -71,6 +72,44 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     templates.env.filters["sections"] = split_sections
     templates.env.filters["sqlhl"] = highlight_sql
     templates.env.filters["para"] = paragraphs
+
+    @app.exception_handler(StarletteHTTPException)
+    async def console_error(request: Request, exc: StarletteHTTPException):
+        # Navigation gets recovery guidance; fetch/API clients retain JSON errors.
+        # The standalone error template must never render the access token.
+        if "text/html" not in request.headers.get("accept", ""):
+            from fastapi.exception_handlers import http_exception_handler
+
+            return await http_exception_handler(request, exc)
+        try:
+            _check(request)
+        except HTTPException:
+            authenticated = False
+        else:
+            authenticated = True
+        needs_access = exc.status_code == 403 and not authenticated
+        titles = {
+            403: "Console access needed" if needs_access else "Action not available",
+            404: "Page not found",
+            409: "This item changed",
+        }
+        response = templates.TemplateResponse(
+            request,
+            "error.html",
+            {
+                "status": exc.status_code,
+                "title": titles.get(exc.status_code, "Could not complete this action"),
+                "detail": exc.detail,
+                "needs_access": needs_access,
+            },
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
+        # An authenticated stale deep link may be the browser's first visit.
+        # Keep recovery links tokenless, but authenticate their next navigation.
+        if authenticated:
+            _set_cookie(response)
+        return response
 
     def _valid(supplied: str | None) -> bool:
         return bool(supplied) and secrets.compare_digest(supplied, token)

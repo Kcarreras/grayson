@@ -11,6 +11,7 @@ from pathlib import Path
 import typer
 
 from grayson.cache.local import LocalQueryError, query_artifacts
+from grayson.cli_input import parse_json, read_text
 from grayson.config import GuardSettings
 from grayson.core import engine
 from grayson.core import proposals as proposals_engine
@@ -204,18 +205,30 @@ def _refuse_nested_workspace(path: Path) -> None:
 
 
 def _read_sql(sql: str | None, file: Path | None) -> str:
-    if sql and file:
+    if sql is not None and file is not None:
         fail("pass --sql or --file, not both")
-    if sql:
-        return sql
-    if file:
-        if not file.is_file():
-            fail(f"file not found: {file}")
-        return file.read_text(encoding="utf-8")
-    if not sys.stdin.isatty():
-        return sys.stdin.read()
-    fail("no SQL given: use --sql, --file, or pipe via stdin")
-    raise RuntimeError  # unreachable
+    try:
+        raw = sql if sql is not None else read_text(file) if file is not None else None
+        if raw is None and not sys.stdin.isatty():
+            raw = sys.stdin.read()
+        if raw is None or not raw.strip():
+            fail("no SQL given: use --sql, --file, or pipe via stdin")
+        return raw
+    except (ValueError, OSError) as e:
+        fail(str(e))
+        raise  # unreachable
+
+
+def _read_payload(file, json_str, label="payload", *, object_only=True):
+    if file is not None and json_str is not None:
+        fail("pass --file or --json, not both")
+    try:
+        raw = read_text(file) if file is not None else json_str
+        if raw is None:
+            raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+        return parse_json(raw, label=label, object_only=object_only)
+    except (ValueError, OSError) as e:
+        fail(str(e))
 
 
 # -- top level -----------------------------------------------------------
@@ -2078,24 +2091,7 @@ def finding_add(
     worker: str = typer.Option(None, "--worker"),
 ) -> None:
     """Record a finding — validated against the workflow schema and evidence."""
-    if file and json_str:
-        fail("pass --file or --json, not both")
-    if file:
-        if not file.is_file():
-            fail(f"file not found: {file}")
-        raw = file.read_text(encoding="utf-8")
-    elif json_str:
-        raw = json_str
-    elif not sys.stdin.isatty():
-        raw = sys.stdin.read()
-    else:
-        fail("no finding payload: use --file, --json, or stdin")
-        return
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as e:
-        fail(f"invalid JSON: {e}")
-        return
+    payload = _read_payload(file, json_str, "finding payload")
     s = _session(session_id)
     try:
         finding = engine.record_finding(s, payload, worker, _workspace().workflows_dir)
@@ -2151,24 +2147,7 @@ def intervention_request(
     worker: str = typer.Option(None, "--worker"),
 ) -> None:
     """File a human-input task. Returns the intervention id to await."""
-    if file and json_str:
-        fail("pass --file or --json, not both")
-    if file:
-        if not file.is_file():
-            fail(f"file not found: {file}")
-        raw = file.read_text(encoding="utf-8")
-    elif json_str:
-        raw = json_str
-    elif not sys.stdin.isatty():
-        raw = sys.stdin.read()
-    else:
-        fail("no request payload: use --file, --json, or stdin")
-        return
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as e:
-        fail(f"invalid JSON: {e}")
-        return
+    payload = _read_payload(file, json_str, "request payload")
     s = _session(session_id)
     try:
         request = build_request(kind, payload)
@@ -2228,20 +2207,14 @@ def intervention_respond(
     its own question would defeat the point of asking. Requires a terminal.
     """
     require_interactive("answering an intervention")
-    if file:
-        raw = file.read_text(encoding="utf-8") if file.is_file() else fail(f"no file: {file}")
-    elif json_str:
-        raw = json_str
-    else:
-        fail("no response payload: use --file or --json")
-        return
+    payload = _read_payload(file, json_str, "response payload", object_only=False)
     s = _session(session_id)
     item = s.intervention(iid)
     if item is None:
         fail(f"no intervention '{iid}'")
         return
     try:
-        response = validate_response(item["kind"], item["request"], json.loads(raw))
+        response = validate_response(item["kind"], item["request"], payload)
         s.respond_intervention(iid, response)
     except (InterventionError, ValueError, KeyError, json.JSONDecodeError) as e:
         fail(str(e.args[0] if e.args else e))
@@ -2354,24 +2327,7 @@ def proposal_add(
     worker: str = typer.Option(None, "--worker"),
 ) -> None:
     """Draft a fix proposal (file diff or DDL snippet) linked to a finding."""
-    if file and json_str:
-        fail("pass --file or --json, not both")
-    if file:
-        if not file.is_file():
-            fail(f"file not found: {file}")
-        raw = file.read_text(encoding="utf-8")
-    elif json_str:
-        raw = json_str
-    elif not sys.stdin.isatty():
-        raw = sys.stdin.read()
-    else:
-        fail("no payload: use --file, --json, or stdin")
-        return
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as e:
-        fail(f"invalid JSON: {e}")
-        return
+    payload = _read_payload(file, json_str, "proposal payload")
     s = _session(session_id)
     try:
         proposal = proposals_engine.record_proposal(s, kind, title, payload, finding, worker)
@@ -2711,24 +2667,7 @@ def knowledge_set(
     table first, "note": optional}. The output's `warnings` list what had to be
     guessed or could not be read; the schema map draws exactly what was recorded.
     """
-    if file and json_str:
-        fail("pass --file or --json, not both")
-    if file:
-        if not file.is_file():
-            fail(f"file not found: {file}")
-        raw = file.read_text(encoding="utf-8")
-    elif json_str:
-        raw = json_str
-    elif not sys.stdin.isatty():
-        raw = sys.stdin.read()
-    else:
-        fail("no profile payload: use --file, --json, or stdin")
-        return
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as e:
-        fail(f"invalid JSON: {e}")
-        return
+    payload = _read_payload(file, json_str, "profile payload")
     ws = _workspace()
     try:
         doc = KnowledgeStore(ws.knowledge_dir).set_profile(table, payload)

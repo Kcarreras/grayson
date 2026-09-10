@@ -110,7 +110,8 @@
     </select></label>
   {% if filters %}
   <span class="lt-filters" role="group" aria-label="Show only">
-    {% for f in filters %}<button type="button" class="chip fchip" data-tag="{{ f[0] }}" aria-pressed="false">{{ f[1] }} <span class="lt-n"></span></button>{% endfor %}
+    {% for f in filters %}<button type="button" class="chip fchip" data-tag="{{ f[0] }}" data-filter-group="{{ f[2] if f | length > 2 else f[0] }}" aria-pressed="false">{{ f[1] }} <span class="lt-n"></span></button>{% endfor %}
+    <span class="sr-only">Choices in the same category include either match. Different categories narrow the results.</span>
   </span>
   {% endif %}
   <span class="faint small lt-count" role="status" aria-live="polite" aria-atomic="true"></span>

@@ -1,6 +1,7 @@
 """Execute real candidate/probe SQL over planted defects, not canned verdicts."""
 
 import copy
+import re
 import sqlite3
 
 import pytest
@@ -1123,12 +1124,34 @@ def test_project_session_views_and_deployment_stay_in_one_workspace(project):
     )
     assert failed.status_code == 400 and 'aria-label="Project views"' in failed.text
     assert 'id="findings"' not in failed.text
+    alerts = re.findall(r'<div class="banner" role="alert">(.*?)</div>', failed.text, re.S)
+    assert len(alerts) == 1 and "changed" in alerts[0]
+    assert "data-live" not in failed.text
     approved = client.post(
         f"/session/{s.id}/proposal/{proposal['pid']}/approve?t=test",
         data={"digest": review_digest(proposal)},
     )
     assert approved.status_code == 200 and "I've applied this" in approved.text
     assert approved.url.path == f"/session/{s.id}"
+
+
+def test_project_stale_revision_shows_one_shared_error_alert(project):
+    from fastapi.testclient import TestClient
+
+    from grayson.ui.server import build_app
+
+    s, _ = project
+    p = engine.draft(s, contract(), 0)["project"]
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    failed = client.post(
+        f"/session/{s.id}/project/approve?t=test",
+        data={"revision": p["revision"] + 1, "digest": p["contract_digest"]},
+    )
+    assert failed.status_code == 400 and 'aria-label="Project views"' in failed.text
+    alerts = re.findall(r'<div class="banner" role="alert">(.*?)</div>', failed.text, re.S)
+    assert alerts == ["project changed; read project_status and retry against its revision"]
+    assert "data-live" not in failed.text
+    assert engine.state(s)["phase"] == "awaiting_brief"
 
 
 def test_empty_project_session_uses_project_interface(project):

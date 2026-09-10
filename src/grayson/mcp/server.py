@@ -39,6 +39,8 @@ from grayson.workspace import Workspace
 
 INSTRUCTIONS = """\
 grayson provides guarded, evidence-tracked QA over SQL tables (Snowflake).
+Session tools accept an exact session_id, or latest/last/. for the newest session.
+Use session_list to discover IDs and keep an exact ID when working on concurrent sessions.
 Protocol: check knowledge and cached data first, start a session for a workflow,
 run guarded queries (only SELECT/SHOW/DESCRIBE/EXPLAIN survive), close each required
 checkpoint citing executed query ids as evidence, record findings against the schema,

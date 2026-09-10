@@ -5,9 +5,9 @@ def register(mcp, session, workspace, err):
     from grayson.projects import engine
     from grayson.projects.models import Candidate, Contract, Review
 
-    def call(fn, *args):
+    def call(fn, session_id, *args):
         try:
-            return fn(*args)
+            return fn(session(session_id), *args)
         except (ValueError, OSError, KeyError) as e:
             return err(e)
 
@@ -28,14 +28,14 @@ def register(mcp, session, workspace, err):
         "Changing a brief invalidates approvals and candidates. Never relax tests just to pass."
     )
     def project_draft(session_id: str, spec: dict, revision: int = 0) -> dict:
-        return call(engine.draft, session(session_id), spec, revision)
+        return call(engine.draft, session_id, spec, revision)
 
     @mcp.tool(
         description="Read durable project state, generated verification SQL, effective "
         "permissions, budgets and the next action. Revision protects against stale writes."
     )
     def project_status(session_id: str) -> dict:
-        return call(engine.status, session(session_id))
+        return call(engine.status, session_id)
 
     @mcp.tool(
         description="Submit a revised candidate DAG. Query nodes have one input and no "
@@ -43,14 +43,14 @@ def register(mcp, session, workspace, err):
         "Include diagnosis and addressed_checks for repairs. Invalidates earlier evidence."
     )
     def project_candidate(session_id: str, spec: dict, revision: int) -> dict:
-        return call(engine.submit_candidate, session(session_id), spec, revision)
+        return call(engine.submit_candidate, session_id, spec, revision)
 
     @mcp.tool(
         description="Execute generated full-relation join, grain, population and measure "
         "checks. Errors are unproven; failed checks carry repair guidance. Never supply a verdict."
     )
     def project_verify(session_id: str, revision: int) -> dict:
-        return call(engine.verify, session(session_id), revision)
+        return call(engine.verify, session_id, revision)
 
     @mcp.tool(
         description="Inspect bounded violating-row examples from a failed generated probe. "
@@ -58,49 +58,49 @@ def register(mcp, session, workspace, err):
         "acceptance checks; repair the candidate and rerun full project_verify."
     )
     def project_diagnose(session_id: str, check_id: str, max_rows: int = 20) -> dict:
-        return call(engine.diagnose, session(session_id), check_id, max_rows)
+        return call(engine.diagnose, session_id, check_id, max_rows)
 
     @mcp.tool(
         description="Record a critical review after passing verification. Answer every "
         "approved review question in order; cite fresh query IDs, issues and limitations."
     )
     def project_review(session_id: str, spec: dict, revision: int) -> dict:
-        return call(engine.record_review, session(session_id), spec, revision)
+        return call(engine.record_review, session_id, spec, revision)
 
     @mcp.tool(
         description="Update a working plan inside the approved brief. Completed steps "
         "require evidence; prerequisites must occur earlier. Does not change acceptance gates."
     )
     def project_plan(session_id: str, steps: list[dict], revision: int) -> dict:
-        return call(engine.plan, session(session_id), steps, revision)
+        return call(engine.plan, session_id, steps, revision)
 
     @mcp.tool(
         description="Finish a project under bounded autonomy after fresh passing checks, "
         "review and workflow checkpoints. Other approval levels require the human console."
     )
     def project_finish(session_id: str, revision: int) -> dict:
-        return call(engine.finish, session(session_id), revision)
+        return call(engine.finish, session_id, revision)
 
     @mcp.tool(
         description="Prepare exact CREATE SQL for a verified pipeline. Human approval "
         "and execution remain mandatory; existing objects are never replaced automatically."
     )
     def project_deployment(session_id: str, revision: int) -> dict:
-        return call(engine.deployment_package, session(session_id), revision)
+        return call(engine.deployment_package, session_id, revision)
 
     @mcp.tool(
         description="After the approved DDL is reported applied, test the actual deployed "
         "relation in a separate audit session within the approved destination scope."
     )
     def project_deployment_check(session_id: str, revision: int) -> dict:
-        return call(engine.deployment_check, session(session_id), revision)
+        return call(engine.deployment_check, session_id, revision)
 
     @mcp.tool(
         description="Complete deployed work after fresh passing deployment checks. "
         "Only bounded autonomy permits this agent action; otherwise human acceptance is required."
     )
     def project_accept_deployment(session_id: str, revision: int) -> dict:
-        return call(engine.accept_deployment, session(session_id), revision)
+        return call(engine.accept_deployment, session_id, revision)
 
     @mcp.tool(
         description="Pause or block a project with a specific reason. Resume and cancel "
@@ -109,7 +109,7 @@ def register(mcp, session, workspace, err):
     def project_pause(session_id: str, reason: str, revision: int, blocked: bool = False) -> dict:
         return call(
             engine.control,
-            session(session_id),
+            session_id,
             "block" if blocked else "pause",
             reason,
             revision,
@@ -124,7 +124,7 @@ def register(mcp, session, workspace, err):
     def project_revalidate(session_id: str, request_id: str, revision: int) -> dict:
         from grayson.projects.reuse import revalidate
 
-        return call(revalidate, session(session_id), request_id, revision)
+        return call(revalidate, session_id, request_id, revision)
 
     @mcp.tool(
         description="Propose a passed project criterion as a regression check. Human "
@@ -133,7 +133,7 @@ def register(mcp, session, workspace, err):
     def project_promote(session_id: str, criterion_id: str, check_id: str) -> dict:
         from grayson.projects.reuse import propose_regression
 
-        return call(propose_regression, session(session_id), criterion_id, check_id)
+        return call(propose_regression, session_id, criterion_id, check_id)
 
     @mcp.tool(
         description="Prepare a reusable workflow recipe with a historical example. "
@@ -142,4 +142,4 @@ def register(mcp, session, workspace, err):
     def project_recipe(session_id: str, name: str) -> dict:
         from grayson.projects.reuse import recipe
 
-        return call(recipe, session(session_id), name)
+        return call(recipe, session_id, name)

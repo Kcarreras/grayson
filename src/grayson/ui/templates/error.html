@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>grayson — {{ title }}</title>
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+<main class="error-page">
+  <div class="eyebrow">grayson · {{ status }}</div>
+  <h1>{{ title }}</h1>
+  {% if needs_access %}
+  <p class="lede">Open the console link printed by <code>grayson ui serve</code> in your terminal. Restarting the console creates a new access link.</p>
+  {% else %}
+  <p class="lede">{{ detail }}</p>
+  <p class="muted">{% if status == 404 %}The link may be outdated, or the item may have been removed.{% else %}Return to the previous page to review your input and try again.{% endif %}</p>
+  <div class="row"><button class="btn secondary" type="button" id="error-back">Go back</button><a class="btn primary" href="/">Go to sessions</a></div>
+  <script>document.getElementById('error-back').addEventListener('click', function () { if (history.length > 1) history.back(); else location.assign('/'); });</script>
+  {% endif %}
+</main>
+</body>
+</html>
