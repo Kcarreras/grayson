@@ -1,6 +1,7 @@
 """Recovery and input contracts across the three public surfaces."""
 
 import json
+from html import unescape
 
 import pytest
 from fastapi.testclient import TestClient
@@ -154,6 +155,22 @@ def test_authenticated_stale_link_can_recover_to_sessions(workspace, path):
     assert token not in page.text
     assert client.cookies.get("grayson_token") == token
     assert client.get("/", headers={"accept": "text/html"}).status_code == 200
+
+
+@pytest.mark.parametrize("token", [None, "private-access-token"])
+def test_authorized_browser_sees_permission_denial_reason(workspace, token):
+    client = TestClient(build_app(workspace, token=token), base_url="http://127.0.0.1")
+    path = "/workflows/table-health/edit" + (f"?t={token}" if token else "")
+    page = client.get(path, headers={"accept": "text/html"})
+    api = client.get("/workflows/table-health/edit")
+    assert page.status_code == api.status_code == 403
+    assert api.json()["detail"] in unescape(page.text)
+    assert "Action not available" in page.text
+    assert "grayson ui serve" not in page.text
+    assert 'href="/"' in page.text
+    if token:
+        assert token not in page.text
+        assert client.cookies.get("grayson_token") == token
 
 
 @pytest.mark.parametrize(

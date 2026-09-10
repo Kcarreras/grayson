@@ -10,7 +10,7 @@
 <main class="error-page">
   <div class="eyebrow">grayson · {{ status }}</div>
   <h1>{{ title }}</h1>
-  {% if status == 403 %}
+  {% if needs_access %}
   <p class="lede">Open the console link printed by <code>grayson ui serve</code> in your terminal. Restarting the console creates a new access link.</p>
   {% else %}
   <p class="lede">{{ detail }}</p>

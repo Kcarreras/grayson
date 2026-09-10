@@ -81,7 +81,18 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             from fastapi.exception_handlers import http_exception_handler
 
             return await http_exception_handler(request, exc)
-        titles = {403: "Console access needed", 404: "Page not found", 409: "This item changed"}
+        try:
+            _check(request)
+        except HTTPException:
+            authenticated = False
+        else:
+            authenticated = True
+        needs_access = exc.status_code == 403 and not authenticated
+        titles = {
+            403: "Console access needed" if needs_access else "Action not available",
+            404: "Page not found",
+            409: "This item changed",
+        }
         response = templates.TemplateResponse(
             request,
             "error.html",
@@ -89,17 +100,14 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
                 "status": exc.status_code,
                 "title": titles.get(exc.status_code, "Could not complete this action"),
                 "detail": exc.detail,
+                "needs_access": needs_access,
             },
             status_code=exc.status_code,
             headers=exc.headers,
         )
         # An authenticated stale deep link may be the browser's first visit.
         # Keep recovery links tokenless, but authenticate their next navigation.
-        try:
-            _check(request)
-        except HTTPException:
-            pass
-        else:
+        if authenticated:
             _set_cookie(response)
         return response
 
