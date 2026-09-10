@@ -82,7 +82,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
 
             return await http_exception_handler(request, exc)
         titles = {403: "Console access needed", 404: "Page not found", 409: "This item changed"}
-        return templates.TemplateResponse(
+        response = templates.TemplateResponse(
             request,
             "error.html",
             {
@@ -93,6 +93,15 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             status_code=exc.status_code,
             headers=exc.headers,
         )
+        # An authenticated stale deep link may be the browser's first visit.
+        # Keep recovery links tokenless, but authenticate their next navigation.
+        try:
+            _check(request)
+        except HTTPException:
+            pass
+        else:
+            _set_cookie(response)
+        return response
 
     def _valid(supplied: str | None) -> bool:
         return bool(supplied) and secrets.compare_digest(supplied, token)

@@ -145,6 +145,31 @@ def test_browser_errors_offer_recovery_and_preserve_api_errors(workspace):
     assert client.get("/no-such-page").json() == {"detail": "Not Found"}
 
 
+@pytest.mark.parametrize("path", ["/no-such-page", "/session/missing-session"])
+def test_authenticated_stale_link_can_recover_to_sessions(workspace, path):
+    token = "private-access-token"
+    client = TestClient(build_app(workspace, token=token), base_url="http://127.0.0.1")
+    page = client.get(f"{path}?t={token}", headers={"accept": "text/html"})
+    assert page.status_code == 404
+    assert token not in page.text
+    assert client.cookies.get("grayson_token") == token
+    assert client.get("/", headers={"accept": "text/html"}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("host", "supplied"),
+    [("127.0.0.1", "wrong-token"), ("untrusted.example", "private-access-token")],
+)
+def test_error_recovery_does_not_authenticate_invalid_requests(workspace, host, supplied):
+    client = TestClient(
+        build_app(workspace, token="private-access-token"), base_url=f"http://{host}"
+    )
+    page = client.get(f"/no-such-page?t={supplied}", headers={"accept": "text/html"})
+    assert page.status_code == 404
+    assert "set-cookie" not in page.headers
+    assert client.get("/").status_code == 403
+
+
 @pytest.mark.parametrize(
     ("workflow", "label"),
     [("goal-analysis", "ANALYSIS PROJECT"), ("pipeline-development", "PIPELINE PROJECT")],
