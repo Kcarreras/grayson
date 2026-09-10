@@ -4,6 +4,30 @@ Harness setup, the session loop, profiling, charts, reports, and the guard
 settings that bound it all. For what the rails guarantee and their limits:
 [SPEC.md](SPEC.md), [SECURITY.md](SECURITY.md).
 
+## Navigating the console and command line
+
+Use **Go to…** (`Ctrl K` or `Cmd K`) to find a page or section. Press `/` to
+focus the current page's list search. Filter choices in the same category add
+matches: selecting both **executed** and **rejected** shows either status.
+Different categories narrow the results. **Clear filters** restores the list.
+Attention and evidence links reveal their destination even if it was filtered
+out. Proposal folds remember your choice across live updates.
+
+Live updates pause for unsaved edits, keyboard review, open dialogs, and selected
+text. **Pause** keeps the page still until **Resume**. If the console has restarted
+and an old link no longer works, open the new link printed by `grayson ui serve`.
+
+CLI commands that accept `--json` also accept a UTF-8 `--file` or piped JSON.
+Use one input source; payloads for findings, proposals, intervention requests,
+and knowledge profiles must be JSON objects. Empty input, unreadable files, and
+invalid JSON produce a JSON error on stderr with a nonzero exit code. UTF-8
+files with a byte-order mark, as saved by some Windows editors, are supported.
+Success-criteria, comparison, and project specification files also accept YAML.
+
+`latest`, `last`, and `.` select the newest session in CLI and MCP calls. When
+working on several sessions, list them with `grayson session list` or MCP
+`session_list` and retain the exact ID returned when starting each one.
+
 ## Choosing how fixes are delivered
 
 Use **Fix delivery** on the session page to choose **Update a local file**,

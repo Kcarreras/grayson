@@ -4,9 +4,9 @@
 def register(mcp, session, workspace, err):
     from grayson.core import criteria
 
-    def call(fn, *args):
+    def call(fn, session_id, *args):
         try:
-            return fn(*args)
+            return fn(session(session_id), *args)
         except (ValueError, OSError, KeyError) as e:
             return err(e)
 
@@ -22,7 +22,7 @@ def register(mcp, session, workspace, err):
         "console before fix approval. This tool never expands scope, approves or applies a fix."
     )
     def criteria_set(session_id: str, pid: str, spec: dict) -> dict:
-        return call(criteria.set_criteria, session(session_id), pid, spec)
+        return call(criteria.set_criteria, session_id, pid, spec)
 
     @mcp.tool(
         description="Find executed baseline queries for success criteria. Returns sessions "
@@ -33,27 +33,32 @@ def register(mcp, session, workspace, err):
     def criteria_queries(
         session_id: str, source_session: str = "", search: str = "", offset: int = 0
     ) -> dict:
-        s = session(session_id)
-        result = call(criteria.query_choices, s, source_session, search, offset)
-        return {**result, "sessions": criteria.query_sessions(s)}
+        try:
+            s = session(session_id)
+            return {
+                **criteria.query_choices(s, source_session, search, offset),
+                "sessions": criteria.query_sessions(s),
+            }
+        except (ValueError, OSError, KeyError) as e:
+            return err(e)
 
     @mcp.tool(description="Read the fix's exact SQL, baseline, success criteria and approval.")
     def criteria_show(session_id: str, pid: str) -> dict:
-        return call(criteria.contract, session(session_id), pid) or {}
+        return call(criteria.contract, session_id, pid) or {}
 
     @mcp.tool(
         description="After the approved fix is marked applied, rerun every criterion "
         "through the guard. Grayson computes pass/fail/unproven; no verdict is supplied."
     )
     def criteria_run(session_id: str, pid: str) -> dict:
-        return call(criteria.run_verification, session(session_id), pid)
+        return call(criteria.run_verification, session_id, pid)
 
     @mcp.tool(
         description="Propose a regression check using a passed success criterion's exact "
         "SQL and expectation. The person reviews activation in CLI/console."
     )
     def criteria_promote(session_id: str, pid: str, criterion_id: str, check_id: str) -> dict:
-        return call(criteria.promote, session(session_id), pid, criterion_id, check_id)
+        return call(criteria.promote, session_id, pid, criterion_id, check_id)
 
     from grayson.knowledge import impact
 
@@ -65,25 +70,25 @@ def register(mcp, session, workspace, err):
     def impact_plan(
         session_id: str, changed_tables: list[str] | None = None, freshness_days: int = 7
     ) -> dict:
-        return call(impact.build_plan, session(session_id), changed_tables, freshness_days)
+        return call(impact.build_plan, session_id, changed_tables, freshness_days)
 
     @mcp.tool(description="Read the saved, versioned investigation plan.")
     def impact_show(session_id: str) -> dict:
-        return call(impact.show_plan, session(session_id))
+        return call(impact.show_plan, session_id)
 
     @mcp.tool(
         description="Launch the reviewed impact plan as a new strict-scope investigation. "
         "Pass its digest. The harness reasons over the plan using session_brief."
     )
     def impact_launch(session_id: str, digest: str) -> dict:
-        return call(impact.launch, session(session_id), digest)
+        return call(impact.launch, session_id, digest)
 
     @mcp.tool(
         description="Replay the exact approved checks selected in this session's impact "
         "plan. Refuses changed definitions and respects ordinary guard and budget limits."
     )
     def impact_run_checks(session_id: str) -> dict:
-        return call(impact.run_plan_checks, session(session_id))
+        return call(impact.run_plan_checks, session_id)
 
     from grayson.core import comparisons
 
@@ -96,15 +101,15 @@ def register(mcp, session, workspace, err):
         "are immutable; use a new id for changes. This only previews SQL; it runs no queries."
     )
     def comparison_create(session_id: str, spec: dict) -> dict:
-        return call(comparisons.create, session(session_id), spec)
+        return call(comparisons.create, session_id, spec)
 
     @mcp.tool(description="List saved comparison contracts in this session.")
     def comparison_list(session_id: str) -> list[dict] | dict:
-        return call(comparisons.inventory, session(session_id))
+        return call(comparisons.inventory, session_id)
 
     @mcp.tool(description="Read the exact mappings, filters, tolerances, connections and SQL.")
     def comparison_show(session_id: str, comparison_id: str) -> dict:
-        return call(comparisons.show, session(session_id), comparison_id)
+        return call(comparisons.show, session_id, comparison_id)
 
     @mcp.tool(
         description="Run a declared comparison with fresh evidence in both environments. "
@@ -113,8 +118,8 @@ def register(mcp, session, workspace, err):
         "pass/fail/unproven and explicit incomplete coverage."
     )
     def comparison_run(session_id: str, comparison_id: str) -> dict:
-        return call(comparisons.run, session(session_id), comparison_id)
+        return call(comparisons.run, session_id, comparison_id)
 
     @mcp.tool(description="Read the latest comparison report, including evidence and timestamps.")
     def comparison_report(session_id: str, comparison_id: str) -> dict:
-        return call(comparisons.latest_report, session(session_id), comparison_id)
+        return call(comparisons.latest_report, session_id, comparison_id)

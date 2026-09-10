@@ -1,6 +1,6 @@
 <h2 id="queries">Query log {{ help("guard") }}</h2>
 {% if queries %}
-{{ list_tools("queries", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first"), ("duration", "desc", "Slowest first"), ("rows", "desc", "Most rows")], [("executed", "executed"), ("rejected", "rejected"), ("error", "errors")], "Find a query, purpose, or worker…", false) }}
+{{ list_tools("queries", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first"), ("duration", "desc", "Slowest first"), ("rows", "desc", "Most rows")], [("executed", "executed", "state"), ("rejected", "rejected", "state"), ("error", "errors", "state")], "Find a query, purpose, or worker…", false) }}
 {% endif %}
 <div class="card scroll" style="max-height: 360px; overflow-y: auto;">
 <table>

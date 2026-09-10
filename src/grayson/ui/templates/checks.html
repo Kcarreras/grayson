@@ -14,7 +14,7 @@
 {% for e in regressions.errors %}<div class="small">{{ e.file }}: {{ e.error }}</div>{% endfor %}</div>
 {% endif %}
 {% if regressions.checks %}
-{{ list_tools("regression-library", [("name", "asc", "Name A–Z"), ("review", "asc", "Needs review first")], [("review", "needs review"), ("active", "active"), ("retired", "retired")], "Find a regression check or table…", false) }}
+{{ list_tools("regression-library", [("name", "asc", "Name A–Z"), ("review", "asc", "Needs review first")], [("review", "needs review", "state"), ("active", "active", "state"), ("retired", "retired", "state")], "Find a regression check or table…", false) }}
 <div class="card scroll"><table>
   <thead><tr><th>Regression</th><th>Expectation</th><th>Review</th><th>Tables</th></tr></thead>
   <tbody data-list="regression-library" data-noun="regression">{% for c in regressions.checks %}<tr data-item data-s-name="{{ c.name }}" data-s-review="{{ 1 if c.review_current else 2 if c.state == 'retired' else 0 }}" data-tags="{{ 'active' if c.review_current else 'retired' if c.state == 'retired' else 'review' }}">
@@ -112,9 +112,9 @@
   ("source", "asc", "Source"),
   ("tables", "asc", "Table"),
 ], [
-  ("fail", "failing"),
-  ("warn", "warning"),
-  ("pass", "passing"),
+  ("fail", "failing", "state"),
+  ("warn", "warning", "state"),
+  ("pass", "passing", "state"),
   ("overdue", "overdue"),
 ], "Filter by check, table, source…", false) }}
 {% endif %}

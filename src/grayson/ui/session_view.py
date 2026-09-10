@@ -23,12 +23,23 @@ def focus(summary, ready, interventions, proposals):
     failed = sum(
         p["status"] == "verification_failed" and not p.get("superseded_by") for p in proposals
     )
+
+    def proposal_target(status):
+        return next(
+            (
+                "proposal-" + p["pid"]
+                for p in proposals
+                if p["status"] == status and not p.get("superseded_by")
+            ),
+            "proposals",
+        )
+
     for count, label, target in (
         (questions, "questions to answer", "awaiting"),
         (pending, "findings to review", "findings"),
-        (proposed, "fix proposals to review", "proposals"),
-        (approved, "approved fixes awaiting application", "proposals"),
-        (failed, "fixes with failed verification", "proposals"),
+        (proposed, "fix proposals to review", proposal_target("proposed")),
+        (approved, "approved fixes awaiting application", proposal_target("approved")),
+        (failed, "fixes with failed verification", proposal_target("verification_failed")),
     ):
         if count:
             if count == 1:

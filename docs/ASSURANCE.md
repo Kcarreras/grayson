@@ -34,6 +34,9 @@ criteria:
 ```
 
 ```bash
+grayson criteria queries latest --search duplicate
+# Search earlier sessions on the same connection, if needed:
+grayson criteria queries latest --source-session all --search revenue
 grayson criteria set latest p_001 criteria.yaml
 grayson criteria show latest p_001
 grayson proposal approve latest p_001        # human terminal, or use console
@@ -70,7 +73,11 @@ Promotion copies a passed criterion's exact SQL and resolved expectation into
 a proposed regression check. Activation remains a separate human decision.
 The tolerance is not silently rebased to the most recent result.
 
-MCP twins: `criteria_set`, `criteria_show`, `criteria_run`, `criteria_promote`.
+`criteria queries` reads history without running SQL. Results include `session_id`
+and `qid`; use them as `source_session` and `source_qid` in the criteria file.
+Use `--offset` with the returned `next_offset` to read another page.
+
+MCP twins: `criteria_queries`, `criteria_set`, `criteria_show`, `criteria_run`, `criteria_promote`.
 Approval remains on the human CLI/console surface, as with existing fixes and
 regression checks. The old `proposal_verify` analytical verdict is refused for
 fixes carrying criteria. Existing fixes without criteria retain that API.

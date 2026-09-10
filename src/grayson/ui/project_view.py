@@ -81,6 +81,7 @@ def pipeline_graph(p):
 def build_context(session, error=None, section="build"):
     view = engine.status(session)
     p = view["project"]
+    project_workflow = checkpoints.workflow_for(session, session.workspace.workflows_dir).project
     proposal = session.proposal(p["deployment"]["pid"]) if p and p.get("deployment") else None
     history = []
     if p:
@@ -137,6 +138,7 @@ def build_context(session, error=None, section="build"):
     return {
         "nav": "sessions",
         "project_workflow": True,
+        "project_kind": project_workflow.kind if project_workflow else None,
         "s": session.summary(),
         "view": view,
         "p": p,

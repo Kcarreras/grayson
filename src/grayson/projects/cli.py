@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 
 import typer
-import yaml
+
+from grayson.cli_input import read_spec, read_text
 
 
 def register(app, session, emit, fail, require_interactive, default_actor):
@@ -21,10 +22,10 @@ def register(app, session, emit, fail, require_interactive, default_actor):
         except (ValueError, OSError, KeyError) as e:
             fail(str(e))
 
-    def read(file):
+    def read(file, *, expected=dict):
         try:
-            return yaml.safe_load(file.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as e:
+            return read_spec(file, expected=expected)
+        except ValueError as e:
             fail(str(e))
 
     @group.command("schema")
@@ -73,7 +74,7 @@ def register(app, session, emit, fail, require_interactive, default_actor):
 
     @group.command("plan")
     def plan(session_id: str, file: Path, revision: int):
-        call(engine.plan, session(session_id), read(file), revision)
+        call(engine.plan, session(session_id), read(file, expected=list), revision)
 
     @group.command("finish")
     def finish(session_id: str, revision: int):
@@ -109,7 +110,7 @@ def register(app, session, emit, fail, require_interactive, default_actor):
         from grayson.projects.runner import watch as watch_project
 
         try:
-            argv = json.loads(provider_file.read_text(encoding="utf-8"))
+            argv = json.loads(read_text(provider_file))
             if watch:
                 emit(
                     watch_project(

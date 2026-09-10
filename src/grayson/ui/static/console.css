@@ -985,3 +985,5 @@ details.fold > summary { flex-wrap: wrap; }
   .wflink .line { left: 50%; right: auto; top: 0; bottom: 0; width: 1px; height: auto; }
   .wflink .gate { flex-direction: row; gap: 5px; }
 }
+/* Recovery pages are independent of authenticated navigation. */
+.error-page { width: min(640px, calc(100% - 40px)); margin: 12vh auto; padding: 24px 0; }

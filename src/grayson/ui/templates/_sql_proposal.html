@@ -1,6 +1,7 @@
+{% from "_macros.html" import proposal_status %}
 {% macro sql_proposal(p, s, token) -%}
 <section class="sql-proposal" aria-label="SQL to copy and run">
-  <div class="diff-heading"><strong>SQL to copy and run</strong><span class="badge {{ 'act' if p.status == 'approved' else 'plain' }}">{{ p.status | replace('_', ' ') }}</span></div>
+  <div class="diff-heading"><strong>SQL to copy and run</strong>{{ proposal_status(p.status) }}</div>
   {% if p.payload.run_target %}<p class="small">Run in <span class="mono">{{ p.payload.run_target }}</span></p>{% endif %}
   <p class="small muted">{% if p.status == 'proposed' %}Review and approve this SQL before running it in your own editor.{% elif p.status == 'approved' %}Copy the approved SQL, run it in your own editor, then confirm below.{% elif p.status in ['applied', 'verified', 'verification_failed'] %}Execution was reported outside Grayson. Verification results are recorded separately.{% else %}Historical SQL for reference.{% endif %} Grayson does not execute this SQL.</p>
   <div class="row sql-transfer">

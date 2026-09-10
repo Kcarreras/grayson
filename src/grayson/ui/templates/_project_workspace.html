@@ -10,11 +10,10 @@
 {% if section not in ['build', 'checks', 'brief', 'queries', 'history'] %}{% set section = 'build' %}{% endif %}
 <div class="project-workspace">
 <nav class="crumbs"><a href="/?t={{ token }}">Sessions</a><span>/</span><span>{{ s.title or s.id }}</span></nav>
-<div class="pagehead"><div><div class="overline">{{ 'PIPELINE PROJECT' if not p or p.contract.kind == 'pipeline' else 'ANALYSIS PROJECT' }}</div>
+<div class="pagehead"><div><div class="overline">{{ 'PIPELINE PROJECT' if project_kind == 'pipeline' else 'ANALYSIS PROJECT' }}</div>
 <h1>{{ p.contract.goal if p else (s.title or 'Define your project') }}</h1>
 <p class="muted">{{ p.contract.deliverable if p else 'Start with your goal. Your agent will clarify the inputs and propose a brief for your approval.' }}</p></div>
-{% if p and p.phase not in ['complete','cancelled'] and not error %}<div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>{% endif %}</div>
-{% if error %}<div class="card attn" role="alert">{{ error }}</div>{% endif %}
+{% if s.stage != 'closed' and (not p or p.phase not in ['complete','cancelled']) and not error %}<div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>{% endif %}</div>
 <nav class="project-tabs" aria-label="Project views">
 {% for key,label in [('build','Build'),('checks','Checks'),('brief','Brief'),('queries','Query log'),('history','History')] %}
 <a href="/session/{{ s.id }}?t={{ token }}&view={{ key }}" {% if section == key %}aria-current="page"{% endif %}>{{ label }}{% if key == 'checks' and p and p.verification %}<span>{{ p.verification.results | selectattr('status','equalto','pass') | list | length }}/{{ p.verification.results | length }}</span>{% endif %}</a>{% endfor %}

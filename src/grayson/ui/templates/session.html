@@ -355,10 +355,10 @@
 {% if proposals %}
 <h2 id="proposals">Fix proposals {{ help("proposals") }}</h2>
 <p class="small muted">Review and approve a fix, then apply it to a local file or copy the SQL to run elsewhere. Approval does not apply or execute a change.</p>
-{{ list_tools("proposals", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first")], [("proposed", "Awaiting review"), ("approved", "Ready to apply"), ("history", "History")], "Find a proposal or file…") }}
+{{ list_tools("proposals", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first")], [("proposed", "Awaiting review", "state"), ("approved", "Ready to apply", "state"), ("history", "History", "state")], "Find a proposal or file…") }}
 <div data-list="proposals" data-noun="proposal">
 {% for p in proposals %}
-<details id="proposal-{{ p.pid }}" class="card proposal-card {{ 'attn' if p.status == 'proposed' }}" data-item data-s-id="{{ p.pid }}" data-tags="{{ p.status if p.status in ['proposed', 'approved'] else 'history' }}" {{ 'open' if p.status in ['proposed', 'approved'] }}>
+<details id="proposal-{{ p.pid }}" data-fold="proposal-{{ p.pid }}" class="card proposal-card {{ 'attn' if p.status == 'proposed' }}" data-item data-s-id="{{ p.pid }}" data-tags="{{ p.status if p.status in ['proposed', 'approved'] else 'history' }}" {{ 'open' if p.status in ['proposed', 'approved'] }}>
   <summary class="proposal-summary">
     <span class="otitle"><span class="mono muted">{{ p.pid }}</span> · {{ p.title }}</span>
     <span class="row proposal-badges">

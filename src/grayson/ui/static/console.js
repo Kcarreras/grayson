@@ -274,6 +274,7 @@ document.addEventListener("click", function (e) {
   function jump(id) {
     var el = id && document.getElementById(id);
     if (!el) return false;
+    el.dispatchEvent(new CustomEvent('grayson:reveal', {bubbles: true}));
     unfold(el);
     el.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
@@ -284,24 +285,30 @@ document.addEventListener("click", function (e) {
   document.addEventListener("click", function (e) {
     var a = e.target.closest && e.target.closest('a[href^="#"]');
     if (!a || a.getAttribute("href").length < 2) return;
-    if (jump(decodeURIComponent(a.getAttribute("href").slice(1)))) e.preventDefault();
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    var id;
+    try { id = decodeURIComponent(a.getAttribute("href").slice(1)); } catch (err) { return; }
+    if (jump(id)) e.preventDefault();
   });
-  if (location.hash.length > 1) {
-    var id = decodeURIComponent(location.hash.slice(1));
+  function followHash() {
+    if (location.hash.length < 2) return;
+    var id;
+    try { id = decodeURIComponent(location.hash.slice(1)); } catch (err) { return; }
     var el = document.getElementById(id);
     if (el) unfold(el);
     // Keep the hash until live-page scroll restoration has seen it. An explicit
     // evidence link takes priority over a position saved by an earlier refresh.
     requestAnimationFrame(function () {
-      jump(id);
-      if (history.replaceState) history.replaceState(null, "", location.pathname + location.search);
+      if (jump(id) && history.replaceState) history.replaceState(history.state, "", location.pathname + location.search);
     });
   }
+  window.addEventListener('hashchange', followHash);
+  followHash();
 })();
 
 /* Lists: a [data-list] container's [data-item] children sort by their
    data-s-<key> values (numeric when every value parses as a number), filter
-   by data-tags (every active chip must match) and by a text search over the
+   by data-tags (OR within a category, AND between categories) and a text search over the
    item, and fold together. Sortable table headers (th[data-sortkey]) drive
    the same order. State is remembered per list per page. */
 (function () {
@@ -363,9 +370,18 @@ document.addEventListener("click", function (e) {
     }
     function filter() {
       var needle = st.q.trim().toLowerCase(), shown = 0;
+      var groups = new Map();
+      chips.forEach(function (chip) {
+        if (st.tags.indexOf(chip.dataset.tag) < 0) return;
+        var group = chip.dataset.filterGroup || chip.dataset.tag;
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(chip.dataset.tag);
+      });
       items.forEach(function (it) {
         var tg = tagsOf(it);
-        var ok = st.tags.every(function (t) { return tg.indexOf(t) >= 0; }) &&
+        var ok = Array.from(groups.values()).every(function (tags) {
+          return tags.some(function (t) { return tg.indexOf(t) >= 0; });
+        }) &&
           (!needle || searchText.get(it).indexOf(needle) >= 0);
         it.hidden = !ok;
         if (ok) shown++;
@@ -431,6 +447,12 @@ document.addEventListener("click", function (e) {
     if (co) co.addEventListener("click", function () { foldAll(false); });
     if (reset) reset.addEventListener("click", function () {
       st.q = ""; st.tags = []; if (q) { q.value = ""; q.focus(); } apply();
+    });
+    list.addEventListener('grayson:reveal', function (event) {
+      var item = event.target.closest('[data-item]');
+      if (!item || !item.hidden) return;
+      st.q = ''; st.tags = []; if (q) q.value = ''; apply();
+      graysonToast('Filters cleared to show the linked item.');
     });
     apply(true);
   });
@@ -597,6 +619,8 @@ document.addEventListener("click", function (e) {
     if (document.querySelector('dialog[open]')) return 'Paused while reviewing';
     var el = document.activeElement;
     if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return 'Paused while editing';
+    if (el && el.closest('main') && el.matches(':focus-visible') &&
+        el.matches('button, a, summary, [tabindex="0"]')) return 'Paused while reviewing';
     if (window.getSelection().toString()) return 'Paused while selecting';
     if (graysonSubmitting) return 'Saving changes…';
     return '';

@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-import yaml
+
+from grayson.cli_input import read_spec
 
 
 def register(app, session, workspace, emit, fail):
@@ -28,10 +29,33 @@ def register(app, session, workspace, emit, fail):
     def criteria_set(session_id: str, pid: str, file: Path):
         """Attach a format-1 JSON/YAML criteria file to a pending fix."""
         try:
-            spec = yaml.safe_load(file.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as e:
+            spec = read_spec(file)
+        except ValueError as e:
             fail(str(e))
         call(criteria.set_criteria, session(session_id), pid, spec)
+
+    @group.command("queries")
+    def criteria_queries(
+        session_id: str,
+        source_session: str = "",
+        search: str = "",
+        offset: Annotated[int, typer.Option(min=0)] = 0,
+    ):
+        """Find executed baselines; --source-session all searches compatible sessions.
+
+        Use session_id and qid from a result as source_session and source_qid in
+        your criteria file. This reads history and executes no warehouse queries.
+        """
+        try:
+            s = session(session_id)
+            emit(
+                {
+                    **criteria.query_choices(s, source_session, search, offset),
+                    "sessions": criteria.query_sessions(s),
+                }
+            )
+        except (ValueError, OSError) as e:
+            fail(str(e))
 
     @group.command("show")
     def criteria_show(session_id: str, pid: str):
@@ -84,8 +108,8 @@ def register(app, session, workspace, emit, fail):
     def comparison_create(session_id: str, file: Path):
         """Save an immutable format-1 comparison contract from JSON/YAML."""
         try:
-            spec = yaml.safe_load(file.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as e:
+            spec = read_spec(file)
+        except ValueError as e:
             fail(str(e))
         call(comparisons.create, session(session_id), spec)
 
