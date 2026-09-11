@@ -2667,7 +2667,12 @@ def knowledge_set(
     file: Path = typer.Option(None, "--file", "-f", help="JSON file with profile fields."),
 ) -> None:
     """Set structured base-descriptor fields: grain, columns, relationships,
-    freshness, owners, open_questions (merged per-field).
+    freshness, owners, open_questions.
+
+    Columns merge by name: send only changed attributes. Omitted columns and
+    attributes are preserved; columns: [] leaves existing columns intact.
+    Use knowledge sync for warehouse schema changes. Other supplied fields
+    replace their current values.
 
     A relationship is {"to": "DB.SCHEMA.TABLE", "on": "THIS_COL = THAT_COL"
     (just "COL" when both sides share the name; comma-separate a composite key),

@@ -616,6 +616,7 @@ class KnowledgeStore:
 
     def set_profile(self, fqn: str, updates: dict[str, Any], by: str = "agent") -> dict:
         """Merge structured base-descriptor fields (grain, columns, ...) into the doc.
+        Columns are patched by name: omitted columns and attributes are kept.
         `by` is the actor kind stamped on any definition entries in `updates`."""
         allowed = {*PROFILE_KEYS, "definition_files", "definitions", "notes"}
         bad = set(updates) - allowed
@@ -636,12 +637,6 @@ class KnowledgeStore:
                 k: v for k, v in updates.items() if k not in ("definitions", "definition_files")
             }
             updates["definitions"] = _merge_definitions(kept, incoming)
-        if "columns" in updates:
-            cols = updates["columns"]
-            if not isinstance(cols, list) or not all(
-                isinstance(c, dict) and c.get("name") for c in cols
-            ):
-                raise ValueError("columns must be a list of objects, each with at least a 'name'")
         warnings: list[str] = []
         if "relationships" in updates:
             rels = updates["relationships"]
@@ -659,6 +654,8 @@ class KnowledgeStore:
             normalized, warnings = normalize_relationships(rels, fqn.upper())
             updates = {**updates, "relationships": normalized}
         doc = self.read(fqn)
+        if "columns" in updates:
+            updates = {**updates, "columns": _merge_columns(doc["columns"], updates["columns"])}
         doc.update(updates)
         self._write(fqn, doc)
         out = self.read(fqn)
@@ -1371,6 +1368,47 @@ def _strip_heading(body: str, table: str) -> str:
     if lines and lines[0].strip().lstrip("#").strip().upper() == table.upper():
         return (lines[1] if len(lines) > 1 else "").strip()
     return body.strip()
+
+
+def _merge_columns(current: list[dict], updates: object) -> list[dict]:
+    """Apply column patches without replacing the schema or omitted attributes.
+
+    Prefer exact names so case-distinct warehouse columns stay distinct. A
+    unique case-insensitive match accepts ordinary identifier casing changes.
+    Ambiguous or repeated targets fail before anything is written.
+    """
+    if not isinstance(updates, list) or not all(
+        isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()
+        for c in updates
+    ):
+        raise ValueError("columns must be a list of objects, each with a non-empty string 'name'")
+    exact: dict[str, list[int]] = {}
+    folded: dict[str, list[int]] = {}
+    for i, col in enumerate(current):
+        name = col["name"]
+        if isinstance(name, str):
+            exact.setdefault(name, []).append(i)
+            folded.setdefault(name.upper(), []).append(i)
+    merged = [dict(c) for c in current]
+    names: set[str] = set()
+    targets: set[int] = set()
+    for patch in updates:
+        name = patch["name"]
+        if name in names:
+            raise ValueError(f"duplicate column update for '{name}'")
+        names.add(name)
+        matches = exact.get(name) or folded.get(name.upper(), [])
+        if len(matches) > 1:
+            raise ValueError(f"ambiguous column name '{name}'; use the exact recorded name")
+        if matches:
+            i = matches[0]
+            if i in targets:
+                raise ValueError(f"duplicate column update for '{current[i]['name']}'")
+            targets.add(i)
+            merged[i] = {**current[i], **patch, "name": current[i]["name"]}
+        else:
+            merged.append(dict(patch))
+    return merged
 
 
 def _norm_columns(value: object) -> list[dict]:

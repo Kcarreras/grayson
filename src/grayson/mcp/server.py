@@ -1131,7 +1131,10 @@ def build_server(workspace: Workspace) -> Any:
     @mcp.tool(
         description="Set structured base-descriptor fields for a table: grain, columns "
         "(name/type/description), relationships, freshness, owners, open_questions. "
-        "Merged per-field; returns the doc plus completeness and `warnings` (shapes that "
+        "Columns merge by name: send only changed attributes; omitted columns and "
+        "attributes are preserved, and columns: [] leaves existing columns intact. "
+        "Use knowledge_sync for warehouse schema changes. Other supplied fields replace "
+        "their current values. Returns the doc plus completeness and `warnings` (shapes that "
         "had to be guessed or could not be read — fix them now, the schema map draws what "
         "you recorded). Each relationship is {to: 'DB.SCHEMA.TABLE', on: 'THIS_COL = "
         "THAT_COL' (just 'COL' when both sides share the name; comma-separate a composite "

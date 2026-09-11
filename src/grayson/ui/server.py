@@ -499,15 +499,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="column name is required")
 
         def write(store: KnowledgeStore) -> None:
-            doc = store.read(fqn)
-            columns = [dict(c) for c in doc.get("columns") or []]
-            for col in columns:
-                if str(col.get("name", "")).upper() == name.upper():
-                    col["description"] = description
-                    break
-            else:
-                columns.append({"name": name, "description": description})
-            store.set_profile(fqn, {"columns": columns})
+            store.set_profile(fqn, {"columns": [{"name": name, "description": description}]})
 
         return _knowledge_write(fqn, f"grayson knowledge: column {name} on {fqn.upper()}", write)
 

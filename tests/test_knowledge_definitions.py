@@ -372,14 +372,17 @@ def test_column_drift_states(ks):
     assert column_drift(ks.read(T), LIVE)["status"] == "unrecorded"
     ks.set_profile(T, {"columns": [{"name": "ID", "type": "NUMBER"}, {"name": "VAL"}]})
     assert column_drift(ks.read(T), LIVE)["status"] == "in_sync"
-    ks.set_profile(
+    # Seed a different recorded schema; set_profile patches columns and cannot
+    # remove VAL simply by omitting it from an update.
+    ks.save(
         T,
         {
+            **ks.read(T),
             "columns": [
                 {"name": "ID", "type": "number (38, 0)"},
                 {"name": "GONE", "type": "DATE"},
                 {"name": "OLD", "dropped": True},
-            ]
+            ],
         },
     )
     drift = column_drift(ks.read(T), LIVE)

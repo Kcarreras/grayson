@@ -628,16 +628,19 @@ def test_knowledge_page_descriptor_and_column_edits(client, workspace):
     from grayson.knowledge import KnowledgeStore
 
     ks = KnowledgeStore(workspace.knowledge_dir)
-    ks.set_profile("DB.S.T1", {"columns": [{"name": "ORDER_ID", "type": "NUMBER"}]})
+    amount = {"name": "AMOUNT", "type": "NUMBER(18,2)", "description": "Gross total"}
+    ks.set_profile("DB.S.T1", {"columns": [{"name": "ORDER_ID", "type": "NUMBER"}, amount]})
     r = client.post(
         f"/knowledge/DB.S.T1/column?t={TOKEN}",
-        data={"name": "ORDER_ID", "description": "primary key, one per order"},
+        data={"name": "order_id", "description": "primary key, one per order"},
         follow_redirects=False,
     )
     assert r.status_code in (302, 303)
     cols = ks.read("DB.S.T1")["columns"]
     assert cols[0]["description"] == "primary key, one per order"
     assert cols[0]["type"] == "NUMBER"  # untouched
+    assert cols[0]["name"] == "ORDER_ID"
+    assert cols[1] == amount
     r = client.post(
         f"/knowledge/DB.S.T1/descriptor?t={TOKEN}",
         data={"grain": "one row per order", "freshness": "hourly", "owners": "data-eng, kcg"},
