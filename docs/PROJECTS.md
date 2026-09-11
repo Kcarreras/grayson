@@ -17,6 +17,13 @@ its approval. The agent reads `project_schema`, writes a complete brief with
 Project workflows open directly into a project-specific session interface.
 There is no separate project nested inside a QA session.
 
+The **Workspace** view keeps analysis charts, the current proposal, verification,
+workflow checkpoints and the query log together. Charts have the same enlargement,
+plotted data and source-query links as standard sessions, including during discovery
+before the brief is submitted. **Brief & controls** holds the contract and human
+decisions; **Attempt history** compares revisions. Existing Checks and Query log
+links jump to their sections in the workspace.
+
 Review the definitions, baseline SQL, tolerances, source and output scope, join
 contracts and approval level there. Approving binds the exact brief, connection
 and workflow snapshot. Changing a brief invalidates its approval and starts a new

@@ -6,6 +6,21 @@ not need to initialize a new workspace, reseed a sandbox, or rebuild a library.
 
 ## Existing Grayson workspaces
 
+If Cursor is missing `project_schema` or `project_draft`, re-running harness init
+will not add tools to a running MCP process. Update the installed package using
+step 1, refresh existing instructions with `grayson harness update cursor --apply`,
+then restart Cursor and the console. A remote HTTP MCP server must be updated and
+restarted on its host.
+
+To investigate an installation mismatch, run `grayson project schema` and
+`grayson harness mcp status --harness cursor` in the affected workspace. Inspect
+the actual Grayson entry in `.cursor/mcp.json` (or the global MCP configuration):
+an absolute executable path, another virtual environment, or a remote URL can
+point to a different installation from the `grayson` command in your terminal.
+Harness status checks the project configuration; it does not inspect the running
+server or Cursor's cached tool list. Updating instructions does not change that
+entry. Keep your existing workspace and sessions.
+
 1. Stop running investigations and restart the console and harness MCP servers
    after updating the package. For an unpinned uv tool installation, run
    `grayson upgrade`. For a pinned tag, follow the reinstall instructions in

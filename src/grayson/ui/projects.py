@@ -7,7 +7,7 @@ from fastapi import HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 
-def register(app, workspace, templates, check, session, redirect):
+def register(app, workspace, templates, check, session, redirect, session_context):
     from grayson.core.engine import workflow_for
     from grayson.projects import engine
 
@@ -60,9 +60,7 @@ def register(app, workspace, templates, check, session, redirect):
             else:
                 raise ValueError("unknown project action")
         except (ValueError, OSError, KeyError, yaml.YAMLError) as e:
-            from grayson.ui.project_view import build_context
-
             return templates.TemplateResponse(
-                request, "project.html", build_context(s, str(e)), status_code=400
+                request, "project.html", session_context(s, str(e)), status_code=400
             )
         return redirect(f"/session/{sid}")

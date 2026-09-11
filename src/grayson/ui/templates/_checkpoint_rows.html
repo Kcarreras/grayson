@@ -20,6 +20,7 @@
       <div class="faint small" title="This checkpoint closes only with a chart of this kind, built from a cited query">needs chart: {{ c.requires_charts | join("; ") }}</div>
       {% endif %}{% endif %}</td>
   <td class="muted small">
+    {% if c.evidence_stale %}<p class="attn-text">Earlier proposal: this checkpoint needs fresh evidence.</p>{% endif %}
     {{ c.note or "" }}
     {% if c.status == "open" and s.stage != "closed" %}
     {# a check that genuinely does not apply gets an honest exit — otherwise the

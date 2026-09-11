@@ -1,43 +1,75 @@
 {% from "_macros.html" import query_status, list_tools %}
 {% from "_sql_proposal.html" import sql_proposal, external_applied %}
-{# Both entry points (session.html and project.html) extend base.html, which
-   renders the shared error alert above this content. Do not duplicate it here. #}
 {% macro qc(qid) -%}<a class="chip" href="/session/{{ s.id }}/query/{{ qid }}?t={{ token }}" title="{{ qsql.get(qid, '') }}">{{ qid }}</a>{%- endmacro %}
 {% macro action(name, label, digest="") -%}
 <form method="post" action="/session/{{ s.id }}/project/{{ name }}?t={{ token }}">
   <input type="hidden" name="revision" value="{{ p.revision }}"><input type="hidden" name="digest" value="{{ digest }}">
   <button class="btn" type="submit">{{ label }}</button>
 </form>{%- endmacro %}
-{% set section = request.query_params.get('view', 'build') %}
-{% if section not in ['build', 'checks', 'brief', 'queries', 'history'] %}{% set section = 'build' %}{% endif %}
+{% set section = project_section %}
+{% set open_iv = interventions | selectattr('status','equalto','open') | list %}
+{% set workspace_url = '/session/' ~ s.id ~ '?t=' ~ token %}
 <div class="project-workspace">
 <nav class="crumbs"><a href="/?t={{ token }}">Sessions</a><span>/</span><span>{{ s.title or s.id }}</span></nav>
-<div class="pagehead"><div><div class="overline">{{ 'PIPELINE PROJECT' if project_kind == 'pipeline' else 'ANALYSIS PROJECT' }}</div>
-<h1>{{ p.contract.goal if p else (s.title or 'Define your project') }}</h1>
-<p class="muted">{{ p.contract.deliverable if p else 'Start with your goal. Your agent will clarify the inputs and propose a brief for your approval.' }}</p></div>
-{% if s.stage != 'closed' and (not p or p.phase not in ['complete','cancelled']) and not error %}<div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>{% endif %}</div>
+<div class="pagehead">
+  <div><div class="overline">{{ 'PIPELINE PROJECT' if project_kind == 'pipeline' else 'ANALYSIS PROJECT' }}</div>
+    <h1>{{ s.title or (p.contract.goal if p else 'Define your project') }}</h1>
+    <p class="muted">{{ p.contract.deliverable if p else 'Clarify your goal with the agent, then review the brief it submits.' }}</p>
+  </div>
+  {% if s.stage != 'closed' and (not p or p.phase not in ['complete','cancelled']) and not error %}
+  <div class="live-control" data-live><span class="live-dot" aria-hidden="true"></span><span data-live-label>Live updates</span><button type="button">Pause</button></div>
+  {% endif %}
+</div>
+
+<div class="project-decision card" aria-label="Current project status">
+  <div><div class="overline">{{ p.phase | replace('_',' ') if p else 'Define the brief' }}</div>
+    <p class="project-next">{{ view.next_action if p else 'Your agent needs to submit a brief for your review.' }}</p>
+    {% if p and p.block_reason %}<p class="attn">{{ p.block_reason }}</p>{% endif %}
+    {% if p and p.completion %}<p class="muted small">{{ p.completion.label }}</p>{% endif %}
+    {% if not p %}<p class="muted small">Setup answers and discovery queries do not submit a project brief.</p>{% endif %}
+  </div>
+  <div class="project-primary-action">
+    {% if not p or p.phase == 'awaiting_brief' %}<a class="btn" href="{{ workspace_url }}&view=brief">{{ 'Review brief' if p else 'View brief setup' }}</a>
+    {% elif p.phase == 'candidate_review' %}{{ action('approve-candidate','Approve this candidate',p.candidate_digest) }}
+    {% elif p.phase == 'ready_for_review' %}{{ action('finish','Accept verified work') }}
+    {% elif p.phase == 'ready_for_deployment' %}{{ action('deployment','Prepare deployment SQL') }}
+    {% elif p.phase == 'awaiting_deployment' %}<a class="btn" href="{{ workspace_url }}#deployment">Review deployment SQL</a>
+    {% elif p.phase == 'deployment_review' %}{{ action('accept-deployment','Accept verified deployment') }}
+    {% elif p.phase == 'deployment_failed' %}{{ action('deployment-check','Recheck deployed output') }}
+    {% elif p.phase == 'verifying' and not p.lease %}{{ action('verify','Run verification') }}{% endif %}
+  </div>
+</div>
+
 <nav class="project-tabs" aria-label="Project views">
-{% for key,label in [('build','Build'),('checks','Checks'),('brief','Brief'),('queries','Query log'),('history','History')] %}
-<a href="/session/{{ s.id }}?t={{ token }}&view={{ key }}" {% if section == key %}aria-current="page"{% endif %}>{{ label }}{% if key == 'checks' and p and p.verification %}<span>{{ p.verification.results | selectattr('status','equalto','pass') | list | length }}/{{ p.verification.results | length }}</span>{% endif %}</a>{% endfor %}
+  {% for key,label in [('build','Workspace'),('brief','Brief & controls'),('history','Attempt history')] %}
+  <a href="{{ workspace_url }}&view={{ key }}" {% if section == key %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
 </nav>
+
 {% if section == 'build' %}
-{% if p %}
-<div class="project-decision card"><div><div class="overline">{{ p.phase | replace('_',' ') }}</div><p class="project-next">{{ view.next_action }}</p>
-{% if p.block_reason %}<p class="attn">{{ p.block_reason }}</p>{% endif %}
-{% if p.completion %}<p class="muted small">{{ p.completion.label }}</p>{% endif %}</div>
-<div class="project-primary-action">
-{% if p.phase == 'awaiting_brief' %}<a class="btn" href="/session/{{ s.id }}?t={{ token }}&view=brief">Review brief</a>
-{% elif p.phase == 'candidate_review' %}{{ action('approve-candidate','Approve this candidate',p.candidate_digest) }}
-{% elif p.phase == 'ready_for_review' %}{{ action('finish','Accept verified work') }}
-{% elif p.phase == 'ready_for_deployment' %}{{ action('deployment','Prepare deployment SQL') }}
-{% elif p.phase == 'awaiting_deployment' %}<a class="btn" href="#deployment">Review deployment SQL</a>
-{% elif p.phase == 'deployment_review' %}{{ action('accept-deployment','Accept verified deployment') }}
-{% elif p.phase == 'deployment_failed' %}{{ action('deployment-check','Recheck deployed output') }}
-{% elif p.phase == 'verifying' and not p.lease %}{{ action('verify','Run verification') }}{% endif %}</div></div>
-{% for i in interventions if i.status == 'open' %}<p class="card attn"><a href="/session/{{ s.id }}/intervention/{{ i.iid }}?t={{ token }}">Needs your input: {{ i.title }}</a></p>{% endfor %}
-<div class="project-summary"><span>Attempt <b>{{ p.iterations or '—' }}</b></span><span>{{ view.remaining.queries }} queries remaining</span><span>{{ view.effective_policy.approval | capitalize }} approvals</span>
-<a href="/session/{{ s.id }}?t={{ token }}&view=brief">Boundaries & controls</a></div>
-{% if p.candidate %}
+<div class="qa-summary" aria-label="Project progress">
+  <a href="#queries">{{ s.queries_executed }} {{ 'query' if s.queries_executed == 1 else 'queries' }} run</a>
+  <a href="#checkpoints">{{ checkpoints | selectattr('status','equalto','complete') | list | length }}/{{ checkpoints | length }} checkpoints complete{% if readiness.waived_checks %} · {{ readiness.waived_checks | length }} waived{% endif %}</a>
+  <a href="#verification">{% if p and p.verification %}{{ p.verification.results | selectattr('status','equalto','pass') | list | length }}/{{ p.verification.results | length }} checks pass{% if not view.evidence_current %} · stale evidence{% endif %}{% else %}No verification yet{% endif %}</a>
+  {% if p %}<span>{{ view.remaining.queries }} queries remaining · {{ view.effective_policy.approval | capitalize }} approvals</span>{% endif %}
+</div>
+<nav class="section-nav" aria-label="Project sections">
+  {% if open_iv %}<a href="#awaiting">Needs your input · {{ open_iv | length }}</a>{% endif %}
+  {% if charts %}<a href="#analysis">Analysis charts</a>{% endif %}
+  <a href="#proposal">Current proposal</a><a href="#verification">Verification</a><a href="#checkpoints">Checkpoints</a>
+  {% if deployment_proposal %}<a href="#deployment">Deployment proposal</a>{% endif %}<a href="#queries">Query log</a>
+</nav>
+
+{% if open_iv %}
+<h2 id="awaiting">Needs your input</h2>
+{% for i in open_iv %}<div class="card attn"><a href="/session/{{ s.id }}/intervention/{{ i.iid }}?t={{ token }}">{{ i.title }}</a>{% if i.prompt %}<p class="muted small">{{ i.prompt }}</p>{% endif %}</div>{% endfor %}
+{% endif %}
+
+{% if queries %}<p class="project-activity"><b>Latest query</b> {{ qc(queries[0].qid) }} {{ query_status(queries[0].status) }} <span>{{ queries[0].label or 'Inspect the query for its SQL and results.' }}</span></p>{% endif %}
+{% include "_analysis_charts.html" %}
+
+<h2 id="proposal">Current proposal{% if p and p.candidate %} <span class="h-count">attempt {{ p.iterations }}</span>{% endif %}</h2>
+{% if p and p.candidate %}
 <section class="card project-build"><div class="row split"><div><div class="overline">CURRENT PROPOSAL</div><h2>How the {{ 'pipeline' if p.contract.kind == 'pipeline' else 'analysis' }} is built</h2></div><span class="badge {{ 'ok' if p.verification and p.verification.verdict == 'pass' and view.evidence_current else 'attn' if p.verification else 'plain' }}">{{ 'Evidence stale' if p.verification and not view.evidence_current else 'Checks passed' if p.verification and p.verification.verdict == 'pass' else 'Checks failed' if p.verification and p.verification.verdict == 'fail' else 'Checks inconclusive' if p.verification else 'Not yet verified' }}</span></div>
 <p>{{ p.candidate.summary }}</p>
 <div class="pipeline-map" tabindex="0" aria-label="Scrollable pipeline diagram">
@@ -51,21 +83,27 @@
 {% for node in p.candidate.nodes %}<details class="fold" id="node-{{ node.id }}"><summary>{{ node.id }} <span class="muted small">{{ node.purpose }}</span></summary>{% for risk in p.risks if risk.node == node.id %}<p class="small attn">{{ risk.kind | replace("_", " ") }}: {{ risk.review }}</p>{% endfor %}
 {% if node.kind == 'query' %}<pre class="sql">{{ node.sql | sqlhl }}</pre>{% else %}{% for j in p.contract.joins if j.id == node.id %}<p>{{ j.left }} → {{ j.right }} · {{ j.how }} · {{ j.cardinality | replace('_',' ') }}</p><p>{{ j.semantics }}</p><p class="mono">{{ j.left_keys | join(', ') }} = {{ j.right_keys | join(', ') }}</p>{% endfor %}<pre>{% for name, expression in node.columns.items() %}{{ expression }} AS {{ name }}{{ '\n' }}{% endfor %}</pre>{% endif %}</details>{% endfor %}
 <details class="fold" id="candidate-sql"><summary>Complete proposed SQL</summary><pre class="sql">{{ p.candidate_sql | sqlhl }}</pre></details></section>
-<div class="two"><section class="card"><div class="overline">LATEST CHANGE</div><p>{{ p.candidate.diagnosis }}</p>
-{% if attempts %}<p class="small">{{ attempts[-1].resolved | length }} previously failing checks now pass.</p><a href="/session/{{ s.id }}?t={{ token }}&view=history">Compare attempts →</a>{% endif %}</section>
-<section class="card"><div class="overline">VERIFICATION</div>{% if p.verification %}<h3>{{ p.verification.results | selectattr('status','equalto','pass') | list | length }} of {{ p.verification.results | length }} checks pass</h3>
-{% if not view.evidence_current %}<p class="attn">Evidence is stale. Recheck before accepting.</p>{% endif %}{% for r in p.verification.results if r.status != 'pass' %}<p class="attn">{{ r.name }} · {{ r.status }}</p>{% endfor %}{% else %}<p>No verification yet.</p>{% endif %}<a href="/session/{{ s.id }}?t={{ token }}&view=checks">Inspect checks & evidence →</a></section></div>
-{% if p.review %}<details class="fold"><summary>Assessment and remaining uncertainty</summary><p>{{ p.review.summary }}</p><p><b>Limitations:</b> {{ p.review.limitations | join('; ') }}</p>{% for issue in p.review.issues %}<p class="attn">{{ issue }}</p>{% endfor %}<p class="muted small">Agent assessment; human acceptance is recorded separately.</p></details>{% endif %}
-{% else %}<div class="card"><h2>{{ 'Your brief is ready for review' if p.phase == 'awaiting_brief' else 'The build starts here' }}</h2><p>The proposed transformations, their dependencies and verification results will appear here as your agent develops the SQL.</p></div>{% endif %}
+<section class="project-change"><h3>What changed</h3><p>{{ p.candidate.diagnosis }}</p>
+{% if attempts %}<p class="small">{{ attempts[-1].resolved | length }} previously failing checks now pass. <a href="{{ workspace_url }}&view=history">Compare attempts →</a></p>{% endif %}</section>
+{% else %}
+<div class="card"><p>{{ 'The brief needs your approval before the agent can build a candidate.' if p and p.phase == 'awaiting_brief' else 'The proposed SQL and its dependencies will appear here when the agent submits a candidate.' if p else 'No proposal yet. Discovery charts, checkpoints, and queries remain visible while the agent prepares the brief.' }}</p></div>
+{% endif %}
+
+{% include "_project_checks.html" %}
+{% include "_checkpoints.html" %}
 {% if deployment_proposal %}<section class="card" id="deployment"><h2>Deployment proposal</h2><p>Destination: <span class="mono">{{ p.contract.deployment_target }}</span></p>{{ sql_proposal(deployment_proposal,s,token) }}
 {% if deployment_proposal.status == 'proposed' %}<form class="row" method="post" action="/session/{{ s.id }}/proposal/{{ deployment_proposal.pid }}/approve?t={{ token }}"><input type="hidden" name="digest" value="{{ deployment_proposal.review_digest }}"><button class="btn">Approve deployment SQL</button><span class="small muted">Approval does not execute SQL.</span></form>{% endif %}
 {{ external_applied(deployment_proposal,s,token) }}{% if deployment_proposal.status == 'applied' and p.phase not in ['complete','cancelled'] %}{{ action('deployment-check','Verify the deployed output') }}{% endif %}</section>{% endif %}
-{% if charts %}<h2>Output previews</h2><div class="two">{% for chart in charts %}<div class="card"><h3>{{ chart.spec.title }}</h3>{{ chart.svg }}</div>{% endfor %}</div>{% endif %}
-{% else %}<div class="card"><h2>From goal to proposed SQL</h2><p>Agree the population, business definitions, source tables and success checks with your agent. Review the resulting brief before the build begins.</p><a class="btn secondary" href="/session/{{ s.id }}?t={{ token }}&view=brief">View brief</a></div>{% endif %}
-{% elif section == 'brief' %}{% if p and p.phase == 'awaiting_brief' %}<div class="card"><h2>Review the proposed boundaries</h2><p>Check the definitions and baseline SQL below before granting the agent permission to build.</p>{{ action('approve','Approve this brief',p.contract_digest) }}</div>{% endif %}{% include "_project_brief.html" %}
-{% elif section == 'checks' %}{% include "_project_checks.html" %}
-{% elif section == 'queries' %}{% include "_query_log.html" %}
-{% elif section == 'history' %}<h2>How the proposal evolved</h2>
+{% include "_query_log.html" %}
+
+{% elif section == 'brief' %}
+{% if p and p.phase == 'awaiting_brief' %}
+<div class="card"><h2>Review the proposed boundaries</h2><p>Check the definitions and baseline SQL below before granting the agent permission to build.</p>{{ action('approve','Approve this brief',p.contract_digest) }}</div>
+{% endif %}
+{% if setup_inputs %}<details class="fold" data-fold="project-setup" open><summary>Recorded setup answers</summary><dl class="props">{% for key,value in setup_inputs.items() %}<dt>{{ key | replace('_',' ') }}</dt><dd>{{ value }}</dd>{% endfor %}</dl></details>{% endif %}
+{% include "_project_brief.html" %}
+{% elif section == 'history' %}
+<h2>How the proposal evolved</h2>
 {% if attempts %}<ol class="project-history">{% for h in attempts %}<li><div class="card"><div class="overline">ATTEMPT {{ h.number }} → {{ h.number + 1 }}</div><h3>{{ h.verification.verdict if h.verification else 'Unverified' }} → {{ h.resolved | length }} checks resolved</h3><p>{{ h.diagnosis }}</p>{% if h.resolved %}<p class="small">Now passing: {{ h.resolved_names | join('; ') }}</p>{% endif %}<details class="fold" {% if loop.last %}open{% endif %}><summary>SQL changes</summary><div class="diff-scroll"><table class="diff-table"><tbody>{% for line in h.diff_rows %}<tr class="diff-{{ line.kind }}"><td class="diff-code">{{ line.text }}</td></tr>{% endfor %}</tbody></table></div></details><details class="fold"><summary>Earlier verification results</summary>{% for r in (h.verification.results if h.verification else []) %}<p><span class="badge {{ 'ok' if r.status == 'pass' else 'attn' }}">{{ r.status }}</span> {{ r.name }} {% if r.qid %}{{ qc(r.qid) }}{% endif %}</p>{% endfor %}</details></div></li>{% endfor %}</ol>{% else %}<p class="muted">{{ 'This is the first proposal. Revisions and their evidence will appear here.' if p and p.candidate else 'No proposals yet.' }}</p>{% endif %}
 {% if p and p.plan %}<details class="fold"><summary>Working plan</summary>{% for step in p.plan %}<p><span class="badge plain">{{ step.status }}</span> {{ step.task }}</p>{% endfor %}</details>{% endif %}
 <a class="btn secondary" href="/session/{{ s.id }}/project/report?t={{ token }}">Download evidence</a>

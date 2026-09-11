@@ -1109,15 +1109,17 @@ def test_project_session_views_and_deployment_stay_in_one_workspace(project):
     build = client.get(f"/session/{s.id}?t=test").text
     assert 'class="pipeline-edge"' in build and 'href="#node-customers"' in build
     assert "Approve deployment SQL" in build and "SQL to copy and run" in build
-    assert "Workflow checkpoints" not in build and "Current customer region: baseline" not in build
+    assert 'id="checkpoints"' in build and 'id="verification"' in build
+    assert 'data-list="queries"' in build
+    assert "Current customer region: baseline" in build
     history = client.get(f"/session/{s.id}?t=test&view=history").text
     assert "SQL changes" in history and "right multiplicity" in history
     assert "ACTIVE" in history
     queries = client.get(f"/session/{s.id}?t=test&view=queries").text
-    assert 'data-list="queries"' in queries and 'id="deployment"' not in queries
+    assert 'data-list="queries"' in queries and 'id="deployment"' in queries
     qid = engine.state(s)["verification"]["results"][0]["qid"]
     query = client.get(f"/session/{s.id}/query/{qid}?t=test")
-    assert query.status_code == 200 and f"/session/{s.id}?t=test&amp;view=queries" in query.text
+    assert query.status_code == 200 and f"/session/{s.id}?t=test#queries" in query.text
     proposal = s.proposal(engine.state(s)["deployment"]["pid"])
     failed = client.post(
         f"/session/{s.id}/proposal/{proposal['pid']}/approve?t=test", data={"digest": "stale"}
@@ -1166,6 +1168,119 @@ def test_empty_project_session_uses_project_interface(project):
         assert page.status_code == 200 and 'aria-label="Project views"' in page.text
         assert 'id="findings"' not in page.text
     assert client.get(f"/session/{s.id}").status_code == 403
+
+
+@pytest.mark.parametrize("phase", ["discovery", "awaiting_brief", "building"])
+def test_project_charts_and_evidence_share_the_workspace(project, phase):
+    from fastapi.testclient import TestClient
+
+    from grayson.charts import add_chart
+    from grayson.ui.server import build_app
+
+    s, executor = project
+    qid = run_statement(
+        s, "SELECT ID, AMOUNT FROM DB.S.ORDERS", executor=executor, label="Inspect order amounts"
+    )["qid"]
+    chart = add_chart(s, qid, "bar", "ID", ["AMOUNT"], "Order amounts", note="Discovery evidence")
+    if phase == "awaiting_brief":
+        engine.draft(s, contract())
+    elif phase == "building":
+        approve(s)
+        submit(s, candidate(True))
+        verify(s, executor)
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{s.id}?t=test").text
+    for anchor in ("analysis", "proposal", "verification", "checkpoints", "queries"):
+        assert f'id="{anchor}"' in page
+        assert f'href="#{anchor}"' in page
+    assert f'data-chart="{chart["chart_id"]}"' in page
+    assert (
+        f'data-svg-url="/session/{s.id}/chart/{chart["chart_id"]}/svg?detail=1&amp;t=test"' in page
+    )
+    assert "Plotted data (3 rows)" in page and "Discovery evidence" in page
+    assert 'id="chart-lightbox"' in page and 'src="/static/charts.js"' in page
+    assert f"/session/{s.id}/query/{qid}?t=test" in page
+    assert "Inspect order amounts" in page
+    assert 'aria-label="Current project status"' in page
+    assert 'data-list="queries"' in page
+    if phase == "building":
+        assert 'class="pipeline-edge"' in page and "Order grain" in page
+    else:
+        assert 'class="pipeline-edge"' not in page
+    # Bookmarked sections now retain the proposal and other evidence around them.
+    for old_section, anchor in (("checks", "verification"), ("queries", "queries")):
+        response = client.get(f"/session/{s.id}?t=test&view={old_section}", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/session/{s.id}?t=test#{anchor}"
+    # Rejected actions use the same chart context, lightbox, and evidence components.
+    failure = client.post(
+        f"/session/{s.id}/project/approve?t=test", data={"revision": 999, "digest": "stale"}
+    )
+    assert failure.status_code == 400
+    assert f'data-chart="{chart["chart_id"]}"' in failure.text
+    assert 'id="chart-lightbox"' in failure.text
+    assert 'id="checkpoints"' in failure.text and 'data-list="queries"' in failure.text
+    assert "data-live" not in failure.text
+
+
+def test_project_workspace_marks_earlier_checkpoint_evidence_as_stale(project):
+    from fastapi.testclient import TestClient
+
+    from grayson.ui.server import build_app
+
+    s, executor = project
+    approve(s)
+    submit(s, candidate(True))
+    verify(s, executor)
+    review_and_checkpoints(s)
+    assert all(c["status"] == "complete" for c in s.checkpoints())
+    submit(s, candidate(False))
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{s.id}?t=test").text
+    assert "0/3 checkpoints complete" in page
+    assert page.count("Earlier proposal: this checkpoint needs fresh evidence.") == 3
+    assert 'id="settled-checkpoints"' not in page
+    # The UI labels historical evidence without rewriting the underlying record.
+    assert all(c["status"] == "complete" for c in s.checkpoints())
+
+
+def test_project_tools_are_discoverable_and_submit_briefs_over_stdio(project):
+    import asyncio
+    import json
+    import sys
+
+    from mcp import ClientSession, StdioServerParameters, stdio_client
+
+    s, _ = project
+
+    async def probe():
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-c", "from grayson.cli import main; main()", "mcp", "serve"],
+            cwd=str(s.workspace.root),
+        )
+        async with (
+            stdio_client(params) as (read, write),
+            ClientSession(read, write, read_timeout_seconds=20) as client,
+        ):
+            initialized = await client.initialize()
+            assert "project_schema" in initialized.instructions
+            assert "project_draft" in initialized.instructions
+            listed = await client.list_tools()
+            names = {t.name for t in listed.tools}
+            assert {"project_schema", "project_draft"} <= names
+            assert not {"project_approve", "project_approve_candidate"} & names
+            schema = await client.call_tool("project_schema", {})
+            assert not schema.is_error and "contract" in json.loads(schema.content[0].text)
+            result = await client.call_tool(
+                "project_draft", {"session_id": s.id, "spec": contract()}
+            )
+            assert not result.is_error
+            saved = json.loads(result.content[0].text)["project"]
+            assert saved["phase"] == "awaiting_brief"
+            assert not saved["approved_digest"]
+
+    asyncio.run(probe())
 
 
 def test_mcp_surface_has_no_approval_tools(project):

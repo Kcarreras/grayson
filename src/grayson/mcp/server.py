@@ -39,6 +39,12 @@ from grayson.workspace import Workspace
 
 INSTRUCTIONS = """\
 grayson provides guarded, evidence-tracked QA over SQL tables (Snowflake).
+For pipeline-development and goal-analysis workflows, use the project tools:
+read project_schema, then submit the complete brief with project_draft for human
+approval in the console's Brief view. session_start inputs record setup answers;
+they do not submit a brief. project_status and session_brief report saved progress.
+After brief approval, use project_candidate, project_verify and project_review.
+If your client defers tools, discover these exact names before reporting them missing.
 Session tools accept an exact session_id, or latest/last/. for the newest session.
 Use session_list to discover IDs and keep an exact ID when working on concurrent sessions.
 Protocol: check knowledge and cached data first, start a session for a workflow,

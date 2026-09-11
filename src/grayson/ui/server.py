@@ -1996,11 +1996,18 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     @app.get("/session/{sid}", response_class=HTMLResponse)
     def session_detail(request: Request, sid: str) -> Any:
         _check(request)
+        s = _session(sid)
         section = request.query_params.get("view", "build")
+        if (
+            section in {"checks", "queries"}
+            and engine.workflow_for(s, workspace.workflows_dir).project is not None
+        ):
+            anchor = "verification" if section == "checks" else "queries"
+            return _redirect(f"/session/{sid}#{anchor}")
         if section not in {"build", "checks", "brief", "queries", "history"}:
             section = "build"
         return templates.TemplateResponse(
-            request, "session.html", _session_context(_session(sid), section=section)
+            request, "session.html", _session_context(s, section=section)
         )
 
     @app.get("/session/{sid}/query/{qid}", response_class=HTMLResponse)
@@ -2367,7 +2374,7 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     register(app, workspace, templates, _check, _session, _redirect)
     from grayson.ui.projects import register as register_projects
 
-    register_projects(app, workspace, templates, _check, _session, _redirect)
+    register_projects(app, workspace, templates, _check, _session, _redirect, _session_context)
     return app
 
 
