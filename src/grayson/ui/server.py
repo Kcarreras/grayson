@@ -29,6 +29,7 @@ from grayson.core.session import STAGES, Session
 from grayson.interventions import validate_response
 from grayson.interventions.types import InterventionError
 from grayson.knowledge import KnowledgeDocError, KnowledgeStore, completeness
+from grayson.knowledge.store import search_doc
 from grayson.records import (
     delete_session_records,
     deletion_verdict,
@@ -263,32 +264,41 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
     @app.get("/knowledge", response_class=HTMLResponse)
     def knowledge_list(request: Request, q: str = "") -> Any:
         _check(request)
+        q = q.strip()
         store = KnowledgeStore(workspace.knowledge_dir)
         all_tables = store.all_tables()
-        fact_hits = [h for h in store.search(q) if h.get("fact_id")] if q else []
-        if q:
-            ql = q.lower()
-            hit_tables = {h["source"] for h in fact_hits}
-            all_tables = [t for t in all_tables if ql in t.lower() or t in hit_tables]
         from grayson.knowledge import StandingContext, annotate_doc
         from grayson.library import effective_policy
 
         policy = effective_policy(workspace)
         ctx = StandingContext.build(workspace.records_dir, policy)
         rows = []
+        docs = {}
+        search_hits = []
         for fqn in all_tables:
             try:
                 doc = store.read(fqn)
-            except KnowledgeDocError as e:
+            except (ValueError, OSError) as e:
                 # a broken doc is a card with the parse error, never a 500 —
                 # the whole point is telling the user which file to fix
-                rows.append({"table": fqn, "grain": None, "completeness": None, "error": str(e)})
+                if not q or q.casefold() in fqn.casefold():
+                    rows.append(
+                        {"table": fqn, "grain": None, "completeness": None, "error": str(e)}
+                    )
                 continue
+            # The path is the navigation authority, even after a hand-moved file.
+            docs[fqn] = {**doc, "table": fqn}
+            doc = docs[fqn]
             annotated = annotate_doc(doc, ctx)
+            hits = search_doc(annotated, q)
+            if q and not hits:
+                continue
+            search_hits.extend(hits)
             rows.append(
                 {
                     "table": fqn,
                     "grain": doc.get("grain"),
+                    "owners": doc.get("owners") or [],
                     "completeness": completeness(doc),
                     "standing": annotated["standing_counts"],
                     "contested": len(annotated["contested"]),
@@ -297,14 +307,14 @@ def build_app(workspace: Workspace, token: str | None = None) -> FastAPI:
             )
         # The map always shows the whole library, not the filtered subset: a
         # search narrows the list you are reading, not the schema you are in.
-        graph = relationship_graph(_library_docs(store))
+        graph = relationship_graph(docs)
         return templates.TemplateResponse(
             request,
             "knowledge.html",
             {
                 "nav": "knowledge",
                 "tables": rows,
-                "fact_hits": fact_hits,
+                "search_hits": search_hits,
                 "q": q,
                 "graph": graph,
             },

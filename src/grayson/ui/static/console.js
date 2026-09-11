@@ -327,7 +327,13 @@ document.addEventListener("click", function (e) {
     empty.textContent = "No matches. Try another search or clear the filters above.";
     var container = list.closest(".listwrap") || list.closest(".scroll") || list.closest("table") || list;
     container.insertAdjacentElement("afterend", empty);
-    var searchText = new Map(items.map(function (it) { return [it, it.textContent.toLowerCase()]; }));
+    var searchText = new Map(items.map(function (it) {
+      // Descriptions can live in editable inputs, outside textContent. Index
+      // their saved values once so filtering never hides a row mid-edit.
+      var values = Array.from(it.querySelectorAll('input:not([type="hidden"]), textarea'))
+        .map(function (input) { return input.defaultValue; }).join(' ');
+      return [it, (it.textContent + ' ' + values).toLowerCase()];
+    }));
     var table = list.closest("table");
     var heads = table ? Array.prototype.slice.call(table.querySelectorAll("th[data-sortkey]")) : [];
     var noun = list.dataset.noun || "item";
@@ -338,6 +344,10 @@ document.addEventListener("click", function (e) {
     st.tags = st.tags.filter(function (tag) { return chips.some(function (chip) { return chip.dataset.tag === tag; }); });
     if (typeof st.q !== "string") st.q = "";
     if (typeof st.sort !== "string") st.sort = sel ? sel.value : "";
+    if (sel && !Array.from(sel.options).some(function (option) { return option.value === st.sort; }) &&
+        !heads.some(function (head) {
+          return st.sort === head.dataset.sortkey + ':asc' || st.sort === head.dataset.sortkey + ':desc';
+        })) st.sort = sel.value;
     if (sel && !Array.from(sel.options).some(function (option) { return option.value === st.sort; })) {
       var extra = document.createElement("option");   /* set from a column header */
       extra.value = st.sort; extra.textContent = st.sort.replace(":", " "); extra.hidden = true;
@@ -389,7 +399,7 @@ document.addEventListener("click", function (e) {
       empty.hidden = shown !== 0;
       if (reset) reset.hidden = !st.q && !st.tags.length;
       if (count) {
-        var plural = noun === "query" ? "queries" : noun + "s";
+        var plural = noun === "query" ? "queries" : noun + (/(?:s|x|z|ch|sh)$/.test(noun) ? "es" : "s");
         var all = items.length + " " + (items.length === 1 ? noun : plural);
         count.textContent = shown === items.length ? all : shown + " of " + all;
       }

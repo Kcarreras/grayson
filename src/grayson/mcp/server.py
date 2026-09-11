@@ -1194,7 +1194,10 @@ def build_server(workspace: Workspace) -> Any:
         except ValueError as e:
             return _err(e)
 
-    @mcp.tool(description="Search the knowledge library for a term.")
+    @mcp.tool(
+        description="Search table names, columns, descriptions, definitions, questions, "
+        "notes, facts, and the glossary. Results identify the matching kind and source table."
+    )
     def knowledge_search(term: str) -> list[dict]:
         return KnowledgeStore(workspace.knowledge_dir).search(term)
 

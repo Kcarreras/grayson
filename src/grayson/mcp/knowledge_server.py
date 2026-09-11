@@ -89,7 +89,10 @@ def build_knowledge_server(library_root: Path) -> Any:
             "definition_snapshots": snapshots,
         }
 
-    @mcp.tool(description="Search the knowledge library (facts and glossary) for a term.")
+    @mcp.tool(
+        description="Search table names, columns, descriptions, definitions, questions, "
+        "notes, facts, and the glossary. Results identify the matching kind and source table."
+    )
     def knowledge_search(term: str) -> list[dict]:
         return KnowledgeStore(knowledge_dir).search(term)
 

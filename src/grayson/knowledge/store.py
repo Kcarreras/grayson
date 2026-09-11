@@ -855,34 +855,23 @@ class KnowledgeStore:
     # -- search ----------------------------------------------------------
 
     def search(self, term: str) -> list[dict]:
-        term_l = term.lower()
+        """Search readable table context and facts; malformed docs stay in lint's queue."""
+        term_l = term.strip().casefold()
         hits = []
-        if not self.dir.is_dir():
+        if not term_l or not self.dir.is_dir():
             return hits
-        for path in sorted(self.dir.rglob("*.md")):
-            if path.name == "glossary.md":
-                if term_l in path.read_text(encoding="utf-8").lower():
-                    hits.append({"source": "glossary", "match": path.name})
-                continue
+        for table in self.all_tables():
             try:
-                front, _ = _split_frontmatter(path.read_text(encoding="utf-8"))
-                data = yaml.safe_load(front) or {} if front else {}
-            except (yaml.YAMLError, OSError):
+                doc = self.read(table)
+            except (ValueError, OSError):
                 continue
-            table = data.get("table", path.stem)
-            for f in data.get("facts", []):
-                if (
-                    term_l in str(f.get("fact", "")).lower()
-                    or term_l in str(f.get("id", "")).lower()
-                ):
-                    hits.append(
-                        {
-                            "source": table,
-                            "fact_id": f.get("id"),
-                            "fact": f.get("fact"),
-                            "status": f.get("status"),
-                        }
-                    )
+            hits.extend(search_doc({**doc, "table": table}, term_l))
+        for path in sorted(self.dir.rglob("glossary.md")):
+            try:
+                if term_l in path.read_text(encoding="utf-8").casefold():
+                    hits.append({"source": "glossary", "match": path.name})
+            except (OSError, UnicodeError):
+                continue
         return hits
 
     # -- lint --------------------------------------------------------------
@@ -1114,6 +1103,54 @@ def upgrade_doc(doc: dict[str, Any]) -> dict[str, Any]:
         doc = step(doc)
         fmt = doc["format"] = fmt + 1
     return doc
+
+
+def search_doc(doc: dict[str, Any], term: str) -> list[dict]:
+    """Search semantic fields, never serialized YAML keys or provenance metadata.
+
+    Accepts a read or annotated doc so the console can attach computed standing
+    without rereading the library. Existing fact-result fields remain available.
+    """
+    needle = term.strip().casefold()
+    if not needle:
+        return []
+    hits = []
+    for fact in doc.get("facts") or []:
+        if any(needle in str(fact.get(k) or "").casefold() for k in ("fact", "id")):
+            hit = {
+                "source": doc["table"],
+                "kind": "fact",
+                "fact_id": fact["id"],
+                "fact": fact["fact"],
+                "status": fact["status"],
+            }
+            for key in ("standing", "standing_reason"):
+                if fact.get(key):
+                    hit[key] = fact[key]
+            hits.append(hit)
+
+    def add(kind: str, values: list, **context) -> None:
+        text = " · ".join(str(v) for v in values if v is not None and v != "")
+        if needle in text.casefold():
+            hits.append({"source": doc["table"], "kind": kind, "match": text, **context})
+
+    for key in ("table", "grain", "freshness", "notes"):
+        add(key, [doc.get(key)])
+    add("owners", doc.get("owners") or [])
+    for column in doc.get("columns") or []:
+        add(
+            "column",
+            [column.get(k) for k in ("name", "type", "description")],
+            column=column["name"],
+            dropped=bool(column.get("dropped")),
+        )
+    for relationship in doc.get("relationships") or []:
+        add("relationship", [relationship.get(k) for k in ("to", "on", "note")])
+    for definition in doc.get("definitions") or []:
+        add("definition", [definition.get(k) for k in ("path", "repo", "description")])
+    for question in doc.get("open_questions") or []:
+        add("question", [question])
+    return hits
 
 
 def completeness(doc: dict[str, Any]) -> dict[str, Any]:

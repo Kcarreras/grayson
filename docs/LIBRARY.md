@@ -91,6 +91,19 @@ The console's Knowledge tab adds a relationship canvas of the whole library
 (Cytoscape + ELK, vendored); each table page shows its completeness report,
 facts, and covering external checks.
 
+Search in the console, CLI (`knowledge search`), or MCP (`knowledge_search`)
+matches table names, grain, freshness, owners, column names/types/descriptions,
+relationships, definition pointers, open questions, notes, and fact text/ids.
+Search is case-insensitive and ignores surrounding whitespace. Results identify
+the matching kind; fact results retain their `fact_id`, `fact`, and `status`.
+Unreadable table documents are skipped by search and remain visible in the
+console's unfiltered table list and `library doctor`.
+
+Console matches link to the relevant section or exact column/fact, with computed
+standing beside fact status (including retired history). Each table page has
+section navigation and separate column and fact filters. Column search includes
+saved descriptions, and facts can be narrowed by standing and status together.
+
 ### Recording a relationship
 
 The schema map draws exactly what the descriptor says, so the shape matters.

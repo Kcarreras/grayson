@@ -102,10 +102,10 @@
    [data-list] container of the same id, whose [data-item] children carry
    data-s-<key> sort values and data-tags. State is remembered per page. #}
 {% macro list_tools(id, sorts, filters=[], placeholder="Filter this list…", foldable=true) -%}
-<div class="listtools" data-list-tools="{{ id }}">
+<div class="listtools" data-list-tools="{{ id }}" role="group" aria-label="{{ id | capitalize }} controls">
   <input type="search" class="lt-q" placeholder="{{ placeholder }}" aria-label="Filter {{ id }}" autocomplete="off">
   <label class="lt-sort"><span class="overline">Sort</span>
-    <select aria-label="Sort order">
+    <select aria-label="Sort {{ id }}">
       {% for s in sorts %}<option value="{{ s[0] }}:{{ s[1] }}">{{ s[2] }}</option>{% endfor %}
     </select></label>
   {% if filters %}
@@ -130,4 +130,12 @@
    past it (or breaking mid-word) #}
 {% macro fqn(name) -%}
 {% for seg in name.split(".") %}{% set outer = loop %}{% for part in seg.split("_") %}{{ part }}{% if not loop.last %}_<wbr>{% endif %}{% endfor %}{% if not outer.last %}.<wbr>{% endif %}{% endfor %}
+{%- endmacro %}
+
+{# Status and standing are separate: a confirmed fact can still be stale. #}
+{% macro fact_badges(fact) -%}
+{% if fact.standing and fact.standing != "current" %}
+<span class="badge {{ 'bad' if fact.standing == 'stale' else 'attn' if fact.standing == 'unverified' else 'plain' }}" title="{{ fact.standing_reason or '' }}">{{ fact.standing }}</span>
+{% endif %}
+<span class="badge {{ 'ok' if fact.status == 'user_confirmed' else 'act' if fact.status == 'data_inferred' else 'plain' }}">{{ fact.status | replace("_", " ") }}</span>
 {%- endmacro %}
