@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% from "_relgraph.html" import relgraph %}
-{% from "_macros.html" import check_status %}
+{% from "_macros.html" import check_status, list_tools, fact_badges %}
 {% block head %}{% include "_graph_assets.html" %}{% endblock %}
 {% block title %}grayson — {{ doc.table }}{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/knowledge?t={{ token }}">Knowledge</a><span class="sep">/</span>
   <span class="mono">{{ doc.table }}</span></nav>
-<div class="pagehead">
+<div class="pagehead" id="overview">
   <div class="titles">
     <div class="titlerow"><h1 class="mono">{{ doc.table }}</h1></div>
     {% if not comp.base_complete %}
@@ -15,10 +15,21 @@
   </div>
   <span class="actions">
     {% if comp.base_complete %}<span class="badge ok">base complete</span>
-    {% else %}<span class="badge plain">{{ comp.missing | length }} gaps</span>{% endif %}
+    {% else %}<span class="badge plain">{{ comp.missing | length }} gap{{ "s" if comp.missing | length != 1 }}</span>{% endif %}
     {{ help("base_descriptor") }}
   </span>
 </div>
+
+<nav class="section-nav" aria-label="Table sections">
+  <a href="#overview">Overview</a>
+  <a href="#definitions">Definitions <span class="h-count">{{ doc.definitions | length }}</span></a>
+  <a href="#relationships">Relationships</a>
+  {% if doc.columns %}<a href="#columns">Columns <span class="h-count">{{ doc.columns | length }}</span></a>{% endif %}
+  {% if contested %}<a href="#contested">Contested <span class="h-count">{{ contested | length }}</span></a>{% endif %}
+  <a href="#facts">Facts <span class="h-count">{{ live_facts | length }}</span></a>
+  {% if doc.open_questions %}<a href="#questions">Questions <span class="h-count">{{ doc.open_questions | length }}</span></a>{% endif %}
+  {% if doc.notes %}<a href="#notes">Notes</a>{% endif %}
+</nav>
 
 <div class="kv" style="margin: 12px 0;">
   {% if doc.grain %}<div class="item"><b>Grain</b> {{ doc.grain }}</div>{% endif %}
@@ -29,9 +40,9 @@
       <span class="muted small">via {{ doc.structure.source }}{% if doc.structure.evidence %} ({{ doc.structure.evidence | join(", ") }}){% endif %}</span></div>{% endif %}
 </div>
 
-<h2>Defined in {{ help("definitions") }}</h2>
+<h2 id="definitions">Defined in {{ help("definitions") }}</h2>
 {% if doc.definitions %}
-<div class="card scroll">
+<div class="card scroll knowledge-definitions">
 <table>
 <tr><th>Where</th><th>What</th><th>Recorded</th><th>Hash</th></tr>
 {% for d in doc.definitions %}
@@ -98,10 +109,10 @@
 </details>
 
 {% if graph %}
-<h2>Relationships</h2>
+<h2 id="relationships">Relationships</h2>
 {{ relgraph(graph, token, "relgraph-table", 440) }}
 {% else %}
-<h2>Relationships</h2>
+<h2 id="relationships">Relationships</h2>
 <div class="card empty">No relationships mapped yet.</div>
 {% endif %}
 
@@ -123,19 +134,26 @@
 {% endif %}
 
 {% if doc.columns %}
-<h2>Columns ({{ comp.columns_described }}/{{ comp.columns_total }} described)</h2>
+<h2 id="columns">Columns <span class="h-count">{{ comp.columns_described }}/{{ comp.columns_total }} described</span></h2>
+{{ list_tools("columns", [("order", "asc", "Recorded order"), ("name", "asc", "Name A–Z")], [
+  ("missing", "needs description", "description"), ("described", "described", "description"),
+  ("active", "active", "state"), ("dropped", "dropped", "state")
+], "Filter column names, types, descriptions…", false) }}
 <div class="card scroll">
 <table>
-<tr><th>Column</th><th>Type</th><th>Description</th><th></th></tr>
+<thead><tr><th scope="col" data-sortkey="name">Column</th><th scope="col">Type</th><th scope="col">Description</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+<tbody data-list="columns" data-noun="column">
 {% for c in doc.columns %}
-<tr>
+<tr id="column-{{ c.name }}" data-item data-s-name="{{ c.name }}" data-s-order="{{ loop.index }}"
+    data-tags="{{ 'described' if c.description else 'missing' }} {{ 'dropped' if c.dropped else 'active' }}">
   <td class="mono">{{ c.name }}{% if c.dropped %} <span class="badge attn" title="Recorded here, but the warehouse no longer has it">dropped</span>{% endif %}</td>
   <td class="muted mono small">{{ c.type or "" }}{% if c.nullable is sameas false %} <span class="faint">not null</span>{% endif %}</td>
   <td><input form="col-{{ loop.index }}" name="description" value="{{ c.description or '' }}"
-        placeholder="not described yet" style="width: 100%; min-width: 220px;"></td>
-  <td><button form="col-{{ loop.index }}" class="btn secondary sm" type="submit">Save</button></td>
+        placeholder="not described yet" aria-label="Description for {{ c.name }}" style="width: 100%; min-width: 220px;"></td>
+  <td><button form="col-{{ loop.index }}" class="btn secondary sm" type="submit" aria-label="Save description for {{ c.name }}">Save</button></td>
 </tr>
 {% endfor %}
+</tbody>
 </table>
 </div>
 {% for c in doc.columns %}
@@ -146,7 +164,7 @@
 {% endif %}
 
 {% if contested %}
-<h2>Contested {{ help("contested") }} <span class="h-count">{{ contested | length }}</span></h2>
+<h2 id="contested">Contested {{ help("contested") }} <span class="h-count">{{ contested | length }}</span></h2>
 {% for c in contested %}
 <div class="card attn" data-contested>
   <div class="ink2 small">{{ c.why }}</div>
@@ -175,7 +193,7 @@
 {% endfor %}
 {% endif %}
 
-<h2>Facts {{ help("fact_status") }} {{ help("fact_standing") }}
+<h2 id="facts">Facts {{ help("fact_status") }} {{ help("fact_standing") }}
   {% if doc.standing_counts %}<span class="h-count">{{ live_facts | length }} live{% if retired_facts %} · {{ retired_facts | length }} retired{% endif %}</span>{% endif %}</h2>
 {% if not doc.facts %}<div class="card empty">No facts recorded yet.</div>{% endif %}
 {% set unverified_n = live_facts | selectattr("standing", "equalto", "unverified") | list | length %}
@@ -187,14 +205,20 @@
   </form>
 </div>
 {% endif %}
+{% if live_facts %}
+{{ list_tools("facts", [("order", "asc", "Recorded order"), ("date", "desc", "Newest first")], [
+  ("current", "current", "standing"), ("unverified", "unverified", "standing"), ("stale", "stale", "standing"),
+  ("user_confirmed", "confirmed", "status"), ("data_inferred", "data inferred", "status"), ("proposed", "proposed", "status")
+], "Filter facts and evidence…", false) }}
+<div data-list="facts" data-noun="fact">
 {% for f in live_facts %}
-<div class="card{% if f.standing == 'stale' %} attn{% endif %}" data-fact="{{ f.id }}" data-standing="{{ f.standing }}">
+<div id="fact-{{ f.id }}" class="card{% if f.standing == 'stale' %} attn{% endif %}" data-item
+     data-tags="{{ f.standing }} {{ f.status }}" data-s-order="{{ loop.index }}" data-s-date="{{ f.created_at }}"
+     data-fact="{{ f.id }}" data-standing="{{ f.standing }}">
   <div class="row split">
     <span class="ink" style="font-size: var(--t-md);">{{ f.fact }}</span>
     <span class="row" style="gap: 6px; align-items: center;">
-      {% if f.standing == "unverified" %}<span class="badge attn" title="{{ f.standing_reason }}">unverified</span>
-      {% elif f.standing == "stale" %}<span class="badge bad" title="{{ f.standing_reason }}">stale</span>{% endif %}
-      <span class="badge {{ 'ok' if f.status == 'user_confirmed' else 'act' if f.status == 'data_inferred' else 'plain' }}">{{ f.status | replace("_", " ") }}</span>
+      {{ fact_badges(f) }}
       {% if f.status != "user_confirmed" %}
       <form class="inline" method="post"
             action="/knowledge/{{ doc.table }}/fact/{{ f.id }}/confirm?t={{ token }}">
@@ -236,10 +260,12 @@
   </details>
 </div>
 {% endfor %}
+</div>
+{% endif %}
 
 <form class="row" method="post" action="/knowledge/{{ doc.table }}/fact?t={{ token }}"
       style="gap: 6px; margin: 8px 0 0;">
-  <input name="fact" placeholder="add a fact (recorded as user-confirmed)"
+  <input name="fact" placeholder="add a fact (recorded as user-confirmed)" required
          style="width: auto; flex: 1 1 320px;">
   <button class="btn secondary sm" type="submit">Add fact</button>
 </form>
@@ -248,7 +274,7 @@
 <details class="fold" style="margin: 12px 0;" data-retired>
   <summary class="muted small">Retired ({{ retired_facts | length }}) — history, out of briefings</summary>
   {% for f in retired_facts %}
-  <div class="card" style="margin-top: 6px;" data-fact="{{ f.id }}" data-standing="retired">
+  <div id="fact-{{ f.id }}" class="card" style="margin-top: 6px;" data-fact="{{ f.id }}" data-standing="retired">
     <div class="row split">
       <span class="ink2">{{ f.fact }}</span>
       <span class="row" style="gap: 6px; align-items: center;">
@@ -281,7 +307,7 @@
 {% endif %}
 
 {% if doc.open_questions %}
-<h2>Open questions {{ help("open_questions") }}</h2>
+<h2 id="questions">Open questions {{ help("open_questions") }}</h2>
 <div class="card">
 {% for oq in doc.open_questions %}
   <form class="row" method="post" action="/knowledge/{{ doc.table }}/question?t={{ token }}"
@@ -315,7 +341,7 @@
 {% endif %}
 
 {% if doc.notes %}
-<h2>Notes</h2>
-<div class="card ink2">{{ doc.notes }}</div>
+<h2 id="notes">Notes</h2>
+<div class="card ink2 knowledge-notes">{{ doc.notes }}</div>
 {% endif %}
 {% endblock %}

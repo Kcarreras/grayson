@@ -253,7 +253,7 @@ a.tile::after { content: "↓"; position: absolute; top: 10px; right: 12px;
 a.tile:hover::after, a.tile:focus-visible::after { opacity: 1; }
 /* the landing spot of an in-page jump: clear of the sticky header, and lit
    for a moment so the eye finds it */
-h2[id], details[id], .card[id] { scroll-margin-top: 66px; }
+h2[id], details[id], .card[id], .pagehead[id], tr[id] { scroll-margin-top: 66px; }
 .spot { animation: spot 1.6s ease-out; border-radius: var(--radius); }
 @keyframes spot {
   0%, 40% { outline: 2px solid var(--act); outline-offset: 6px; }
@@ -838,6 +838,15 @@ legend { padding: 0 8px; font-size: 14px; font-weight: 650; }
 .listwrap { max-height: none; overflow: visible; overscroll-behavior: auto; }
 .listwrap.scroll { overflow: auto; }
 .listwrap::after { display: none; }
+.knowledge-matches { display: grid; gap: 10px; }
+.knowledge-match { margin: 0; min-width: 0; }
+.knowledge-match .row { align-items: baseline; }
+.knowledge-match a { overflow-wrap: anywhere; }
+.knowledge-excerpt { margin: 10px 0 0; line-height: 1.65; overflow-wrap: anywhere;
+  white-space: pre-wrap; max-height: 10em; overflow-y: auto; }
+.knowledge-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
+.knowledge-definitions table { min-width: 640px; }
+.knowledge-definitions td:first-child { min-width: 220px; }
 .fchip { font-size: 12px; padding: 5px 9px; min-height: 30px; }
 .fchip.on { color: var(--act); border-color: var(--act); }
 .lt-n { font-variant-numeric: tabular-nums; }

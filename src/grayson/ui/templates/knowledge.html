@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_relgraph.html" import relgraph %}
-{% from "_macros.html" import list_tools, fqn %}
+{% from "_macros.html" import list_tools, fqn, fact_badges %}
 {% block head %}{% if graph %}{% include "_graph_assets.html" %}{% endif %}{% endblock %}
 {% block title %}grayson — knowledge{% endblock %}
 {% block content %}
@@ -9,20 +9,28 @@
 
 <form class="searchrow" method="get" action="/knowledge">
   <input type="hidden" name="t" value="{{ token }}">
-  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search tables and facts…" aria-label="Search the knowledge library">
+  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search tables, columns, facts, and context…" aria-label="Search the knowledge library">
   <button class="btn secondary sm" type="submit">Search</button>
   {% if q %}<a class="btn ghost sm" href="/knowledge?t={{ token }}">Clear</a>{% endif %}
 </form>
 
-{% if q and fact_hits %}
-<h2>Matching facts</h2>
-<div class="card">
-{% for h in fact_hits %}
-  <div class="row" style="margin: 4px 0;">
-    <a class="mono small" href="/knowledge/{{ h.source }}?t={{ token }}">{{ h.source }}</a>
-    <span class="badge {{ 'ok' if h.status == 'user_confirmed' else 'plain' }}">{{ h.status | replace("_", " ") }}</span>
-    <span class="ink2 small">{{ h.fact }}</span>
-  </div>
+{% if q and search_hits %}
+<h2 id="search-results">Matching knowledge <span class="h-count">{{ search_hits | length }} match{{ "es" if search_hits | length != 1 }} · {{ tables | length }} table{{ "s" if tables | length != 1 }}</span></h2>
+{{ list_tools("matches", [("order", "asc", "Table order")], [
+  ("fact", "facts", "kind"), ("column", "columns", "kind"),
+  ("context", "table context", "kind")
+], "Filter these matches…", false) }}
+<div data-list="matches" data-noun="match" class="knowledge-matches">
+{% for h in search_hits %}
+  {% set anchor = 'fact-' ~ h.fact_id if h.kind == 'fact' else 'column-' ~ h.column if h.kind == 'column' else {'table': 'overview', 'grain': 'overview', 'freshness': 'overview', 'owners': 'overview', 'relationship': 'relationships', 'definition': 'definitions', 'question': 'questions', 'notes': 'notes'}.get(h.kind, 'overview') %}
+  <article class="card knowledge-match" data-item data-tags="{{ h.kind if h.kind in ['fact', 'column'] else 'context' }}" data-s-order="{{ loop.index }}">
+    <div class="row split">
+      <a class="mono small" href="/knowledge/{{ h.source }}?t={{ token }}#{{ anchor | urlencode }}">{{ h.source }}{% if h.column %} · {{ h.column }}{% endif %}</a>
+      <span class="row">{% if h.kind == 'fact' %}{{ fact_badges(h) }}{% else %}<span class="badge plain">{{ h.kind }}</span>{% endif %}{% if h.dropped %}<span class="badge attn">dropped</span>{% endif %}</span>
+    </div>
+    <p class="knowledge-excerpt">{{ h.fact if h.kind == 'fact' else h.match }}</p>
+    {% if h.standing_reason %}<p class="small muted">{{ h.standing_reason }}</p>{% endif %}
+  </article>
 {% endfor %}
 </div>
 {% endif %}
@@ -72,7 +80,7 @@
 {% for t in tables %}
 {% if t.error %}
 <details class="card foldcard attn" data-item data-fold="{{ t.table }}"
-  data-tags="error" data-s-name="{{ t.table }}" data-s-open="0" data-s-gaps="99" data-s-facts="0">
+  data-tags="error" data-s-name="{{ t.table }}" data-s-open="0" data-s-gaps="99" data-s-facts="0" data-s-attention="999">
   <summary class="chartsum">
     <span class="name"><span class="c-caret">▸</span>
       <b class="mono">{{ fqn(t.table) }}</b></span>
@@ -109,6 +117,7 @@
     </span>
   </summary>
   <div class="ink2 small" style="margin: 8px 0 2px;">{{ t.grain or "grain not declared" }}</div>
+  {% if t.owners %}<div class="muted small">Owners: {{ t.owners | join(", ") }}</div>{% endif %}
   <div class="row mt-2">
     {% if c.columns_total %}
       <span class="badge plain">{{ c.columns_described }}/{{ c.columns_total }} columns described</span>{% endif %}
