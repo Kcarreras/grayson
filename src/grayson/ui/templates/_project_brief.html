@@ -1,5 +1,5 @@
 {% if p %}
-<h2>The approved boundaries</h2>
+<h2>{{ 'The approved boundaries' if p.approved_digest == p.contract_digest else 'The proposed boundaries' }}</h2>
 <div class="two">
  <div class="card"><h3>Meaning and population</h3><dl>
   {% for name, meaning in p.contract.semantics.items() %}<dt><b>{{ name }}</b></dt><dd>{{ meaning }}<br><span class="muted small">{% if name in p.contract.human_semantic_review %}Human semantic review required{% else %}Verified by: {{ p.contract.semantic_checks[name] | join(', ') }}{% endif %}</span></dd>{% endfor %}</dl>

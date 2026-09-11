@@ -5,6 +5,7 @@ import difflib
 import sqlglot
 
 from grayson.core import engine as checkpoints
+from grayson.core.file_fixes import review_digest
 from grayson.projects import engine
 from grayson.projects.models import Candidate, Contract
 from grayson.projects.sql import compile_candidate, sources
@@ -79,10 +80,20 @@ def pipeline_graph(p):
 
 
 def build_context(session, error=None, section="build"):
+    if section not in {"build", "brief", "history"}:
+        section = "build"
     view = engine.status(session)
     p = view["project"]
     project_workflow = checkpoints.workflow_for(session, session.workspace.workflows_dir).project
     proposal = session.proposal(p["deployment"]["pid"]) if p and p.get("deployment") else None
+    proposals = [
+        review_proposal(session, item)
+        for item in session.proposals()
+        if not proposal or item["pid"] != proposal["pid"]
+    ]
+    revisions = {item["payload"].get("supersedes"): item["pid"] for item in proposals}
+    for item in proposals:
+        item["superseded_by"] = revisions.get(item["pid"])
     history = []
     if p:
         versions = [*p["history"], {"candidate": p["candidate"], "verification": p["verification"]}]
@@ -135,21 +146,38 @@ def build_context(session, error=None, section="build"):
     import yaml
 
     queries = session.query_log(100)
+    ready = checkpoints.readiness(session, session.workspace.workflows_dir)
+    checkpoint_rows = checkpoints.checkpoints_view(session, session.workspace.workflows_dir)
+    for row in checkpoint_rows:
+        if row["key"] in ready["open_checks"] and row["status"] in {"complete", "waived"}:
+            row["status"] = "open"
+            row["evidence_stale"] = True
+    ready["waived_checks"] = [
+        row for row in ready["waived_checks"] if row["key"] not in ready["open_checks"]
+    ]
     return {
         "nav": "sessions",
         "project_workflow": True,
+        "project_section": section,
         "project_kind": project_workflow.kind if project_workflow else None,
         "s": session.summary(),
+        "setup_inputs": session.setup_inputs(),
         "view": view,
         "p": p,
         "error": error,
         "deployment_proposal": review_proposal(session, proposal) if proposal else None,
+        "proposals": proposals,
+        "file_fix_digests": {
+            item["pid"]: review_digest(item)
+            for item in proposals
+            if item["payload"].get("file_change")
+        },
         "draft_yaml": yaml.safe_dump(p["contract"], sort_keys=False) if p else "",
         "interventions": session.interventions(),
         "graph": pipeline_graph(p) if section == "build" else {},
         "attempts": history,
         "queries": queries,
         "qsql": {q["qid"]: q.get("sql_raw") or "" for q in queries},
-        "checkpoints": checkpoints.checkpoints_view(session, session.workspace.workflows_dir),
-        "readiness": checkpoints.readiness(session, session.workspace.workflows_dir),
+        "checkpoints": checkpoint_rows,
+        "readiness": ready,
     }

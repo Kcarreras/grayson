@@ -10,12 +10,21 @@ keep their current lifecycle and permissions.
 
 Ask your agent to start a project workflow with explicit source tables and strict
 scope. It should interview you about grain, population, business definitions,
-exclusions, time windows, the intended result and operational limits. Scoped
-discovery can happen before a brief is drafted. Once drafted, execution waits for
-its approval. The agent reads `project_schema`, writes a complete brief with
+exclusions, time windows, the intended result and operational limits. Brief approval
+is a hard gate from session creation: queries (including metadata and cached-data
+analysis), candidate work and fix drafts wait for human approval. The agent uses
+existing knowledge to prepare the brief, reads `project_schema`, writes it with
 `project_draft`, and directs you to the session's **Brief** view for approval.
 Project workflows open directly into a project-specific session interface.
 There is no separate project nested inside a QA session.
+
+The **Workspace** view keeps analysis charts, the current candidate, fix proposals,
+verification, workflow checkpoints and the query log together. Charts have the same enlargement,
+plotted data and source-query links as standard sessions. File fixes and SQL snippets
+use the same review, approval and application controls as standard sessions; existing
+evidence stays visible when the brief needs revision. **Brief & controls** holds the
+contract and human decisions; **Attempt history** compares revisions. Existing Checks and Query log
+links jump to their sections in the workspace.
 
 Review the definitions, baseline SQL, tolerances, source and output scope, join
 contracts and approval level there. Approving binds the exact brief, connection

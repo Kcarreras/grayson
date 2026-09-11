@@ -194,6 +194,11 @@ def snapshot_metadata(session: Session, executor: Executor | None = None) -> dic
     warehouse (`knowledge_drift`). Targets nobody has described yet are not
     described here — that is a knowledge gap, reported as one, and an
     unrequested statement per table is not free."""
+    from grayson.projects.engine import query_blocker
+
+    blocked = query_blocker(session)
+    if blocked:
+        return {"status": "skipped", "rule": "project", "reason": blocked}
     sql = metadata_query(session.targets)
     if sql is None:
         return {"status": "skipped", "reason": "no fully-qualified targets"}
@@ -306,6 +311,11 @@ def cache_find(
     matches = session.cache.find(tables=tables)
     current: dict[str, str] = {}
     if check_freshness and matches:
+        from grayson.projects.engine import query_blocker
+
+        blocked = query_blocker(session)
+        if blocked:
+            raise ValueError(blocked)
         source_tables = sorted({t for m in matches for t in m.get("source_tables", [])})
         current = fetch_last_altered(
             session.connection, session.workspace.root, source_tables, executor

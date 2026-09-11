@@ -1,0 +1,24 @@
+<details class="section" id="checkpoints" data-fold="checkpoints" open>
+<summary><h2>Checkpoints {{ help("checkpoints") }}
+  <span class="h-count">{{ checkpoints | selectattr("status","equalto","complete") | list | length }} of {{ checkpoints | length }} complete{% if readiness.waived_checks %}, {{ readiness.waived_checks | length }} waived{% endif %}</span></h2></summary>
+{% set outstanding_checks = checkpoints | rejectattr('status','in',['complete','waived']) | list %}
+{% set settled_checks = checkpoints | selectattr('status','in',['complete','waived']) | list %}
+{% if outstanding_checks %}<div class="card scroll"><table>
+<tr><th>Check</th><th>Status</th><th>Evidence {{ help("evidence") }}</th><th>Note</th></tr>
+{% with checkpoint_rows = outstanding_checks %}{% include "_checkpoint_rows.html" %}{% endwith %}
+</table></div>{% elif checkpoints %}<p class="muted small">Every required checkpoint is complete or explicitly waived.</p>{% else %}<p class="muted">No checkpoints.</p>{% endif %}
+{% if settled_checks %}<details class="fold" id="settled-checkpoints" data-fold="qa-settled-checkpoints"><summary>{{ settled_checks | length }} completed or waived checkpoints · evidence and notes</summary>
+<div class="scroll"><table><tr><th>Check</th><th>Status</th><th>Evidence</th><th>Note</th></tr>
+{% with checkpoint_rows = settled_checks %}{% include "_checkpoint_rows.html" %}{% endwith %}
+</table></div></details>{% endif %}
+
+{% set open_suggested = readiness.suggested_checks | rejectattr("done") | list %}
+{% if open_suggested and s.stage != "closed" %}
+<div class="card" style="margin-top: 10px;">
+  <div class="overline mb-2">Suggested {{ help("suggested_checks") }}</div>
+  <div class="row" style="gap: 6px; flex-wrap: wrap;">
+    {% for c in open_suggested %}<span class="badge plain checkpoint-label" tabindex="0" title="{{ c.description | trim or 'No description provided in this workflow.' }}">{{ c.title }}</span>{% endfor %}
+  </div>
+</div>
+{% endif %}
+</details>

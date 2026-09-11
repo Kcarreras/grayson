@@ -7,6 +7,12 @@
 .project-tabs span { font-size: var(--t-sm); margin-left: 8px; }
 .project-decision { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-left: 3px solid var(--act); }
 .project-next { font-weight: 600; margin: 6px 0; }
+.project-workspace .qa-summary { flex-wrap: wrap; }
+.project-activity { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  padding: 12px 0; color: var(--muted); font-size: var(--t-sm); }
+.project-activity span { overflow-wrap: anywhere; }
+.project-change { border-left: 2px solid var(--border); padding: 0 18px; margin: 20px 0; }
+.project-change h3 { margin-bottom: 6px; }
 .project-primary-action { flex-shrink: 0; }
 .project-summary { display: flex; flex-wrap: wrap; gap: 22px; color: var(--muted); font-size: var(--t-sm); margin: 16px 0 24px; }
 .project-summary a { margin-left: auto; }

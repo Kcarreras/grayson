@@ -82,6 +82,7 @@ try {
 </dialog>
 <div class="toast" id="ui-toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/console.js"></script>
+{% if charts %}{% include "_chart_lightbox.html" %}<script src="/static/charts.js"></script>{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>
