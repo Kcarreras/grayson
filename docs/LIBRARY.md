@@ -56,6 +56,23 @@ or `grayson knowledge confirm`). Structured base descriptors (grain, columns,
 relationships, freshness, owners) live beside free-form facts; each table's
 completeness report shows what is still undescribed.
 
+`grayson knowledge set` (MCP: `knowledge_set`) merges columns by name. Send
+only the columns and attributes you want to change, for example
+`{"columns": [{"name": "AMOUNT", "description": "Gross amount before refunds"}]}`.
+Existing types, nullability, other attributes, and unmentioned columns stay
+intact; new columns are appended, and `"columns": []` leaves the list intact.
+Names match exactly first, then without case when there is a unique match;
+ambiguous matches are rejected. To add a quoted identifier such as `LABEL`
+alongside an existing `label`, pass `exact_column_names: true` to the MCP tool
+or use the CLI's `--exact-column-names` flag. Pass the actual column names
+without SQL quotes; exact matching keeps the two identifiers distinct.
+Explicit attribute values replace that
+attribute, so `"description": ""` clears a description. Other supplied profile
+fields replace their current values. Use `knowledge sync` (`knowledge_sync`)
+to reconcile columns with the warehouse, including dropped columns. This
+preservation behavior requires no library migration; it cannot recover
+columns already lost to an older version's replacement behavior.
+
 The table page is editable where a human is the authority: write facts
 directly (recorded user-confirmed — you *are* the confirmation), fill in
 column descriptions and the grain/freshness/owners descriptor, and answer

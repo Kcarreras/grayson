@@ -2665,9 +2665,20 @@ def knowledge_set(
     table: str,
     json_str: str = typer.Option(None, "--json", help="Inline JSON profile fields."),
     file: Path = typer.Option(None, "--file", "-f", help="JSON file with profile fields."),
+    exact_column_names: bool = typer.Option(
+        False,
+        "--exact-column-names",
+        help="Match column names by exact case, for quoted identifiers. Omit SQL quotes.",
+    ),
 ) -> None:
     """Set structured base-descriptor fields: grain, columns, relationships,
-    freshness, owners, open_questions (merged per-field).
+    freshness, owners, open_questions.
+
+    Columns merge by name: send only changed attributes. Omitted columns and
+    attributes are preserved; columns: [] leaves existing columns intact.
+    Use --exact-column-names to add or update case-distinct quoted identifiers.
+    Use knowledge sync for warehouse schema changes. Other supplied fields
+    replace their current values.
 
     A relationship is {"to": "DB.SCHEMA.TABLE", "on": "THIS_COL = THAT_COL"
     (just "COL" when both sides share the name; comma-separate a composite key),
@@ -2678,7 +2689,9 @@ def knowledge_set(
     payload = _read_payload(file, json_str, "profile payload")
     ws = _workspace()
     try:
-        doc = KnowledgeStore(ws.knowledge_dir).set_profile(table, payload)
+        doc = KnowledgeStore(ws.knowledge_dir).set_profile(
+            table, payload, exact_column_names=exact_column_names
+        )
     except ValueError as e:
         fail(str(e))
         return
