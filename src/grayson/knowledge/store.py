@@ -1145,9 +1145,12 @@ def search_doc(doc: dict[str, Any], term: str) -> list[dict]:
             dropped=bool(column.get("dropped")),
         )
     for relationship in doc.get("relationships") or []:
-        add("relationship", [relationship.get(k) for k in ("to", "on", "note")])
+        add("relationship", [relationship.get(k) for k in ("to", "on", "cardinality", "note")])
     for definition in doc.get("definitions") or []:
-        add("definition", [definition.get(k) for k in ("path", "repo", "description")])
+        add(
+            "definition",
+            [definition.get(k) for k in ("path", "snapshot", "kind", "repo", "description")],
+        )
     for question in doc.get("open_questions") or []:
         add("question", [question])
     return hits

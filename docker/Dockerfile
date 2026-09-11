@@ -15,17 +15,20 @@ RUN dnf install -y --nodocs python3.12 python3.12-pip && dnf clean all
 WORKDIR /src
 COPY pyproject.toml uv.lock README.md /src/
 # uv.lock is the source of truth: export its exact pins (with hashes) and
-# install those — `pip install .` would re-resolve the open ranges instead
+# install those, including transitive dependencies. Do not let pip re-resolve
+# extras against newer releases instead of the exported pins. Hash checks stay
+# mandatory; the builder checks dependency consistency after installing the app.
 RUN python3.12 -m pip install --no-cache-dir uv \
     && python3.12 -m uv export --frozen --no-dev --no-emit-project \
         --format requirements.txt -o /src/requirements.txt \
     && python3.12 -m venv /opt/grayson \
-    && /opt/grayson/bin/pip install --no-cache-dir -r /src/requirements.txt
+    && /opt/grayson/bin/pip install --no-cache-dir --no-deps --require-hashes -r /src/requirements.txt
 
 FROM deps AS builder
 COPY . /src
 RUN python3.12 -m uv build --wheel --out-dir /tmp/dist /src \
-    && /opt/grayson/bin/pip install --no-cache-dir --no-deps /tmp/dist/*.whl
+    && /opt/grayson/bin/pip install --no-cache-dir --no-deps /tmp/dist/*.whl \
+    && /opt/grayson/bin/pip check
 
 FROM ${BASE_IMAGE} AS runner
 USER 0

@@ -26,11 +26,13 @@ def store(workspace):
                 {"name": "ID", "type": "NUMBER", "description": "Purchase identifier"},
                 {"name": "AMOUNT", "description": "Gross value before refunds"},
             ],
-            "relationships": [{"to": "SHOP.PUBLIC.CUSTOMERS", "on": "ID"}],
+            "relationships": [{"to": "SHOP.PUBLIC.CUSTOMERS", "on": "ID", "cardinality": "N:1"}],
             "definitions": [{"path": "models/transactions.sql", "repo": "example.com/warehouse"}],
             "open_questions": ["How are cancellations handled?"],
         },
     )
+    snapshot = store.write_snapshot(TABLE, "ddl", "create table ORDERS (ID NUMBER);")
+    store.upsert_definition(TABLE, {"kind": "ddl", **snapshot})
     store.add_fact(TABLE, "AMOUNT includes tax", fact_id="tax")
     store.confirm_fact(TABLE, "tax")
     store.add_fact(TABLE, "Legacy receipts are excluded", fact_id="old")
@@ -51,7 +53,9 @@ def store(workspace):
         ("purchase identifier", "column"),
         ("number", "column"),
         ("customers", "relationship"),
+        ("many-to-one", "relationship"),
         ("transactions.sql", "definition"),
+        ("orders.ddl.sql", "definition"),
         ("cancellations", "question"),
         ("original timestamps", "notes"),
         ("includes tax", "fact"),
@@ -129,6 +133,8 @@ class PageLinks(HTMLParser):
         ("commerce analytics", "overview"),
         ("transactions.sql", "definitions"),
         ("customers", "relationships"),
+        ("many-to-one", "relationships"),
+        ("orders.ddl.sql", "definitions"),
         ("cancellations", "questions"),
         ("original timestamps", "notes"),
     ],
