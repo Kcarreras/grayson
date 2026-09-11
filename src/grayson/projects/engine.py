@@ -356,20 +356,38 @@ def approve_candidate(session, revision, expected_digest, actor="user"):
     return _mutate(session, revision, "candidate_approved", change, actor)
 
 
-def query_blocker(session, allocated=False) -> str | None:
-    """Used by the common query path, including queries outside the runner."""
+def approval_blocker(session) -> str | None:
+    """Require the pinned project's brief approval before any execution or fixes."""
     parent = session.get_meta("project_verification_parent")
     if parent:
-        return query_blocker(Session(session.workspace, parent), allocated)
+        return approval_blocker(Session(session.workspace, parent))
     s = state(session)
     if unattached_revalidation(session, s):
         return "revalidation creation is not attached to its approved grant"
     if not s:
+        from grayson.core.engine import workflow_for
+
+        if workflow_for(session, session.workspace.workflows_dir).project is not None:
+            return "submit a project brief with project_draft and wait for human approval"
         return None
     try:
         _approved(session, s)
     except ValueError as e:
         return str(e)
+    return None
+
+
+def query_blocker(session, allocated=False) -> str | None:
+    """Used by the common query path, including queries outside the runner."""
+    parent = session.get_meta("project_verification_parent")
+    if parent:
+        return query_blocker(Session(session.workspace, parent), allocated)
+    blocked = approval_blocker(session)
+    if blocked:
+        return blocked
+    s = state(session)
+    if not s:
+        return None
     p = Contract.model_validate(s["contract"]).policy
     if queries_used(session, s) - int(allocated) >= p.max_queries:
         return "project query budget exhausted"
@@ -857,7 +875,15 @@ def status(session):
     while True:
         s = state(session)
         if not s:
-            return {"project": None, "next_action": "draft a project brief"}
+            blocked = query_blocker(session)
+            if not blocked:
+                return {"project": None, "next_action": "draft a project brief"}
+            return {
+                "project": None,
+                "query_blocker": blocked,
+                "next_action": "Submit a project brief with project_draft for human approval; "
+                "queries and candidate work are blocked until approval",
+            }
         effective = policy.effective(session, s["contract"]["policy"]["approval"])
         if _candidate_phase(s, effective["approval"]) == s["phase"]:
             break

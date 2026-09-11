@@ -1170,7 +1170,7 @@ def test_empty_project_session_uses_project_interface(project):
     assert client.get(f"/session/{s.id}").status_code == 403
 
 
-@pytest.mark.parametrize("phase", ["discovery", "awaiting_brief", "building"])
+@pytest.mark.parametrize("phase", ["legacy_before_brief", "awaiting_brief", "building"])
 def test_project_charts_and_evidence_share_the_workspace(project, phase):
     from fastapi.testclient import TestClient
 
@@ -1178,14 +1178,20 @@ def test_project_charts_and_evidence_share_the_workspace(project, phase):
     from grayson.ui.server import build_app
 
     s, executor = project
-    qid = run_statement(
-        s, "SELECT ID, AMOUNT FROM DB.S.ORDERS", executor=executor, label="Inspect order amounts"
-    )["qid"]
-    chart = add_chart(s, qid, "bar", "ID", ["AMOUNT"], "Order amounts", note="Discovery evidence")
-    if phase == "awaiting_brief":
-        engine.draft(s, contract())
-    elif phase == "building":
+    sql = "SELECT ID, AMOUNT FROM DB.S.ORDERS"
+    if phase == "legacy_before_brief":
+        # Existing artifacts from older releases must remain inspectable.
+        qid = s.allocate_qid(None, sql, "Inspect order amounts")
+        rows = executor.execute(sql).rows
+        s.cache.save(qid, rows, sql=sql, source_tables=s.targets, truncated=False)
+        s.update_query(qid, status="executed", row_count=len(rows))
+    else:
         approve(s)
+        qid = run_statement(s, sql, executor=executor, label="Inspect order amounts")["qid"]
+    chart = add_chart(s, qid, "bar", "ID", ["AMOUNT"], "Order amounts", note="Source evidence")
+    if phase == "awaiting_brief":
+        engine.draft(s, contract(), engine.state(s)["revision"])
+    elif phase == "building":
         submit(s, candidate(True))
         verify(s, executor)
     client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
@@ -1197,7 +1203,7 @@ def test_project_charts_and_evidence_share_the_workspace(project, phase):
     assert (
         f'data-svg-url="/session/{s.id}/chart/{chart["chart_id"]}/svg?detail=1&amp;t=test"' in page
     )
-    assert "Plotted data (3 rows)" in page and "Discovery evidence" in page
+    assert "Plotted data (3 rows)" in page and "Source evidence" in page
     assert 'id="chart-lightbox"' in page and 'src="/static/charts.js"' in page
     assert f"/session/{s.id}/query/{qid}?t=test" in page
     assert "Inspect order amounts" in page
@@ -1242,6 +1248,178 @@ def test_project_workspace_marks_earlier_checkpoint_evidence_as_stale(project):
     assert 'id="settled-checkpoints"' not in page
     # The UI labels historical evidence without rewriting the underlying record.
     assert all(c["status"] == "complete" for c in s.checkpoints())
+
+
+@pytest.mark.parametrize("phase", ["no_brief", "awaiting_brief", "revised_brief"])
+@pytest.mark.parametrize(
+    "workflow,kind", [("pipeline-development", "pipeline"), ("goal-analysis", "analysis")]
+)
+def test_brief_approval_gates_all_execution_and_fixes(project, phase, workflow, kind):
+    from conftest import FakeExecutor
+    from grayson.cache.local import query_session_artifacts
+    from grayson.core import file_fixes, proposals
+    from grayson.core.run import cache_find, snapshot_metadata
+
+    original, _ = project
+    s = Session.create(
+        original.workspace,
+        workflow=workflow,
+        strict_scope=True,
+        targets=original.targets,
+        guard=original.guard_settings,
+        guard_profile="moderate",
+    )
+    spec = contract(kind=kind)
+    s.set_setup_inputs({"goal": "Build a pipeline", "approval": "approved"}, actor="user")
+    if phase == "revised_brief":
+        approve(s, spec)
+    if phase != "no_brief":
+        engine.draft(s, spec, (engine.state(s) or {}).get("revision", 0))
+    # Seed historical cache/proposals to prove reuse cannot bypass fresh approval.
+    s.cache.save(
+        "q_0001",
+        [{"ID": 1}],
+        sql="SELECT ID FROM DB.S.ORDERS",
+        source_tables=s.targets,
+        truncated=False,
+    )
+    pid = s.add_proposal("ddl_snippet", "Earlier fix", {"ddl": "SELECT 1"}, None, None)
+    s.decide_proposal(pid, "approved", "user")
+    executor = FakeExecutor()
+    assert "approval" in engine.status(s)["query_blocker"]
+    for sql in (
+        "SELECT * FROM DB.S.ORDERS",
+        "SHOW TABLES",
+        "DESCRIBE TABLE DB.S.ORDERS",
+        "EXPLAIN SELECT * FROM DB.S.ORDERS",
+    ):
+        result = run_statement(s, sql, executor=executor)
+        assert result["status"] == "rejected" and result["rule"] == "project"
+        assert "approval" in result["reason"]
+    assert snapshot_metadata(s, executor)["status"] == "skipped"
+    with pytest.raises(ValueError, match="approval"):
+        cache_find(s, check_freshness=True, executor=executor)
+    assert cache_find(s)  # Existing evidence remains readable for human review.
+    with pytest.raises(ValueError, match="approval"):
+        query_session_artifacts(s, "SELECT * FROM q_0001")
+    with pytest.raises(ValueError, match="approval"):
+        proposals.record_proposal(s, "ddl_snippet", "New fix", {"ddl": "SELECT 2"}, None)
+    with pytest.raises(ValueError, match="approval"):
+        file_fixes.draft(s, "new.sql", "SELECT 1", "New file")
+    with pytest.raises(ValueError, match="approval"):
+        file_fixes.apply(s, pid)
+    with pytest.raises(ValueError, match="approval"):
+        proposals.mark_applied(s, pid)
+    assert not executor.calls
+    assert s.stage == "setup" and s.executed_count() == 0
+    assert not (s.workspace.root / "new.sql").exists()
+    if phase == "no_brief":
+        engine.draft(s, spec)
+    p = engine.state(s)
+    engine.approve(s, p["revision"], p["contract_digest"])
+    assert run_statement(s, "SELECT * FROM DB.S.ORDERS", executor=executor)["status"] == "executed"
+    assert query_session_artifacts(s, "SELECT * FROM q_0001")[1]
+    assert snapshot_metadata(s, executor)["status"] == "ok"
+    assert file_fixes.draft(s, "new.sql", "SELECT 1", "New file")["status"] == "proposed"
+
+
+def test_project_start_skips_warehouse_work_in_cli_and_mcp(project, monkeypatch):
+    from typer.testing import CliRunner
+
+    from conftest import call_mcp
+    from grayson.cli import app
+    from grayson.mcp.server import build_server
+
+    s, _ = project
+
+    def no_executor(*args, **kwargs):
+        pytest.fail("project startup must not connect to the warehouse before brief approval")
+
+    monkeypatch.setattr("grayson.core.run.get_executor", no_executor)
+    result = call_mcp(
+        build_server(s.workspace),
+        "session_start",
+        {
+            "workflow": "goal-analysis",
+            "tables": s.targets,
+            "new": True,
+        },
+    )
+    assert result["metadata_snapshot"]["status"] == "skipped"
+    assert "approval" in result["metadata_snapshot"]["reason"]
+    cli = CliRunner().invoke(
+        app,
+        [
+            "session",
+            "start",
+            "--workflow",
+            "pipeline-development",
+            "--table",
+            "DB.S.ORDERS",
+            "--new",
+        ],
+    )
+    assert cli.exit_code == 0, cli.output
+    assert '"status": "skipped"' in cli.output and "approval" in cli.output
+
+
+def test_project_workspace_shows_and_applies_ordinary_proposals(project):
+    from fastapi.testclient import TestClient
+
+    from grayson.core import file_fixes, proposals
+    from grayson.ui.server import build_app
+
+    s, executor = project
+    approve(s)
+    sql = proposals.record_proposal(
+        s,
+        "ddl_snippet",
+        "Copy the staging SQL",
+        {
+            "ddl": "CREATE VIEW DB.S.STAGING AS SELECT * FROM DB.S.ORDERS",
+            "rationale": "Keep the staged orders available for review",
+            "run_target": "Snowflake worksheet",
+        },
+        None,
+    )
+    source = s.workspace.root / "pipeline.sql"
+    source.write_text("SELECT 1\n", encoding="utf-8")
+    fix = file_fixes.draft(s, "pipeline.sql", "SELECT 2\n", "Update the pipeline source")
+    submit(s, candidate(True))
+    verify(s, executor)
+    review_and_checkpoints(s)
+    engine.finish(s, engine.state(s)["revision"])
+    p = engine.deployment_package(s, engine.state(s)["revision"])["project"]
+    deployment = s.proposal(p["deployment"]["pid"])
+    client = TestClient(build_app(s.workspace, token="test"), base_url="http://127.0.0.1")
+    page = client.get(f"/session/{s.id}?t=test").text
+    for proposal in (sql, fix):
+        assert f'id="proposal-{proposal["pid"]}"' in page
+        assert proposal["title"] in page
+    assert "2 fixes awaiting review" in page
+    assert "Keep the staged orders available for review" in page
+    assert "Snowflake worksheet" in page and "Copy SQL" in page
+    assert 'data-list="proposals"' in page and 'id="checkpoints"' in page
+    assert page.count(f"/proposal/{deployment['pid']}/approve?t=test") == 1
+    for proposal in (sql, fix):
+        approved = client.post(
+            f"/session/{s.id}/proposal/{proposal['pid']}/approve?t=test",
+            data={"digest": file_fixes.review_digest(proposal)},
+        )
+        assert approved.status_code == 200 and s.proposal(proposal["pid"])["status"] == "approved"
+    assert source.read_text(encoding="utf-8") == "SELECT 1\n"
+    applied = client.post(f"/session/{s.id}/proposal/{fix['pid']}/apply?t=test")
+    assert applied.status_code == 200 and source.read_text(encoding="utf-8") == "SELECT 2\n"
+    applied_sql = client.post(
+        f"/session/{s.id}/proposal/{sql['pid']}/applied?t=test",
+        data={"digest": file_fixes.review_digest(sql)},
+    )
+    assert applied_sql.status_code == 200 and s.proposal(sql["pid"])["status"] == "applied"
+    # Revising a brief does not hide existing fixes or their review history.
+    engine.draft(s, contract(), engine.state(s)["revision"])
+    page = client.get(f"/session/{s.id}?t=test").text
+    assert f'id="proposal-{fix["pid"]}"' in page and f'id="proposal-{sql["pid"]}"' in page
+    assert "Work is blocked until you approve the brief" in page
 
 
 def test_project_tools_are_discoverable_and_submit_briefs_over_stdio(project):

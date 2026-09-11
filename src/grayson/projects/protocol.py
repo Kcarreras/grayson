@@ -10,13 +10,16 @@ Project tools never authorise warehouse DDL/DML execution.
 
 1. Interview for the decision, deliverable, population, grain, business definitions,
    exclusions, source tables, time window, output destination and budget. Reuse
-   confirmed knowledge with attribution. Discover schema facts with scoped reads;
-   do not ask the user questions SQL can settle. Batch related human decisions.
+   confirmed knowledge with attribution. Use existing documentation and recorded
+   schema facts to prepare the brief. Batch related human decisions. No queries,
+   metadata reads, cached-data analysis or fix drafts may run before brief approval.
 2. Read `project_schema`; draft the complete brief with `project_draft` for console
    approval. Every semantic definition must map to executable acceptance checks or
    explicitly require human semantic review. Baselines must be independent of the
-   candidate. Freeze tolerances before observing candidate results. A negative or
-   inconclusive analysis can satisfy an honest goal.
+   candidate. Freeze tolerances before observing candidate results. Wait for human
+   approval before discovery or candidate work. If discovery reveals a needed change,
+   submit a revised brief and wait for fresh approval. A negative or inconclusive
+   analysis can satisfy an honest goal.
 3. Read `project_status` / `session_brief` on every resume. The effective policy,
    revision, pinned method and remaining budgets govern the work. Use `project_plan`
    for working steps; it cannot weaken the brief or remove workflow gates.

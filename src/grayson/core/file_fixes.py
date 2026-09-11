@@ -14,7 +14,7 @@ import secrets
 import stat
 from pathlib import Path
 
-from grayson.core.proposals import ProposalError
+from grayson.core.proposals import ProposalError, require_project_approval
 from grayson.core.session import Session
 from grayson.util import utcnow
 
@@ -144,6 +144,7 @@ def _request(
 
 
 def _save_draft(session, body, title, finding_fid, worker, key, fingerprint, supersedes):
+    require_project_approval(session)
     # Share the apply lock: an approved revision cannot be superseded mid-write.
     lock = session.workspace.root / ".grayson" / "file-apply.lock"
     try:
@@ -405,6 +406,7 @@ def apply(session: Session, pid: str, actor: str = "agent") -> dict:
     """Write exactly one approved file. Source drift, replays and races fail closed."""
     from grayson.core import criteria
 
+    require_project_approval(session)
     lock = session.workspace.root / ".grayson" / "file-apply.lock"
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)

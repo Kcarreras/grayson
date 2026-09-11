@@ -1,0 +1,64 @@
+{% from "_macros.html" import proposal_status, agent_text, list_tools %}
+{% from "_file_review.html" import file_review, deletion_ack %}
+{% from "_sql_proposal.html" import sql_proposal, external_applied %}
+{% if proposals %}
+<h2 id="proposals">Fix proposals {{ help("proposals") }}</h2>
+<p class="small muted">Review and approve a fix, then apply it to a local file or copy the SQL to run elsewhere. Approval does not apply or execute a change.</p>
+{{ list_tools("proposals", [("id", "desc", "Newest first"), ("id", "asc", "Oldest first")], [("proposed", "Awaiting review", "state"), ("approved", "Ready to apply", "state"), ("history", "History", "state")], "Find a proposal or file…") }}
+<div data-list="proposals" data-noun="proposal">
+{% for p in proposals %}
+<details id="proposal-{{ p.pid }}" data-fold="proposal-{{ p.pid }}" class="card proposal-card {{ 'attn' if p.status == 'proposed' }}" data-item data-s-id="{{ p.pid }}" data-tags="{{ p.status if p.status in ['proposed', 'approved'] else 'history' }}" {{ 'open' if p.status in ['proposed', 'approved'] }}>
+  <summary class="proposal-summary">
+    <span class="otitle"><span class="mono muted">{{ p.pid }}</span> · {{ p.title }}</span>
+    <span class="row proposal-badges">
+      <span class="badge plain">{{ "Update a local file" if p.kind == "file_diff" else "SQL to copy and run" }}</span>
+      {{ proposal_status(p.status) }}
+    </span>
+  </summary>
+  <div class="proposal-body">
+  {% if p.superseded_by %}<p class="small muted">Replaced by <a href="#proposal-{{ p.superseded_by }}">{{ p.superseded_by }}</a>. This draft cannot be applied.</p>{% endif %}
+  {% if p.payload.supersedes %}<p class="small muted">Revises <a href="#proposal-{{ p.payload.supersedes }}">{{ p.payload.supersedes }}</a> · Requires a fresh review.</p>{% endif %}
+  {% if p.finding_fid %}<div class="muted small">addresses finding <span class="chip">{{ p.finding_fid }}</span></div>{% endif %}
+  {% if p.payload.rationale %}
+  {{ agent_text(p.payload.rationale) }}
+  {% endif %}
+  {% if p.kind == "file_diff" %}
+    {{ file_review(p) }}
+  {% else %}
+    {{ sql_proposal(p, s, token) }}
+  {% endif %}
+  {% if p.status != 'superseded' %}<div class="row mt-2"><a class="btn {{ 'primary' if p.status == 'proposed' and p.payload.success_criteria else '' }} sm" href="/session/{{ s.id }}/criteria/{{ p.pid }}?t={{ token }}">{{ 'Review fix and success criteria' if p.payload.success_criteria else 'Define success criteria' }}</a></div>{% endif %}
+  {% if p.verification and p.verification.mode == 'criteria' %}
+    <p class="small mt-2">Computed verification: <strong>{{ p.verification.verdict }}</strong> · {{ p.verification.counts.pass }} passed · {{ p.verification.counts.fail }} failed · {{ p.verification.counts.unproven }} unproven</p>
+  {% elif p.verification %}
+    <div class="row mt-2">
+      <span class="overline">Verification {{ help("verification") }}</span>
+      <span class="badge {{ 'ok' if p.verification.verdict == 'pass' else 'bad' }}">{{ p.verification.verdict }}</span>
+      <span class="muted small">rows {{ p.verification.comparison.before.row_count }}
+        → {{ p.verification.comparison.after.row_count }}
+        ({{ qc(p.verification.before_qid or p.verification.comparison.before.qid) }}
+        → {{ qc(p.verification.after_qid or p.verification.comparison.after.qid) }})</span>
+    </div>
+  {% endif %}
+  {% if p.status == "proposed" and s.stage != "closed" %}
+  <div class="proposal-actions">
+    {% if not p.payload.success_criteria %}<form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/approve?t={{ token }}">
+      {% if p.payload.file_change %}<input type="hidden" name="digest" value="{{ file_fix_digests[p.pid] }}">{% endif %}
+      {{ deletion_ack(p) }}
+      <button class="btn confirm sm" type="submit" {{ 'disabled' if p.file_review and p.file_review.error }}>Approve proposal</button><span class="small muted">{{ 'Source stays unchanged' if p.payload.file_change else 'Review only' }}</span></form>
+    {% endif %}
+    <form class="inline" method="post" action="/session/{{ s.id }}/proposal/{{ p.pid }}/reject?t={{ token }}">
+      <button class="btn danger sm" type="submit">Reject proposal</button></form>
+  </div>
+  {% endif %}
+  {% if p.status == "approved" and p.payload.file_change and s.stage != "closed" %}
+  <form method="post" class="proposal-actions" action="/session/{{ s.id }}/proposal/{{ p.pid }}/apply?t={{ token }}">
+    <button class="btn primary sm" type="submit" {{ 'disabled' if p.file_review.error }}>Apply approved file fix</button><span class="small muted">Writes the reviewed content to {{ p.payload.target_file }}</span>
+  </form>
+  {% endif %}
+  {% if p.kind == 'ddl_snippet' %}{{ external_applied(p, s, token) }}{% endif %}
+  </div>
+</details>
+{% endfor %}
+</div>
+{% endif %}

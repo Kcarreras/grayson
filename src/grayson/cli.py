@@ -10,7 +10,7 @@ from pathlib import Path
 
 import typer
 
-from grayson.cache.local import LocalQueryError, query_artifacts
+from grayson.cache.local import LocalQueryError, query_session_artifacts
 from grayson.cli_input import parse_json, read_text
 from grayson.config import GuardSettings
 from grayson.core import engine
@@ -787,6 +787,11 @@ def session_start(
         f'run a guarded query: grayson query run {session.id} -q "SELECT ..."',
         "'latest' works in place of the session id in any command",
     ]
+    if tpl.project is not None:
+        from grayson.projects.engine import status as project_status
+
+        result["project"] = project_status(session)
+        result["hints"][1] = result["project"]["next_action"]
     if result["knowledge_gaps"]:
         result["hints"].insert(
             0,
@@ -1268,7 +1273,10 @@ def cache_find_cmd(
     check_freshness: bool = typer.Option(False, "--check-freshness"),
 ) -> None:
     """List cached artifacts matching tables; optionally re-check source freshness."""
-    emit(cache_find(_session(session_id), tables or None, check_freshness))
+    try:
+        emit(cache_find(_session(session_id), tables or None, check_freshness))
+    except ValueError as e:
+        fail(str(e))
 
 
 @cache_app.command("show")
@@ -1331,7 +1339,7 @@ def cache_query(
     """Local read-only SELECT over cached artifacts (table names are qids, e.g. q_0003)."""
     s = _session(session_id)
     try:
-        columns, data = query_artifacts(s.dir / "data", _read_sql(sql, file), max_rows)
+        columns, data = query_session_artifacts(s, _read_sql(sql, file), max_rows)
     except LocalQueryError as e:
         fail(str(e))
         return

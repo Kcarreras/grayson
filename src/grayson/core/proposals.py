@@ -26,6 +26,14 @@ class ProposalError(ValueError):
     pass
 
 
+def require_project_approval(session: Session) -> None:
+    from grayson.projects.engine import approval_blocker
+
+    blocked = approval_blocker(session)
+    if blocked:
+        raise ProposalError(blocked)
+
+
 def build_proposal_payload(kind: str, payload: dict) -> dict:
     if kind not in PROPOSAL_KINDS:
         raise ProposalError(
@@ -79,6 +87,7 @@ def record_proposal(
     finding_fid: str | None,
     worker: str | None = None,
 ) -> dict:
+    require_project_approval(session)
     body = build_proposal_payload(kind, payload)
     if payload.get("success_criteria") is not None:
         from grayson.core.criteria import prepare
@@ -149,6 +158,7 @@ def mark_applied(
 ) -> dict:
     if session.stage == "closed":
         raise ProposalError("cannot record application on a closed session")
+    require_project_approval(session)
     p = session.proposal(pid)
     if p is None:
         raise ProposalError(f"no proposal '{pid}'")

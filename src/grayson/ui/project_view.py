@@ -5,6 +5,7 @@ import difflib
 import sqlglot
 
 from grayson.core import engine as checkpoints
+from grayson.core.file_fixes import review_digest
 from grayson.projects import engine
 from grayson.projects.models import Candidate, Contract
 from grayson.projects.sql import compile_candidate, sources
@@ -85,6 +86,14 @@ def build_context(session, error=None, section="build"):
     p = view["project"]
     project_workflow = checkpoints.workflow_for(session, session.workspace.workflows_dir).project
     proposal = session.proposal(p["deployment"]["pid"]) if p and p.get("deployment") else None
+    proposals = [
+        review_proposal(session, item)
+        for item in session.proposals()
+        if not proposal or item["pid"] != proposal["pid"]
+    ]
+    revisions = {item["payload"].get("supersedes"): item["pid"] for item in proposals}
+    for item in proposals:
+        item["superseded_by"] = revisions.get(item["pid"])
     history = []
     if p:
         versions = [*p["history"], {"candidate": p["candidate"], "verification": p["verification"]}]
@@ -157,6 +166,12 @@ def build_context(session, error=None, section="build"):
         "p": p,
         "error": error,
         "deployment_proposal": review_proposal(session, proposal) if proposal else None,
+        "proposals": proposals,
+        "file_fix_digests": {
+            item["pid"]: review_digest(item)
+            for item in proposals
+            if item["payload"].get("file_change")
+        },
         "draft_yaml": yaml.safe_dump(p["contract"], sort_keys=False) if p else "",
         "interventions": session.interventions(),
         "graph": pipeline_graph(p) if section == "build" else {},

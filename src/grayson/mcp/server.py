@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from grayson.cache.local import LocalQueryError, query_artifacts
+from grayson.cache.local import LocalQueryError, query_session_artifacts
 from grayson.checks import ChecksStore
 from grayson.core import engine
 from grayson.core import proposals as proposals_engine
@@ -43,7 +43,10 @@ For pipeline-development and goal-analysis workflows, use the project tools:
 read project_schema, then submit the complete brief with project_draft for human
 approval in the console's Brief view. session_start inputs record setup answers;
 they do not submit a brief. project_status and session_brief report saved progress.
-After brief approval, use project_candidate, project_verify and project_review.
+Brief approval is a hard gate from session creation: do not run discovery queries,
+metadata reads, cached-data analysis or draft fixes before human approval. Use recorded
+knowledge to draft the brief; after approval, discover sources and use project_candidate,
+project_verify and project_review. Revised briefs require fresh human approval.
 If your client defers tools, discover these exact names before reporting them missing.
 Session tools accept an exact session_id, or latest/last/. for the newest session.
 Use session_list to discover IDs and keep an exact ID when working on concurrent sessions.
@@ -255,7 +258,8 @@ def build_server(workspace: Workspace) -> Any:
         description="Start a QA session for a workflow over target tables. Pass the "
         "user's answers to the workflow's setup inputs via `inputs` (key -> answer) "
         "so the session records them. Returns the session id, seeded checkpoints, "
-        "view coverage, and relevant knowledge."
+        "view coverage, and relevant knowledge. Project workflows require human brief "
+        "approval before queries, metadata reads, cached-data analysis or fix drafting."
     )
     def session_start(
         workflow: str,
@@ -354,6 +358,7 @@ def build_server(workspace: Workspace) -> Any:
         registry = ViewRegistry(workspace.views_dir)
         out = {
             "session": s.summary(),
+            "metadata_snapshot": snap,
             "required_checks": [c.model_dump() for c in tpl.required_checks],
             "suggested_checks": [c.model_dump() for c in tpl.suggested_checks],
             "findings_schema": tpl.findings_schema,
@@ -381,6 +386,11 @@ def build_server(workspace: Workspace) -> Any:
         if context_scope:
             out["context_scope"] = context_scope
         hints = []
+        if tpl.project is not None:
+            from grayson.projects.engine import status as project_status
+
+            out["project"] = project_status(s)
+            hints.append(out["project"]["next_action"])
         drifted = {t: d for t, d in drift.items() if d["status"] == "drifted"}
         if drifted:
             lines = "; ".join(describe_drift(t, d) for t, d in drifted.items())
@@ -403,7 +413,8 @@ def build_server(workspace: Workspace) -> Any:
             hints.append(
                 f"{len(external['failing'])} external deterministic check(s) are FAILING "
                 f"on the target tables ({ids}) — pre-vetted leads: replicate each with a "
-                "guarded query first (their sql/details are in external_checks.failing), "
+                "guarded query after any required brief approval "
+                "(their sql/details are in external_checks.failing), "
                 "then widen the investigation"
             )
         if tpl.suggested_checks:
@@ -622,7 +633,7 @@ def build_server(workspace: Workspace) -> Any:
     def cache_query(session_id: str, sql: str, max_rows: int = 1000) -> dict:
         try:
             s = _session(session_id)
-            columns, data = query_artifacts(s.dir / "data", sql, max_rows)
+            columns, data = query_session_artifacts(s, sql, max_rows)
         except (LocalQueryError, FileNotFoundError, ValueError) as e:
             return _err(e)
         return {

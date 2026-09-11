@@ -26,7 +26,7 @@
     <p class="project-next">{{ view.next_action if p else 'Your agent needs to submit a brief for your review.' }}</p>
     {% if p and p.block_reason %}<p class="attn">{{ p.block_reason }}</p>{% endif %}
     {% if p and p.completion %}<p class="muted small">{{ p.completion.label }}</p>{% endif %}
-    {% if not p %}<p class="muted small">Setup answers and discovery queries do not submit a project brief.</p>{% endif %}
+    {% if not p or p.phase == 'awaiting_brief' %}<p class="muted small">Work is blocked until you approve the brief. Setup answers do not grant approval.</p>{% endif %}
   </div>
   <div class="project-primary-action">
     {% if not p or p.phase == 'awaiting_brief' %}<a class="btn" href="{{ workspace_url }}&view=brief">{{ 'Review brief' if p else 'View brief setup' }}</a>
@@ -51,12 +51,14 @@
   <a href="#queries">{{ s.queries_executed }} {{ 'query' if s.queries_executed == 1 else 'queries' }} run</a>
   <a href="#checkpoints">{{ checkpoints | selectattr('status','equalto','complete') | list | length }}/{{ checkpoints | length }} checkpoints complete{% if readiness.waived_checks %} · {{ readiness.waived_checks | length }} waived{% endif %}</a>
   <a href="#verification">{% if p and p.verification %}{{ p.verification.results | selectattr('status','equalto','pass') | list | length }}/{{ p.verification.results | length }} checks pass{% if not view.evidence_current %} · stale evidence{% endif %}{% else %}No verification yet{% endif %}</a>
+  <a href="#proposals">{{ proposals | selectattr('status','equalto','proposed') | list | length }} fixes awaiting review</a>
   {% if p %}<span>{{ view.remaining.queries }} queries remaining · {{ view.effective_policy.approval | capitalize }} approvals</span>{% endif %}
 </div>
 <nav class="section-nav" aria-label="Project sections">
   {% if open_iv %}<a href="#awaiting">Needs your input · {{ open_iv | length }}</a>{% endif %}
   {% if charts %}<a href="#analysis">Analysis charts</a>{% endif %}
   <a href="#proposal">Current proposal</a><a href="#verification">Verification</a><a href="#checkpoints">Checkpoints</a>
+  <a href="#proposals">Fix proposals · {{ proposals | length }}</a>
   {% if deployment_proposal %}<a href="#deployment">Deployment proposal</a>{% endif %}<a href="#queries">Query log</a>
 </nav>
 
@@ -86,9 +88,11 @@
 <section class="project-change"><h3>What changed</h3><p>{{ p.candidate.diagnosis }}</p>
 {% if attempts %}<p class="small">{{ attempts[-1].resolved | length }} previously failing checks now pass. <a href="{{ workspace_url }}&view=history">Compare attempts →</a></p>{% endif %}</section>
 {% else %}
-<div class="card"><p>{{ 'The brief needs your approval before the agent can build a candidate.' if p and p.phase == 'awaiting_brief' else 'The proposed SQL and its dependencies will appear here when the agent submits a candidate.' if p else 'No proposal yet. Discovery charts, checkpoints, and queries remain visible while the agent prepares the brief.' }}</p></div>
+<div class="card"><p>{{ 'The brief needs your approval before the agent can build a candidate.' if p and p.phase == 'awaiting_brief' else 'The proposed SQL and its dependencies will appear here when the agent submits a candidate.' if p else 'No candidate yet. The agent must submit a brief for your approval before starting work.' }}</p></div>
 {% endif %}
 
+{% include "_proposals.html" %}
+{% if not proposals %}<h2 id="proposals">Fix proposals</h2><div class="card empty">No file fixes or SQL snippets have been submitted.</div>{% endif %}
 {% include "_project_checks.html" %}
 {% include "_checkpoints.html" %}
 {% if deployment_proposal %}<section class="card" id="deployment"><h2>Deployment proposal</h2><p>Destination: <span class="mono">{{ p.contract.deployment_target }}</span></p>{{ sql_proposal(deployment_proposal,s,token) }}

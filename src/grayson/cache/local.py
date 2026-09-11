@@ -30,6 +30,16 @@ class LocalQueryError(ValueError):
     pass
 
 
+def query_session_artifacts(session, sql: str, max_rows: int = 10000):
+    """Apply the project's approval gate to local analysis as well as warehouse SQL."""
+    from grayson.projects.engine import approval_blocker
+
+    blocked = approval_blocker(session)
+    if blocked:
+        raise LocalQueryError(blocked)
+    return query_artifacts(session.dir / "data", sql, max_rows)
+
+
 def query_artifacts(
     data_dir: Path, sql: str, max_rows: int = 10000
 ) -> tuple[list[str], list[tuple]]:
