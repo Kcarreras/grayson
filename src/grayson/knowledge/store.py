@@ -614,9 +614,17 @@ class KnowledgeStore:
                 return f
         raise KeyError(f"no fact '{fact_id}' for {fqn}")
 
-    def set_profile(self, fqn: str, updates: dict[str, Any], by: str = "agent") -> dict:
+    def set_profile(
+        self,
+        fqn: str,
+        updates: dict[str, Any],
+        by: str = "agent",
+        *,
+        exact_column_names: bool = False,
+    ) -> dict:
         """Merge structured base-descriptor fields (grain, columns, ...) into the doc.
         Columns are patched by name: omitted columns and attributes are kept.
+        `exact_column_names` supports adding case-distinct quoted identifiers.
         `by` is the actor kind stamped on any definition entries in `updates`."""
         allowed = {*PROFILE_KEYS, "definition_files", "definitions", "notes"}
         bad = set(updates) - allowed
@@ -655,7 +663,12 @@ class KnowledgeStore:
             updates = {**updates, "relationships": normalized}
         doc = self.read(fqn)
         if "columns" in updates:
-            updates = {**updates, "columns": _merge_columns(doc["columns"], updates["columns"])}
+            updates = {
+                **updates,
+                "columns": _merge_columns(
+                    doc["columns"], updates["columns"], exact_names=exact_column_names
+                ),
+            }
         doc.update(updates)
         self._write(fqn, doc)
         out = self.read(fqn)
@@ -1370,11 +1383,14 @@ def _strip_heading(body: str, table: str) -> str:
     return body.strip()
 
 
-def _merge_columns(current: list[dict], updates: object) -> list[dict]:
+def _merge_columns(
+    current: list[dict], updates: object, *, exact_names: bool = False
+) -> list[dict]:
     """Apply column patches without replacing the schema or omitted attributes.
 
     Prefer exact names so case-distinct warehouse columns stay distinct. A
     unique case-insensitive match accepts ordinary identifier casing changes.
+    Disable that fallback explicitly when adding a case-distinct identifier.
     Ambiguous or repeated targets fail before anything is written.
     """
     if not isinstance(updates, list) or not all(
@@ -1397,7 +1413,9 @@ def _merge_columns(current: list[dict], updates: object) -> list[dict]:
         if name in names:
             raise ValueError(f"duplicate column update for '{name}'")
         names.add(name)
-        matches = exact.get(name) or folded.get(name.upper(), [])
+        matches = exact.get(name, [])
+        if not matches and not exact_names:
+            matches = folded.get(name.upper(), [])
         if len(matches) > 1:
             raise ValueError(f"ambiguous column name '{name}'; use the exact recorded name")
         if matches:

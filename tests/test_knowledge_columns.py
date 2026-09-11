@@ -148,3 +148,42 @@ def test_mcp_rejects_duplicate_targets_without_overwriting(workspace, store):
     )
     assert "duplicate column update" in out["error"]
     assert store.read(TABLE)["columns"] == COLUMNS
+
+
+@pytest.mark.parametrize("entrypoint", ["store", "mcp", "cli"])
+@pytest.mark.parametrize("include_existing", [False, True])
+def test_add_case_distinct_column_to_existing_schema(
+    workspace, store, entrypoint, include_existing
+):
+    lower = {"name": "label", "description": "Lowercase name", "type": "VARCHAR"}
+    upper = {"name": "LABEL", "description": "Uppercase name"}
+    store.set_profile(TABLE, {"columns": [lower]})
+    profile = {"columns": ([{"name": "label"}] if include_existing else []) + [upper]}
+    if entrypoint == "store":
+        out = store.set_profile(TABLE, profile, exact_column_names=True)
+    elif entrypoint == "mcp":
+        out = call_mcp(
+            build_server(workspace),
+            "knowledge_set",
+            {
+                "table": TABLE,
+                "profile": profile,
+                "exact_column_names": True,
+            },
+        )
+    else:
+        result = CliRunner().invoke(
+            app,
+            [
+                "knowledge",
+                "set",
+                TABLE,
+                "--json",
+                json.dumps(profile),
+                "--exact-column-names",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        out = json.loads(result.output)
+    assert out["columns"] == COLUMNS + [lower, upper]
+    assert store.read(TABLE)["columns"] == COLUMNS + [lower, upper]

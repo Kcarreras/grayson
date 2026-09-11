@@ -1133,6 +1133,8 @@ def build_server(workspace: Workspace) -> Any:
         "(name/type/description), relationships, freshness, owners, open_questions. "
         "Columns merge by name: send only changed attributes; omitted columns and "
         "attributes are preserved, and columns: [] leaves existing columns intact. "
+        "Set exact_column_names=true to add or update case-distinct quoted identifiers "
+        "(pass their actual names without SQL quotes). "
         "Use knowledge_sync for warehouse schema changes. Other supplied fields replace "
         "their current values. Returns the doc plus completeness and `warnings` (shapes that "
         "had to be guessed or could not be read — fix them now, the schema map draws what "
@@ -1143,9 +1145,11 @@ def build_server(workspace: Workspace) -> Any:
         "defined, prefer knowledge_define: it resolves a local file to its repo, "
         "commit, and hash instead of recording a bare path."
     )
-    def knowledge_set(table: str, profile: dict) -> dict:
+    def knowledge_set(table: str, profile: dict, exact_column_names: bool = False) -> dict:
         try:
-            doc = KnowledgeStore(workspace.knowledge_dir).set_profile(table, profile)
+            doc = KnowledgeStore(workspace.knowledge_dir).set_profile(
+                table, profile, exact_column_names=exact_column_names
+            )
             out = {**doc, "completeness": completeness(doc)}
             return _library_sync(out, f"grayson knowledge: profile {table.upper()}")
         except ValueError as e:

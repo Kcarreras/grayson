@@ -62,7 +62,11 @@ only the columns and attributes you want to change, for example
 Existing types, nullability, other attributes, and unmentioned columns stay
 intact; new columns are appended, and `"columns": []` leaves the list intact.
 Names match exactly first, then without case when there is a unique match;
-ambiguous matches are rejected. Explicit attribute values replace that
+ambiguous matches are rejected. To add a quoted identifier such as `LABEL`
+alongside an existing `label`, pass `exact_column_names: true` to the MCP tool
+or use the CLI's `--exact-column-names` flag. Pass the actual column names
+without SQL quotes; exact matching keeps the two identifiers distinct.
+Explicit attribute values replace that
 attribute, so `"description": ""` clears a description. Other supplied profile
 fields replace their current values. Use `knowledge sync` (`knowledge_sync`)
 to reconcile columns with the warehouse, including dropped columns. This
