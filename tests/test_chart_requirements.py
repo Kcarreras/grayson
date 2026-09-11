@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 
 import pytest
 import yaml
@@ -17,6 +18,8 @@ from grayson.core import engine
 from grayson.core.engine import EnforcementError
 from grayson.core.run import run_statement
 from grayson.core.session import Session
+from grayson.projects import engine as projects
+from grayson.sandbox.executor import SandboxExecutor
 from grayson.workflows import get_workflow, list_workflows
 from grayson.workflows.authoring import render_preview
 from grayson.workflows.lint import lint_template
@@ -271,6 +274,11 @@ def test_core_templates_require_charts_where_the_content_is_a_shape():
 def test_core_requirements_are_satisfiable_and_gate(workspace):
     """Every required chart of every core workflow can be built from ordinary
     rows and closes its checkpoint; a bare completion is refused."""
+    warehouse = workspace.root / "chart-fixture.db"
+    with sqlite3.connect(warehouse) as con:
+        con.execute('CREATE TABLE "DB.S.T1" (K TEXT, V INT, W INT)')
+        con.executemany('INSERT INTO "DB.S.T1" VALUES (:K, :V, :W)', CHART_ROWS)
+    executor = SandboxExecutor(warehouse)
     for tpl in list_workflows(None):
         s = Session.create(
             workspace,
@@ -278,17 +286,81 @@ def test_core_requirements_are_satisfiable_and_gate(workspace):
             targets=["DB.S.T1"],
             guard=GuardSettings(auto_limit=0, timeout_seconds=0, budget_warn=0, budget_cap=0),
             guard_profile="moderate",
+            strict_scope=True,
         )
-        qid = run_statement(s, "SELECT * FROM DB.S.T1", executor=FakeExecutor(rows=CHART_ROWS))[
-            "qid"
-        ]
+        evidence = []
+        if tpl.project:
+            draft = projects.draft(
+                s,
+                {
+                    "goal": "Preserve the chart fixture rows and values",
+                    "deliverable": "Verified chart source SQL",
+                    "kind": tpl.project.kind,
+                    "deployment_target": "DB.S.CHART_SOURCE",
+                    "scope": s.targets,
+                    "data_window": "All fixed fixture rows",
+                    "semantics": {"grain": "One row per K", "value": "Preserve V"},
+                    "semantic_checks": {"grain": ["grain", "population"], "value": ["value"]},
+                    "checks": [
+                        {
+                            "id": "grain",
+                            "name": "Unique K",
+                            "kind": "grain",
+                            "keys": ["K"],
+                            "rationale": "One row per key",
+                        },
+                        {
+                            "id": "population",
+                            "name": "All keys",
+                            "kind": "population",
+                            "keys": ["K"],
+                            "baseline_sql": "SELECT K FROM DB.S.T1",
+                            "rationale": "Preserve every key",
+                        },
+                        {
+                            "id": "value",
+                            "name": "Values per key",
+                            "kind": "measure",
+                            "column": "V",
+                            "group_by": ["K"],
+                            "baseline_sql": "SELECT K, SUM(V) AS V FROM DB.S.T1 GROUP BY K",
+                            "rationale": "Preserve every value",
+                        },
+                    ],
+                },
+            )["project"]
+            approved = projects.approve(s, draft["revision"], draft["contract_digest"])["project"]
+            candidate = projects.submit_candidate(
+                s,
+                {
+                    "summary": "Retain the fixture rows",
+                    "diagnosis": "Direct projection preserves keys and values",
+                    "nodes": [
+                        {"id": "rows", "sql": "SELECT * FROM DB.S.T1", "purpose": "Chart source"}
+                    ],
+                    "output": "rows",
+                },
+                approved["revision"],
+            )["project"]
+            if candidate["phase"] == "candidate_review":
+                candidate = projects.approve_candidate(
+                    s, candidate["revision"], candidate["candidate_digest"]
+                )["project"]
+            verified = projects.verify(s, candidate["revision"], executor)["project"][
+                "verification"
+            ]
+            assert verified["verdict"] == "pass"
+            evidence = [row["qid"] for row in verified["results"]]
+        result = run_statement(s, "SELECT * FROM DB.S.T1", executor=executor)
+        assert result["status"] == "executed", result
+        evidence.append(result["qid"])
         closed = set()
         for check in tpl.required_checks + tpl.suggested_checks:
             if any(d not in closed for d in check.depends_on):
                 continue
             if check.charts:
                 with pytest.raises(EnforcementError, match="requires"):
-                    engine.complete_checkpoint(s, check.key, [qid], "bare")
-            cp = close_checkpoint(s, check.key, [qid], "ok")
+                    engine.complete_checkpoint(s, check.key, evidence, "bare")
+            cp = close_checkpoint(s, check.key, evidence, "ok")
             assert len(cp["charts"]) == len(check.charts), f"{tpl.name}:{check.key}"
             closed.add(check.key)
